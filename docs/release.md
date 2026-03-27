@@ -636,6 +636,9 @@ intentionally unavailable to desktop updater clients.
 - The npm `version` lifecycle regenerates F-Droid changelog files from `CHANGELOG.md` for stable releases only (`npm run fdroid:changelogs`) and stages them, so the release commit and tag carry them. Betas are a no-op. A stable run **aborts the release** if `CHANGELOG.md` has no entry for the version being cut — commit the changelog entry first. See [docs/android.md](android.md) for why these files are generated per ABI.
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types.
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`.
+- `build:desktop` forwards arguments to `electron-builder` after `--`, for example `npm run build:desktop -- --linux --arm64`.
+- If `fpm` fails because `libcrypt.so.1` is missing, skip `deb` and `rpm` targets with `-- --linux AppImage tar.gz --arm64`.
+- The `Desktop Release` workflow publishes Linux `x64` and `arm64` artifacts.
 - `release:publish` and `release:publish:beta` run `scripts/publish-release-packages.mjs`: if a run
   fails partway through, re-running skips versions already published on npm, retries transient
   registry errors, and waits for each version to become visible on npm before continuing.
