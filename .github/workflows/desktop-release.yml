@@ -218,6 +218,12 @@ jobs:
     permissions:
       contents: write
       packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        electron_arch:
+          - x64
+          - arm64
     runs-on: ubuntu-22.04
 
     steps:
@@ -272,7 +278,7 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
-          build_args=(-- --publish never --linux --x64)
+          build_args=(-- --publish never --linux --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           npm run build:desktop "${build_args[@]}"
@@ -317,7 +323,7 @@ jobs:
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-manifest
+          name: linux-manifest-${{ matrix.electron_arch }}
           path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-linux.yml
           retention-days: 1
 
@@ -471,12 +477,12 @@ jobs:
           pattern: mac-manifest-*
           path: release-manifests
 
-      - name: Download Linux manifest artifact
+      - name: Download Linux manifest artifacts
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: linux-manifest
-          path: release-manifests/linux-manifest
+          pattern: linux-manifest-*
+          path: release-manifests
 
       - name: Download Windows manifest artifact
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-windows.result == 'success'
@@ -532,7 +538,11 @@ jobs:
           fi
 
           if [[ "${{ needs.publish-linux.result }}" == "success" ]]; then
-            cp "linux-manifest/${RELEASE_CHANNEL}-linux.yml" "$manifests_dir/"
+            manifest_name="${RELEASE_CHANNEL}-linux.yml"
+            node ../scripts/merge-linux-manifest.mjs \
+              "linux-manifest-arm64/${manifest_name}" \
+              "linux-manifest-x64/${manifest_name}" \
+              "$manifests_dir/${manifest_name}"
           fi
 
           if [[ "${{ needs.publish-windows.result }}" == "success" ]]; then

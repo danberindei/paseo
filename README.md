@@ -181,6 +181,9 @@ npm run dev:website
 # build the server stack
 npm run build:server
 
+# build desktop packages (pass electron-builder flags after --, e.g. --linux --arm64)
+npm run build:desktop
+
 # repo-wide checks
 npm run typecheck
 ```
