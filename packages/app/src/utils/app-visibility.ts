@@ -7,6 +7,31 @@ interface AppVisibilityInput {
   documentVisible: boolean;
 }
 
+const PAUSE_ANIMATIONS_STYLE_ID = "paseo-pause-animations";
+
+function applyAnimationPauseStyle(): void {
+  const hidden = typeof document !== "undefined" && document.hidden;
+  const existing = document.getElementById(PAUSE_ANIMATIONS_STYLE_ID);
+  if (hidden) {
+    if (!existing) {
+      const style = document.createElement("style");
+      style.id = PAUSE_ANIMATIONS_STYLE_ID;
+      style.textContent = "* { animation-play-state: paused !important; }";
+      document.head.appendChild(style);
+    }
+  } else {
+    existing?.remove();
+  }
+}
+
+export function installAnimationPauseOnHide(): void {
+  if (isNative || typeof document === "undefined") {
+    return;
+  }
+  document.addEventListener("visibilitychange", applyAnimationPauseStyle);
+  applyAnimationPauseStyle();
+}
+
 interface ActiveAppVisibilityInput extends AppVisibilityInput {
   windowFocused: boolean;
 }
