@@ -1,7 +1,13 @@
 import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
-import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
+import {
+  getIsAppActivelyVisible,
+  getIsAppVisible,
+  installAnimationPauseOnHide,
+} from "@/utils/app-visibility";
 import { isWeb } from "@/constants/platform";
+
+installAnimationPauseOnHide();
 
 let visible = getIsAppVisible();
 let activelyVisible = getIsAppActivelyVisible();
