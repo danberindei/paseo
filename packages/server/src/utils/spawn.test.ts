@@ -5,6 +5,11 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { buildSelfNodeCommand } from "../server/paseo-env.js";
+import {
+  __resetSlowCommandLoggerForTests,
+  __setSlowCommandThresholdForTests,
+  configureSlowCommandLogger,
+} from "./command-logging.js";
 import { execCommand, spawnProcess } from "./spawn.js";
 
 const printEnvScript = `
@@ -26,12 +31,23 @@ function parsePrintedEnv(stdout: string): Record<string, string | null> {
 
 describe("execCommand", () => {
   const tempDirs: string[] = [];
+  const logger = {
+    child: vi.fn(),
+    info: vi.fn(),
+  };
+
+  logger.child.mockReturnValue(
+    logger as unknown as Parameters<typeof configureSlowCommandLogger>[0],
+  );
 
   afterEach(() => {
     for (const tempDir of tempDirs) {
       rmSync(tempDir, { recursive: true, force: true });
     }
     tempDirs.length = 0;
+    __resetSlowCommandLoggerForTests();
+    logger.child.mockClear();
+    logger.info.mockClear();
   });
 
   test("returns stdout and stderr for a successful command", async () => {
@@ -214,5 +230,60 @@ describe("execCommand", () => {
       PASEO_NODE_ENV: null,
       PASEO_SUPERVISED: null,
     });
+  });
+
+  test("logs slow execCommand calls with command metadata", async () => {
+    __setSlowCommandThresholdForTests(0);
+    configureSlowCommandLogger(
+      logger as unknown as Parameters<typeof configureSlowCommandLogger>[0],
+    );
+
+    await execCommand(process.execPath, ["-e", "setTimeout(() => process.exit(0), 0)"], {
+      cwd: process.cwd(),
+    });
+
+    expect(logger.child).toHaveBeenCalledWith({ component: "command-logging" });
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "exec",
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 0)"],
+        cwd: process.cwd(),
+        durationMs: expect.any(Number),
+        thresholdMs: 0,
+        failed: false,
+      }),
+      "Slow command",
+    );
+  });
+
+  test("logs slow spawned commands when they exit", async () => {
+    __setSlowCommandThresholdForTests(0);
+    configureSlowCommandLogger(
+      logger as unknown as Parameters<typeof configureSlowCommandLogger>[0],
+    );
+
+    const child = spawnProcess(process.execPath, ["-e", "setTimeout(() => process.exit(0), 0)"], {
+      cwd: process.cwd(),
+      stdio: "ignore",
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => resolve());
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "spawn",
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 0)"],
+        cwd: process.cwd(),
+        durationMs: expect.any(Number),
+        thresholdMs: 0,
+        failed: false,
+      }),
+      "Slow command",
+    );
   });
 });

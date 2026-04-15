@@ -338,6 +338,11 @@ async function main() {
 
   process.on("SIGTERM", () => beginShutdown("SIGTERM"));
   process.on("SIGINT", () => beginShutdown("SIGINT"));
+  process.on("SIGHUP", () => beginShutdown("SIGHUP"));
+
+  process.on("exit", (code) => {
+    logger.info({ code }, "Daemon process exiting");
+  });
 
   process.on("uncaughtException", (err) => {
     logger.fatal({ err }, "Uncaught exception — daemon crashing");

@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { logSlowCommand } from "../../../../../utils/command-logging.js";
 import {
   applySherpaLoaderEnv,
   resolveSherpaLoaderEnv,
@@ -38,12 +39,32 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
+function runLoggedSpawnSync(
+  command: string,
+  args: string[],
+  options?: Parameters<typeof spawnSync>[2],
+): ReturnType<typeof spawnSync> {
+  const startedAt = performance.now();
+  const result = spawnSync(command, args, options);
+  logSlowCommand({
+    source: "spawn",
+    command,
+    args,
+    cwd: options?.cwd,
+    durationMs: performance.now() - startedAt,
+    exitCode: result.status ?? null,
+    signal: typeof result.signal === "string" ? (result.signal as NodeJS.Signals) : null,
+    ...(result.error ? { error: result.error } : {}),
+  });
+  return result;
+}
+
 function maybePatchLinuxAddonRunpath(addonPath: string): void {
   if (process.platform !== "linux") {
     return;
   }
   const patchelfEnv = createExternalCommandProcessEnv("patchelf", process.env);
-  const patchelfCheck = spawnSync("patchelf", ["--version"], {
+  const patchelfCheck = runLoggedSpawnSync("patchelf", ["--version"], {
     env: patchelfEnv,
     stdio: "ignore",
   });
@@ -51,19 +72,23 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
     return;
   }
 
-  const currentRpath = spawnSync("patchelf", ["--print-rpath", addonPath], {
+  const currentRpath = runLoggedSpawnSync("patchelf", ["--print-rpath", addonPath], {
     encoding: "utf8",
     env: patchelfEnv,
   });
   if (currentRpath.status !== 0) {
     return;
   }
-  const rpath = (currentRpath.stdout ?? "").trim();
+  const rawRpath =
+    typeof currentRpath.stdout === "string"
+      ? currentRpath.stdout
+      : (currentRpath.stdout?.toString("utf8") ?? "");
+  const rpath = rawRpath.trim();
   if (rpath.includes("$ORIGIN")) {
     return;
   }
 
-  spawnSync("patchelf", ["--set-rpath", "$ORIGIN", addonPath], {
+  runLoggedSpawnSync("patchelf", ["--set-rpath", "$ORIGIN", addonPath], {
     env: patchelfEnv,
     stdio: "ignore",
   });
