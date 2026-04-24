@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type pino from "pino";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
@@ -69,11 +70,13 @@ export class WorkspaceFilesSession {
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSubscriptions = new Map<string, () => void>();
+  private readonly paseoHome: string;
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
     this.downloadTokenStore = options.downloadTokenStore;
     this.logger = options.logger;
+    this.paseoHome = options.paseoHome;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
   }
@@ -366,7 +369,8 @@ export class WorkspaceFilesSession {
     const { cwd, requestId } = request;
 
     try {
-      const icon = await getProjectIcon(cwd);
+      const iconsDir = join(this.paseoHome, "project-icons");
+      const icon = await getProjectIcon(cwd, iconsDir);
       this.host.emit({
         type: "project_icon_response",
         payload: {

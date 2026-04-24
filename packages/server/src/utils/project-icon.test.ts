@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import {
   findProjectIcon,
   getProjectIcon,
+  projectIconDirName,
   ICON_PATTERNS,
   PRIORITY_DIRS,
   IGNORED_DIRS,
@@ -493,5 +494,68 @@ describe("getProjectIcon", () => {
   it("returns null when no icon is found", async () => {
     const result = await getProjectIcon(tempDir);
     expect(result).toBeNull();
+  });
+
+  describe("external icons directory", () => {
+    let iconsDir: string;
+
+    beforeEach(() => {
+      iconsDir = join(createTempDir(), "project-icons");
+      mkdirSync(iconsDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      rmSync(iconsDir, { recursive: true, force: true });
+    });
+
+    it("finds icon from iconsDir matching the project path", async () => {
+      const stem = projectIconDirName(tempDir);
+      writeFileSync(join(iconsDir, `${stem}.svg`), "<svg></svg>");
+
+      const result = await getProjectIcon(tempDir, iconsDir);
+      expect(result).not.toBeNull();
+      expect(result?.mimeType).toBe("image/svg+xml");
+    });
+
+    it("prefers iconsDir over in-project icon", async () => {
+      writeFileSync(join(tempDir, "favicon.ico"), "in-project");
+      const stem = projectIconDirName(tempDir);
+      writeFileSync(join(iconsDir, `${stem}.svg`), "<svg></svg>");
+
+      const result = await getProjectIcon(tempDir, iconsDir);
+      expect(result).not.toBeNull();
+      expect(result?.mimeType).toBe("image/svg+xml");
+    });
+
+    it("falls back to in-project icon when iconsDir has no match", async () => {
+      writeFileSync(join(tempDir, "favicon.ico"), "in-project");
+
+      const result = await getProjectIcon(tempDir, iconsDir);
+      expect(result).not.toBeNull();
+      expect(result?.mimeType).toBe("image/x-icon");
+    });
+
+    it("ignores files with non-image extensions", async () => {
+      const stem = projectIconDirName(tempDir);
+      writeFileSync(join(iconsDir, `${stem}.txt`), "not an image");
+
+      const result = await getProjectIcon(tempDir, iconsDir);
+      expect(result).toBeNull();
+    });
+
+    it("handles non-existent iconsDir gracefully", async () => {
+      const result = await getProjectIcon(tempDir, "/tmp/does-not-exist-icons");
+      expect(result).toBeNull();
+    });
+  });
+});
+
+describe("projectIconDirName", () => {
+  it("converts a Unix path to a dash-separated name", () => {
+    expect(projectIconDirName("/home/user/Github/paseo")).toBe("home-user-Github-paseo");
+  });
+
+  it("handles root path", () => {
+    expect(projectIconDirName("/")).toBe("root");
   });
 });

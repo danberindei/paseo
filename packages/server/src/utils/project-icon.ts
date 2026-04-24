@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from "fs/promises";
-import { extname, join } from "path";
+import { basename, extname, join, parse as parsePath } from "path";
 
 /**
  * Icon file patterns to search for, in priority order.
@@ -488,19 +488,7 @@ async function findDirRecursively(
   return recursionResults.find((result): result is string => result !== null) ?? null;
 }
 
-/**
- * Find and read a project icon/favicon, returning it as base64.
- * Only returns square icons smaller than MAX_ICON_SIZE (32KB).
- *
- * @param projectDir - The root directory of the project to search
- * @returns The icon data with mime type, or null if not found
- */
-export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | null> {
-  const iconPath = await findProjectIcon(projectDir);
-  if (!iconPath) {
-    return null;
-  }
-
+async function readIconFromFile(iconPath: string): Promise<ProjectIcon | null> {
   try {
     const stats = await stat(iconPath);
     if (stats.size > MAX_ICON_SIZE) {
@@ -518,7 +506,6 @@ export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | 
       }
     }
 
-    // Only return square images
     if (!isSquareImage(buffer, mimeType)) {
       return null;
     }
@@ -528,4 +515,78 @@ export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | 
   } catch {
     return null;
   }
+}
+
+const ICON_EXTENSIONS = new Set([".ico", ".png", ".svg", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+export function projectIconDirName(projectRootPath: string): string {
+  const { root } = parsePath(projectRootPath);
+  const withoutRoot = projectRootPath.slice(root.length).replace(/[\\/]+$/, "");
+  const sanitizedRoot = root.replace(/[:\\/]+/g, "-").replace(/^-+|-+$/g, "");
+  const prefix = sanitizedRoot ? sanitizedRoot + "-" : "";
+  if (!withoutRoot) {
+    return sanitizedRoot || "root";
+  }
+  return prefix + withoutRoot.replace(/[\\/]+/g, "-");
+}
+
+async function findIconInIconsDir(
+  iconsDir: string,
+  projectRootPath: string,
+): Promise<string | null> {
+  const stem = projectIconDirName(projectRootPath);
+  let entries: string[];
+  try {
+    entries = await readdir(iconsDir);
+  } catch {
+    return null;
+  }
+
+  for (const entry of entries) {
+    const ext = extname(entry).toLowerCase();
+    const name = basename(entry, ext);
+    if (name === stem && ICON_EXTENSIONS.has(ext)) {
+      const fullPath = join(iconsDir, entry);
+      try {
+        const s = await stat(fullPath);
+        if (s.isFile()) {
+          return fullPath;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Find and read a project icon/favicon, returning it as base64.
+ * Only returns square icons smaller than MAX_ICON_SIZE (32KB).
+ *
+ * Search order:
+ * 1. $PASEO_HOME/project-icons/ (if iconsDir provided) — lets users store
+ *    icons outside the project directory / git repo.
+ * 2. Auto-discovery inside projectDir (favicon, logo, etc.).
+ */
+export async function getProjectIcon(
+  projectDir: string,
+  iconsDir?: string,
+): Promise<ProjectIcon | null> {
+  if (iconsDir) {
+    const externalPath = await findIconInIconsDir(iconsDir, projectDir);
+    if (externalPath) {
+      const icon = await readIconFromFile(externalPath);
+      if (icon) {
+        return icon;
+      }
+    }
+  }
+
+  const discoveredPath = await findProjectIcon(projectDir);
+  if (!discoveredPath) {
+    return null;
+  }
+
+  return readIconFromFile(discoveredPath);
 }
