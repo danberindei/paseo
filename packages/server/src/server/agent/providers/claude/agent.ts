@@ -1605,7 +1605,10 @@ export class ClaudeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const configDir =
+      this.runtimeSettings?.env?.["CLAUDE_CONFIG_DIR"] ??
+      process.env.CLAUDE_CONFIG_DIR ??
+      path.join(os.homedir(), ".claude");
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
       : path.join(configDir, "projects");
@@ -1729,6 +1732,7 @@ async function resolveClaudeAuth(
   availability: { resolvedPath: string | null },
   runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<string | null> {
+  const env = runtimeSettings?.env ? { ...process.env, ...runtimeSettings.env } : undefined;
   const run = async (
     executable: string,
     args: string[],
@@ -1737,6 +1741,7 @@ async function resolveClaudeAuth(
       return await execCommand(executable, args, {
         ...createProviderEnvSpec({ runtimeSettings }),
         timeout: 5_000,
+        env,
       });
     } catch (error) {
       const err = toObjectRecord(error);
@@ -4956,7 +4961,10 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const configDir =
+      this.runtimeSettings?.env?.["CLAUDE_CONFIG_DIR"] ??
+      process.env.CLAUDE_CONFIG_DIR ??
+      path.join(os.homedir(), ".claude");
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);
