@@ -141,6 +141,14 @@ function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay 
       displayName: "Thinking",
     };
   }
+  const replName = input.name.trim().replace(/^\[|\]$/g, "");
+  if (input.detail.type === "unknown" && replName.toLowerCase() === "repl") {
+    const replInput = isRecord(input.detail.input) ? input.detail.input : undefined;
+    return {
+      displayName: "REPL",
+      summary: readString(replInput?.description),
+    };
+  }
   if (lowerName === "terminal") {
     return {
       displayName: "Terminal",

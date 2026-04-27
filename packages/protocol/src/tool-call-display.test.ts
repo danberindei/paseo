@@ -175,6 +175,32 @@ describe("shared tool-call display mapping", () => {
     expect(display.displayName).toBe("Speak");
   });
 
+  it("shows REPL description for the exact hook payload shape", () => {
+    const display = buildToolCallDisplayModel({
+      name: "REPL",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: {
+          code: "// Find today's work directory\\no.workdir = sh('ls /home/user/projects/work/ | grep \"^2026-04-27\" | head -3')\\no",
+          description: "Find today's work directory",
+        },
+        output: {
+          code: "// Find today's work directory\\no.workdir = sh('ls /home/user/projects/work/ | grep \"^2026-04-27\" | head -3')\\no",
+          result: "Permission denied for Read: Denied by user",
+          stdout: "",
+          stderr: "",
+        },
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "REPL",
+      summary: "Find today's work directory",
+    });
+  });
+
   it("labels plan detail rows as Plan", () => {
     const display = buildToolCallDisplayModel({
       name: "plan",
