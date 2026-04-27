@@ -117,6 +117,22 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("renders plain text tool rows as plain text labels", () => {
+    const display = buildToolCallDisplayModel({
+      name: "other",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        text: "Investigating merge conflicts",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Investigating merge conflicts",
+    });
+  });
+
   it("uses the command as terminal interaction summary when available", () => {
     const display = buildToolCallDisplayModel({
       name: "terminal",

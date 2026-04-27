@@ -113,10 +113,16 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
         displayName: readString(input.detail.subAgentType) ?? "Task",
         summary: readString(input.detail.description),
       };
-    case "plain_text":
-      return {
-        summary: input.detail.label,
-      };
+    case "plain_text": {
+      const plainText =
+        readString(input.detail.text?.trim()) ?? readString(input.detail.label?.trim());
+      if (plainText?.toLowerCase() === "task_complete") {
+        return {
+          displayName: "Task complete",
+        };
+      }
+      return plainText ? { displayName: plainText } : {};
+    }
     case "plan":
       return {
         displayName: "Plan",
