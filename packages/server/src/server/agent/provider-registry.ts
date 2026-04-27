@@ -343,9 +343,13 @@ function mapPersistenceHandle(
 }
 
 function mapRuntimeInfo(provider: AgentProvider, runtimeInfo: AgentRuntimeInfo): AgentRuntimeInfo {
+  if (provider === runtimeInfo.provider) {
+    return runtimeInfo;
+  }
   return {
     ...runtimeInfo,
     provider,
+    canonicalProvider: runtimeInfo.canonicalProvider ?? runtimeInfo.provider,
   };
 }
 

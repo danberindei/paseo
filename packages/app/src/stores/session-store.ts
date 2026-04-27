@@ -64,6 +64,7 @@ import {
 
 export interface AgentRuntimeInfo {
   provider: AgentProvider;
+  canonicalProvider?: AgentProvider;
   sessionId: string | null;
   model?: string | null;
   modeId?: string | null;

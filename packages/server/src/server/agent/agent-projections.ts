@@ -166,6 +166,9 @@ function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | u
     provider: ri.provider,
     sessionId: ri.sessionId,
   };
+  if (ri.canonicalProvider) {
+    runtimeInfo.canonicalProvider = ri.canonicalProvider;
+  }
   if (Object.prototype.hasOwnProperty.call(ri, "model")) {
     runtimeInfo.model = ri.model ?? null;
   }

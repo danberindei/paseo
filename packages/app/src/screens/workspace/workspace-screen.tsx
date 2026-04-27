@@ -2707,12 +2707,19 @@ function WorkspaceScreenContent({
         return;
       }
 
-      const command =
-        buildProviderCommand({
-          provider: agent.provider,
-          id: "resume",
-          sessionId: providerSessionId,
-        }) ?? null;
+      const providerCandidates = [
+        agent.provider,
+        agent.runtimeInfo?.provider,
+        agent.runtimeInfo?.canonicalProvider,
+      ];
+      const command = providerCandidates
+        .filter((p): p is string => typeof p === "string")
+        .reduce<string | null>(
+          (found, p) =>
+            found ??
+            buildProviderCommand({ provider: p, id: "resume", sessionId: providerSessionId }),
+          null,
+        );
       if (!command) {
         toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
         return;

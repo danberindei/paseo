@@ -835,6 +835,7 @@ const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> = z
 
 const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   provider: AgentProviderSchema,
+  canonicalProvider: AgentProviderSchema.optional(),
   sessionId: z.string().nullable(),
   model: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
