@@ -220,6 +220,25 @@ describe("toStoredAgentRecord", () => {
 });
 
 describe("toAgentPayload", () => {
+  it.each(["claude", "codex"])(
+    "preserves the canonical %s provider in live and stored snapshots",
+    (canonicalProvider) => {
+      const provider = `my-${canonicalProvider}`;
+      const agent = createManagedAgent({
+        provider,
+        config: { provider },
+        runtimeInfo: { provider, canonicalProvider, sessionId: "native-session" },
+        persistence: { provider, sessionId: "native-session" },
+      });
+
+      expect(toAgentPayload(agent).runtimeInfo).toEqual(agent.runtimeInfo);
+
+      const record = toStoredAgentRecord(agent);
+      expect(record.runtimeInfo).toEqual(agent.runtimeInfo);
+      expect(buildStoredAgentPayload(record, [provider]).runtimeInfo).toEqual(agent.runtimeInfo);
+    },
+  );
+
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({

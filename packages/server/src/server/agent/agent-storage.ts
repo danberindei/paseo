@@ -66,6 +66,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   runtimeInfo: z
     .object({
       provider: z.string(),
+      canonicalProvider: z.string().optional(),
       sessionId: z.string().nullable(),
       model: z.string().nullable().optional(),
       thinkingOptionId: z.string().nullable().optional(),

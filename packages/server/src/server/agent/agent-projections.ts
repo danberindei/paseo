@@ -202,6 +202,9 @@ function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | u
     provider: ri.provider,
     sessionId: ri.sessionId,
   };
+  if (ri.canonicalProvider) {
+    runtimeInfo.canonicalProvider = ri.canonicalProvider;
+  }
   if (Object.prototype.hasOwnProperty.call(ri, "model")) {
     runtimeInfo.model = ri.model ?? null;
   }
@@ -633,6 +636,9 @@ function sanitizeRuntimeInfo(
     provider: runtimeInfo.provider,
     sessionId: runtimeInfo.sessionId,
   };
+  if (runtimeInfo.canonicalProvider !== undefined) {
+    sanitized.canonicalProvider = runtimeInfo.canonicalProvider;
+  }
   if (runtimeInfo.model !== undefined) {
     sanitized.model = runtimeInfo.model;
   }

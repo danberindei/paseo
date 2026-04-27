@@ -552,6 +552,8 @@ export interface AgentRunResult {
 
 export interface AgentRuntimeInfo {
   provider: AgentProvider;
+  /** The underlying base provider when provider is a custom profile (e.g. "claude" when provider is "my-claude"). */
+  canonicalProvider?: AgentProvider;
   sessionId: string | null;
   model?: string | null;
   thinkingOptionId?: string | null;
