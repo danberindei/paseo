@@ -21,6 +21,24 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("uses the modified file name for edit tool calls", () => {
+    const display = buildToolCallDisplayModel({
+      name: "edit_file",
+      status: "running",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/tmp/repo/src/components/message.tsx",
+      },
+      cwd: "/tmp/repo",
+    });
+
+    expect(display).toEqual({
+      displayName: "message.tsx",
+      summary: "src/components/message.tsx",
+    });
+  });
+
   it("does not infer summaries from unknown raw detail", () => {
     const display = buildToolCallDisplayModel({
       name: "exec_command",
@@ -117,6 +135,89 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("renders plain text tool rows as plain text labels", () => {
+    const display = buildToolCallDisplayModel({
+      name: "other",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        text: "Investigating merge conflicts",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Investigating merge conflicts",
+    });
+  });
+
+  it("uses the notification label instead of its raw text", () => {
+    const display = buildToolCallDisplayModel({
+      name: "task_notification",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label: "Background task completed",
+        text: "<task-notification><status>completed</status></task-notification>",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Background task completed",
+    });
+  });
+
+  it.each(["", " \t "])("uses plain text when the label is empty (%j)", (label) => {
+    const display = buildToolCallDisplayModel({
+      name: "other",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label,
+        text: "Investigating merge conflicts",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Investigating merge conflicts",
+    });
+  });
+
+  it("formats task completion text", () => {
+    const display = buildToolCallDisplayModel({
+      name: "other",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        text: " TASK_COMPLETE ",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Task complete",
+    });
+  });
+
+  it("shows the shell command in the summary", () => {
+    const display = buildToolCallDisplayModel({
+      name: "shell",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "shell",
+        command: "git status --short",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Shell",
+      summary: "git status --short",
+    });
+  });
+
   it("uses the command as terminal interaction summary when available", () => {
     const display = buildToolCallDisplayModel({
       name: "terminal",
@@ -173,6 +274,32 @@ describe("shared tool-call display mapping", () => {
       detail: { type: "unknown", input: null, output: null },
     });
     expect(display.displayName).toBe("Speak");
+  });
+
+  it("shows REPL description for the exact hook payload shape", () => {
+    const display = buildToolCallDisplayModel({
+      name: "REPL",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: {
+          code: "// Find today's work directory\\no.workdir = sh('ls /home/user/projects/work/ | grep \"^2026-04-27\" | head -3')\\no",
+          description: "Find today's work directory",
+        },
+        output: {
+          code: "// Find today's work directory\\no.workdir = sh('ls /home/user/projects/work/ | grep \"^2026-04-27\" | head -3')\\no",
+          result: "Permission denied for Read: Denied by user",
+          stdout: "",
+          stderr: "",
+        },
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "REPL",
+      summary: "Find today's work directory",
+    });
   });
 
   it("labels plan detail rows as Plan", () => {

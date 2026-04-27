@@ -79,6 +79,11 @@ function buildFilePathDisplay(
   };
 }
 
+function getFileName(filePath: string): string {
+  const segments = filePath.split(/[\\/]/);
+  return segments[segments.length - 1] || filePath;
+}
+
 function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay {
   switch (input.detail.type) {
     case "shell":
@@ -89,7 +94,11 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
     case "read":
       return buildFilePathDisplay("Read", input.detail.filePath, input.cwd);
     case "edit":
-      return buildFilePathDisplay("Edit", input.detail.filePath, input.cwd);
+      return buildFilePathDisplay(
+        getFileName(input.detail.filePath),
+        input.detail.filePath,
+        input.cwd,
+      );
     case "write":
       return buildFilePathDisplay("Write", input.detail.filePath, input.cwd);
     case "search":
@@ -112,10 +121,16 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
         displayName: readString(input.detail.subAgentType) ?? "Task",
         summary: readString(input.detail.description),
       };
-    case "plain_text":
-      return {
-        summary: input.detail.label,
-      };
+    case "plain_text": {
+      const plainText =
+        readString(input.detail.label?.trim()) ?? readString(input.detail.text?.trim());
+      if (plainText?.toLowerCase() === "task_complete") {
+        return {
+          displayName: "Task complete",
+        };
+      }
+      return plainText ? { displayName: plainText } : {};
+    }
     case "plan":
       return {
         displayName: "Plan",
@@ -138,6 +153,14 @@ function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay 
   if (input.detail.type === "unknown" && lowerName === "thinking") {
     return {
       displayName: "Thinking",
+    };
+  }
+  const replName = input.name.trim().replace(/^\[|\]$/g, "");
+  if (input.detail.type === "unknown" && replName.toLowerCase() === "repl") {
+    const replInput = isRecord(input.detail.input) ? input.detail.input : undefined;
+    return {
+      displayName: "REPL",
+      summary: readString(replInput?.description),
     };
   }
   if (lowerName === "terminal") {
