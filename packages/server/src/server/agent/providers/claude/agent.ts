@@ -492,6 +492,7 @@ interface ClaudeOptionsLogSummary {
   cwd: string | null;
   permissionMode: string | null;
   model: string | null;
+  effort: string | null;
   includePartialMessages: boolean;
   settingSources: string[];
   enableFileCheckpointing: boolean;
@@ -537,6 +538,7 @@ function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogS
     cwd: typeof options.cwd === "string" ? options.cwd : null,
     permissionMode: typeof options.permissionMode === "string" ? options.permissionMode : null,
     model: typeof options.model === "string" ? options.model : null,
+    effort: typeof options.effort === "string" ? options.effort : null,
     includePartialMessages: options.includePartialMessages === true,
     settingSources: Array.isArray(options.settingSources) ? options.settingSources : [],
     enableFileCheckpointing: options.enableFileCheckpointing === true,
