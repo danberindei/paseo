@@ -21,6 +21,7 @@ export interface AgentScreenAgent {
   } | null;
   options?: Agent["options"];
   controls?: Agent["controls"];
+  lastActivityAt?: Date | null;
   lastError?: string | null;
   projectPlacement?: {
     projectKey?: string;

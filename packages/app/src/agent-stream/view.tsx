@@ -1002,6 +1002,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <TurnFooter
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+            lastUpdateAt={context.lastActivityAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
@@ -1015,6 +1016,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
+        context.lastActivityAt,
         bottomTurnFooterHost,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
@@ -1285,6 +1287,9 @@ function collectAgentScreenAgentDiffs(left: AgentScreenAgent, right: AgentScreen
     reasons.push("agent.capabilities");
   }
   if (left.lastError !== right.lastError) reasons.push("agent.lastError");
+  if (left.lastActivityAt?.getTime() !== right.lastActivityAt?.getTime()) {
+    reasons.push("agent.lastActivityAt");
+  }
   reasons.push(...collectAgentSetupDiffs(left, right));
   reasons.push(...collectAgentProjectPlacementDiffs(left.projectPlacement, right.projectPlacement));
   return reasons;

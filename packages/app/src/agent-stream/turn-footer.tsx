@@ -1,9 +1,10 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
+import { formatMessageTimestamp } from "@/utils/time";
 import {
   collectAssistantResponseContentForStreamRenderStrategy,
   type StreamStrategy,
@@ -48,6 +49,7 @@ export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<v
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
   inFlightTurnStartedAt,
+  lastUpdateAt,
   host,
   strategy,
   supportsTimelineCursor,
@@ -56,6 +58,7 @@ export const TurnFooter = memo(function TurnFooter({
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
+  lastUpdateAt?: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
@@ -67,6 +70,7 @@ export const TurnFooter = memo(function TurnFooter({
       <TurnFooterRow>
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
+          lastUpdateAt={lastUpdateAt ?? null}
           onForkInFlightTurn={onForkInFlightTurn}
         />
       </TurnFooterRow>
@@ -118,12 +122,18 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  lastUpdateAt = null,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  lastUpdateAt?: Date | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
+  const formattedTimestamp = useMemo(
+    () => (lastUpdateAt ? formatMessageTimestamp(lastUpdateAt) : null),
+    [lastUpdateAt],
+  );
   return (
     <View style={stylesheet.turnFooterContent}>
       <View style={stylesheet.workingLoader}>
@@ -131,6 +141,11 @@ const WorkingIndicator = memo(function WorkingIndicator({
       </View>
       {/* Match the completed-turn footer: actions precede timing metadata. */}
       {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
+      {formattedTimestamp ? (
+        <Text selectable numberOfLines={1} style={stylesheet.workingIndicatorTimestamp}>
+          {formattedTimestamp}
+        </Text>
+      ) : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
@@ -145,15 +160,18 @@ const WorkingIndicator = memo(function WorkingIndicator({
 
 function RunningTurnFooter({
   inFlightTurnStartedAt,
+  lastUpdateAt,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt: Date | null;
+  lastUpdateAt: Date | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
+        lastUpdateAt={lastUpdateAt}
         onForkInFlightTurn={onForkInFlightTurn}
       />
     </View>
@@ -254,5 +272,10 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   workingLoader: {
     marginLeft: -2,
+  },
+  workingIndicatorTimestamp: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.3,
   },
 }));
