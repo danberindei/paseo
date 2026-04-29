@@ -121,6 +121,7 @@ interface ChatAgentStateShape {
   thinkingOptionId?: Agent["thinkingOptionId"];
   runtimeInfo?: Agent["runtimeInfo"];
   features?: Agent["features"];
+  lastActivityAt: Date | null;
   lastError?: Agent["lastError"] | null;
 }
 
@@ -158,6 +159,7 @@ const EMPTY_CHAT_AGENT_STATE: ChatAgentSelectedState = {
   id: null,
   status: null,
   cwd: null,
+  lastActivityAt: null,
   lastError: null,
   archivedAt: null,
   requiresAttention: false,
@@ -184,6 +186,7 @@ function selectChatAgentState(
     thinkingOptionId: agent.thinkingOptionId,
     runtimeInfo: agent.runtimeInfo,
     features: agent.features,
+    lastActivityAt: agent.lastActivityAt,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
@@ -211,6 +214,7 @@ function buildChatAgentFromState(
     thinkingOptionId: state.thinkingOptionId,
     runtimeInfo: state.runtimeInfo,
     features: state.features,
+    lastActivityAt: state.lastActivityAt,
     lastError: state.lastError ?? null,
     projectPlacement,
   };
@@ -999,6 +1003,7 @@ function ChatAgentContent({
         id: agentId,
         status: "running",
         cwd: agent?.cwd ?? ".",
+        lastActivityAt: null,
         projectPlacement: agent?.projectPlacement ?? null,
       },
     };
