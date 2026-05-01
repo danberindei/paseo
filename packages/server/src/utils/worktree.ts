@@ -1372,12 +1372,21 @@ async function resolveWorktreeSourcePlan({
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       const changeRequestNumber =
         source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+      const fallbackCheckoutRefs = source.checkoutRefs ?? [
+        { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+      ];
+      // refs/pull/N/head only exists on the base repository, so when origin points at
+      // a fork the head branch has to come from the head repository URL.
+      const checkoutRefs: WorktreeCheckoutRef[] = source.pushRemoteUrl
+        ? [
+            { remoteName: source.pushRemoteUrl, remoteRef: `refs/heads/${source.headRef}` },
+            ...fallbackCheckoutRefs,
+          ]
+        : fallbackCheckoutRefs;
       await fetchWorktreeCheckoutRefs({
         cwd,
         localBranchName,
-        checkoutRefs: source.checkoutRefs ?? [
-          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-        ],
+        checkoutRefs,
       });
       const shouldTrackOriginHead = source.trackOriginHead === true;
       const trackingRemote = shouldTrackOriginHead
