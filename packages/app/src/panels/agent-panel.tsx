@@ -1613,7 +1613,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   );
 });
 
-function ActiveAgentComposer({
+const ActiveAgentComposer = memo(function ActiveAgentComposer({
   agentId,
   serverId,
   isPaneFocused,
@@ -1746,7 +1746,7 @@ function ActiveAgentComposer({
       />
     </View>
   );
-}
+});
 
 function AgentSessionUnavailableState({
   serverLabel,

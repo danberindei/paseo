@@ -17,24 +17,51 @@ interface ApplyFileMentionReplacementInput {
 
 const INVALID_MENTION_QUERY_CHARS = /[\s\n\r\t"']/;
 
+function isInvalidMentionChar(char: string): boolean {
+  switch (char) {
+    case " ":
+    case "\n":
+    case "\r":
+    case "\t":
+    case "\v":
+    case "\f":
+    case '"':
+    case "'":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function findActiveFileMention(input: FindActiveFileMentionInput): FileMentionRange | null {
   const clampedCursor = Math.max(0, Math.min(input.cursorIndex, input.text.length));
-  const beforeCursor = input.text.slice(0, clampedCursor);
+  if (clampedCursor === 0) {
+    return null;
+  }
 
-  for (
-    let atIndex = beforeCursor.lastIndexOf("@");
-    atIndex >= 0;
-    atIndex = atIndex === 0 ? -1 : beforeCursor.lastIndexOf("@", atIndex - 1)
-  ) {
-    const query = beforeCursor.slice(atIndex + 1);
-    if (INVALID_MENTION_QUERY_CHARS.test(query)) {
-      continue;
+  const beforeCursor = input.text.slice(0, clampedCursor);
+  const trailingChar = beforeCursor.charAt(beforeCursor.length - 1);
+  if (!trailingChar || isInvalidMentionChar(trailingChar)) {
+    return null;
+  }
+
+  for (let index = beforeCursor.length - 1; index >= 0; index -= 1) {
+    const char = beforeCursor.charAt(index);
+    if (char === "@") {
+      const query = beforeCursor.slice(index + 1);
+      if (INVALID_MENTION_QUERY_CHARS.test(query)) {
+        return null;
+      }
+      return {
+        start: index,
+        end: clampedCursor,
+        query,
+      };
     }
-    return {
-      start: atIndex,
-      end: clampedCursor,
-      query,
-    };
+
+    if (isInvalidMentionChar(char)) {
+      return null;
+    }
   }
 
   return null;

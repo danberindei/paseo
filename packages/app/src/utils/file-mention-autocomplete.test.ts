@@ -48,6 +48,28 @@ describe("findActiveFileMention", () => {
     });
     expect(mention).toBeNull();
   });
+
+  it("returns null immediately once the cursor has moved past a trailing space", () => {
+    const text = "@249 ";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toBeNull();
+  });
+
+  it("keeps a bare at-sign active so autocomplete can open before any query text", () => {
+    const text = "open @";
+    const mention = findActiveFileMention({
+      text,
+      cursorIndex: text.length,
+    });
+    expect(mention).toEqual({
+      start: text.indexOf("@"),
+      end: text.length,
+      query: "",
+    });
+  });
 });
 
 describe("formatQuotedFileMentionPath", () => {
