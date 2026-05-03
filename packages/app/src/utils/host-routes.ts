@@ -587,3 +587,15 @@ export function normalizeProjectSettingsRouteId(value: string | string[] | undef
   const id = Array.isArray(value) ? value[0] : value;
   return typeof id === "string" ? id : "";
 }
+
+export function buildSpacesSettingsRoute() {
+  return "/settings/spaces" as const;
+}
+
+export function buildSpaceSettingsRoute(spaceId: string) {
+  const normalized = trimNonEmpty(spaceId);
+  if (!normalized) {
+    throw new Error("buildSpaceSettingsRoute requires a non-empty spaceId");
+  }
+  return `/settings/spaces/${encodeSegment(normalized)}` as const;
+}

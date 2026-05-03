@@ -91,6 +91,8 @@ export interface AppSettings {
   vimKeybindings: boolean;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
+  /** Whether supporting tabs (e.g. agent details) open in the side panel on desktop. */
+  openSupportingTabsInSidePanel?: boolean;
   pullRequestOpenLocation: PullRequestOpenLocation;
 }
 

@@ -192,3 +192,7 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
 
   return false;
 }
+
+export async function dismissOsNotificationsForAgent(_agentId: string): Promise<void> {
+  // Platform notification APIs don't currently support per-agent dismissal.
+}

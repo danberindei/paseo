@@ -1,3 +1,5 @@
+import { ipcMain, shell } from "electron";
+
 interface ExternalUrlOwner {
   open(url: string): Promise<void>;
 }
@@ -18,4 +20,9 @@ export function createExternalUrlOpener(owner: ExternalUrlOwner) {
     }
     return owner.open(url.href);
   };
+}
+
+export function registerOpenerHandlers(): void {
+  const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
+  ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
 }

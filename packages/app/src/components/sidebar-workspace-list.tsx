@@ -36,7 +36,7 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import { ExternalLink, EyeOff, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -68,6 +68,7 @@ import {
   useSidebarViewStore,
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
+import { selectActiveSpace, useSpaceStore } from "@/stores/space-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import {
   ContextMenu,
@@ -163,6 +164,7 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedEyeOff = withUnistyles(EyeOff);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -457,6 +459,7 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
+const eyeOffLeadingIcon = <ThemedEyeOff size={14} uniProps={foregroundMutedColorMapping} />;
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -556,6 +559,12 @@ function ProjectMenuItems({
         toast.error(t("sidebar.project.actions.openNewWindowFailed"));
       });
   }, [projectPath, t, toast]);
+  const activeSpace = useSpaceStore(selectActiveSpace);
+  const removeProjectFromSpace = useSpaceStore((s) => s.removeProjectFromSpace);
+  const handleHideFromSpace = useCallback(() => {
+    if (!activeSpace || !settingsTarget) return;
+    removeProjectFromSpace(activeSpace.id, settingsTarget.projectId);
+  }, [activeSpace, removeProjectFromSpace, settingsTarget]);
 
   return (
     <>
@@ -584,6 +593,16 @@ function ProjectMenuItems({
         path={projectPath}
         testID={`sidebar-project-menu-open-folder-${projectViewKey}`}
       />
+      {activeSpace ? (
+        <ProjectMenuItem
+          surface={surface}
+          testID={`sidebar-project-menu-hide-from-space-${projectViewKey}`}
+          leading={eyeOffLeadingIcon}
+          onSelect={handleHideFromSpace}
+        >
+          {`Hide from ${activeSpace.name}`}
+        </ProjectMenuItem>
+      ) : null}
       <ProjectMenuItem
         surface={surface}
         testID={`sidebar-project-menu-remove-${projectViewKey}`}

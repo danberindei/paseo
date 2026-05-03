@@ -6,6 +6,7 @@ import { PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
 import { ScreenTitle } from "./screen-title";
 import { HeaderToggleButton, headerIconSlotStyle } from "./header-toggle-button";
+import { SpaceSwitcher } from "@/components/space-switcher";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getShortcutOs } from "@/utils/shortcut-platform";
@@ -147,6 +148,7 @@ export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps)
       left={
         <>
           <SidebarMenuToggle />
+          <SpaceSwitcher />
           {title && <ScreenTitle>{title}</ScreenTitle>}
         </>
       }

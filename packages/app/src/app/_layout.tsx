@@ -87,6 +87,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
+import { useInitialSpaceId } from "@/hooks/use-initial-space-id";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { resolveExplorerSidebarPresentation } from "@/workspace-tabs/explorer-sidebar";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
@@ -118,6 +119,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
+import { isProjectVisibleInActiveSpace, useSpaceStore } from "@/stores/space-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -159,6 +161,15 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   startupBlocker: { kind: "none" },
 });
 
+function focusElectronWindowForProject(projectId: string | null): void {
+  if (!projectId) return;
+  const { spaces } = useSpaceStore.getState();
+  const targetSpace = spaces.find((s) => s.projectIds.includes(projectId));
+  if (targetSpace) {
+    void getDesktopHost()?.windows?.openWithSpace?.(targetSpace.id);
+  }
+}
+
 function PushNotificationRouter() {
   const router = useRouter();
   const lastHandledIdRef = useRef<string | null>(null);
@@ -168,6 +179,14 @@ function PushNotificationRouter() {
     const workspaceId = target.workspaceId;
     const agentId = target.agentId;
     if (serverId && workspaceId && agentId) {
+      if (getIsElectronRuntime()) {
+        const session = useSessionStore.getState().sessions[serverId];
+        const workspace = session?.workspaces.get(workspaceId);
+        if (!isProjectVisibleInActiveSpace(workspace?.projectId ?? null)) {
+          focusElectronWindowForProject(workspace?.projectId ?? null);
+          return;
+        }
+      }
       navigateToAgent({ serverId, workspaceId, agentId, pin: true });
       return;
     }
@@ -498,6 +517,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     // Off a workspace route there is no explorer — only the agent list.
     toggleAgentList();
   }, [keyboardActionDispatcher, toggleAgentList]);
+
+  useInitialSpaceId();
+
   // TODO: stop matching pathname here as a branch. `chromeEnabled` should not
   // conflate workspace/project-specific chrome (sidebar, mobile gesture) with
   // global concerns like keyboard shortcuts. Split those out so settings (and

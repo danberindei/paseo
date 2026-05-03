@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
@@ -18,6 +18,7 @@ import type { TFunction } from "i18next";
 import { Buffer } from "buffer";
 import {
   ArrowLeft,
+  Layers,
   Settings,
   Palette,
   Server,
@@ -35,7 +36,6 @@ import {
   FolderGit2,
   SquareTerminal,
   Code2,
-  Smartphone,
   Sparkles,
   Blocks,
   PanelsTopLeft,
@@ -104,7 +104,6 @@ import {
 } from "@/i18n/locales";
 import {
   HostConnectionsPage,
-  HostPairDevicePage,
   HostAgentsPage,
   HostSettingsPage,
   HostProvidersPage,
@@ -116,21 +115,29 @@ import { HostPluginsPage } from "@/screens/settings/plugins-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
-import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import SpacesScreen from "@/screens/manage-spaces-screen";
+import SpaceSettingsScreen from "@/screens/space-projects-screen";
+import {
+  SETTINGS_DESKTOP_SIDEBAR_WIDTH,
+  supportsDesktopPaneSplits,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   type EnableBuiltInDaemonOption,
   useEnableBuiltInDaemonOption,
 } from "@/desktop/hooks/use-enable-built-in-daemon-option";
 import {
+  buildProjectsSettingsRoute,
   buildSettingsHostSectionRoute,
+  buildSpacesSettingsRoute,
   buildSettingsSectionRoute,
   type HostSectionSlug,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
 import { useLastWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { returnFromSettings, type SettingsView } from "@/navigation/settings-navigation";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -185,9 +192,7 @@ interface HostSectionItem {
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "host", labelKey: "settings.hostSections.host", icon: Server },
-  { id: "projects", labelKey: "settings.hostSections.projects", icon: FolderGit2 },
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
-  { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
   { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
@@ -202,12 +207,8 @@ function renderHostSettingsContent(
   onHostRemoved: () => void,
 ): ReactNode {
   switch (view.section) {
-    case "projects":
-      return <ProjectsScreen serverId={view.serverId} />;
     case "connections":
       return <HostConnectionsPage serverId={view.serverId} />;
-    case "pair-device":
-      return <HostPairDevicePage serverId={view.serverId} />;
     case "agents":
       return <HostAgentsPage serverId={view.serverId} />;
     case "metadata":
@@ -282,6 +283,7 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleSidePanelRoutingChange: (openSupportingTabsInSidePanel: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -356,6 +358,7 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleSidePanelRoutingChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -503,6 +506,23 @@ function GeneralSection({
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
+        {supportsDesktopPaneSplits() ? (
+          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.sidePanelRouting.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.sidePanelRouting.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.openSupportingTabsInSidePanel ?? false}
+              onValueChange={handleSidePanelRoutingChange}
+              accessibilityLabel={t("settings.general.sidePanelRouting.label")}
+            />
+          </View>
+        ) : null}
       </View>
     </SettingsSection>
   );
@@ -510,7 +530,7 @@ function GeneralSection({
 
 interface DiagnosticsSectionProps {
   useLegacyTerminalRenderer: boolean;
-  onUseLegacyTerminalRendererChange: (value: boolean) => void;
+  onUseLegacyTerminalRendererChange: (useLegacyTerminalRenderer: boolean) => void;
   voiceAudioEngine: ReturnType<typeof useVoiceAudioEngineOptional>;
   isPlaybackTestRunning: boolean;
   playbackTestResult: string | null;
@@ -533,26 +553,6 @@ function DiagnosticsSection({
   return (
     <SettingsSection title={t("settings.diagnostics.title")}>
       <View style={settingsStyles.card}>
-        {isNative ? (
-          <View style={settingsStyles.row} testID="legacy-terminal-renderer-row">
-            <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.diagnostics.legacyTerminalRenderer.label")}
-              </Text>
-              <Text style={settingsStyles.rowHint}>
-                {t("settings.diagnostics.legacyTerminalRenderer.description")}
-              </Text>
-            </View>
-            <Switch
-              value={useLegacyTerminalRenderer}
-              onValueChange={onUseLegacyTerminalRendererChange}
-              accessibilityLabel={t(
-                "settings.diagnostics.legacyTerminalRenderer.accessibilityLabel",
-              )}
-              testID="legacy-terminal-renderer-switch"
-            />
-          </View>
-        ) : null}
         <View style={settingsStyles.row} testID="app-diagnostic-row">
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{t("settings.diagnostics.app.rowTitle")}</Text>
@@ -579,6 +579,21 @@ function DiagnosticsSection({
               ? t("settings.diagnostics.playing")
               : t("settings.diagnostics.playTest")}
           </Button>
+        </View>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.diagnostics.legacyTerminalRenderer.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.diagnostics.legacyTerminalRenderer.description")}
+            </Text>
+          </View>
+          <Switch
+            value={useLegacyTerminalRenderer}
+            onValueChange={onUseLegacyTerminalRendererChange}
+            accessibilityLabel={t("settings.diagnostics.legacyTerminalRenderer.accessibilityLabel")}
+          />
         </View>
       </View>
     </SettingsSection>
@@ -938,6 +953,69 @@ function SidebarHostSectionButton({
   );
 }
 
+interface SidebarProjectsButtonProps {
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+function SidebarProjectsButton({ isSelected, onSelect }: SidebarProjectsButtonProps) {
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
+  const labelStyle = useMemo(
+    () => [sidebarStyles.label, isSelected && { color: theme.colors.foreground }],
+    [isSelected, theme.colors.foreground],
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      onPress={onSelect}
+      testID="settings-projects"
+      style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
+    >
+      <FolderGit2
+        size={theme.iconSize.md}
+        color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+      />
+      <Text style={labelStyle} numberOfLines={1}>
+        {t("settings.projects")}
+      </Text>
+    </Pressable>
+  );
+}
+
+interface SidebarSpacesButtonProps {
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+function SidebarSpacesButton({ isSelected, onSelect }: SidebarSpacesButtonProps) {
+  const { theme } = useUnistyles();
+  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
+  const labelStyle = useMemo(
+    () => [sidebarStyles.label, isSelected && { color: theme.colors.foreground }],
+    [isSelected, theme.colors.foreground],
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      onPress={onSelect}
+      testID="settings-spaces"
+      style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
+    >
+      <Layers
+        size={theme.iconSize.md}
+        color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+      />
+      <Text style={labelStyle} numberOfLines={1}>
+        Spaces
+      </Text>
+    </Pressable>
+  );
+}
+
 interface HostPickerProps {
   activeServerId: string | null;
   sortedHosts: HostProfile[];
@@ -947,7 +1025,7 @@ interface HostPickerProps {
 }
 
 /**
- * Scopes the host sections to a host. Reuses the canonical sidebar host
+ * Scopes the four host sections to a host. Reuses the canonical sidebar host
  * switcher pattern (left-sidebar.tsx): a quiet row-styled trigger opening a
  * <Combobox>. The local host is listed first, each row shows the connection it
  * is using right now; an "Add host" row is always reachable from the list —
@@ -1025,6 +1103,8 @@ interface SettingsSidebarProps {
   onSelectSection: (section: SettingsSectionSlug) => void;
   onSelectHostSection: (section: HostSectionSlug) => void;
   onSelectHost: (serverId: string) => void;
+  onSelectSpaces: () => void;
+  onSelectProjects: () => void;
   onAddHost: () => void;
   onBackToWorkspace: () => void;
   activeHostServerId: string | null;
@@ -1036,6 +1116,8 @@ function SettingsSidebar({
   onSelectSection,
   onSelectHostSection,
   onSelectHost,
+  onSelectSpaces,
+  onSelectProjects,
   onAddHost,
   onBackToWorkspace,
   activeHostServerId,
@@ -1063,23 +1145,33 @@ function SettingsSidebar({
     [insets.top, isDesktop],
   );
   const selectedSectionId = view.kind === "section" ? view.section : null;
-  let selectedHostSection: HostSectionSlug | null = null;
-  if (view.kind === "host") selectedHostSection = view.section;
-  if (view.kind === "project") selectedHostSection = "projects";
+  const selectedHostSection = view.kind === "host" ? view.section : null;
+  const isSpacesSelected = view.kind === "spaces" || view.kind === "space";
+  const isProjectsSelected = view.kind === "projects" || view.kind === "project";
 
   const sidebarBody = (
     <>
       <View style={sidebarStyles.list}>
         <Text style={sidebarStyles.groupLabel}>{t("settings.groups.app")}</Text>
         {items.map((item) => (
-          <SidebarSectionButton
-            key={item.id}
-            itemId={item.id}
-            label={t(item.labelKey)}
-            icon={item.icon}
-            isSelected={selectedSectionId === item.id}
-            onSelect={onSelectSection}
-          />
+          <Fragment key={item.id}>
+            <SidebarSectionButton
+              itemId={item.id}
+              label={t(item.labelKey)}
+              icon={item.icon}
+              isSelected={selectedSectionId === item.id}
+              onSelect={onSelectSection}
+            />
+            {item.id === "general" ? (
+              <>
+                <SidebarSpacesButton isSelected={isSpacesSelected} onSelect={onSelectSpaces} />
+                <SidebarProjectsButton
+                  isSelected={isProjectsSelected}
+                  onSelect={onSelectProjects}
+                />
+              </>
+            ) : null}
+          </Fragment>
         ))}
       </View>
       <SidebarSeparator />
@@ -1219,7 +1311,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   // The host the four sections scope to: the host on the active view, otherwise
   // the picker choice, otherwise the connected local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
-    if (view.kind === "host" || view.kind === "project") return view.serverId;
+    if (view.kind === "host") return view.serverId;
     return resolveActiveHostServerId({
       selectedServerId: selectedSettingsHostServerId,
       localServerId,
@@ -1252,6 +1344,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const handleTerminalScrollbackLinesChange = useCallback(
     (terminalScrollbackLines: number) => {
       void updateSettings({ terminalScrollbackLines });
+    },
+    [updateSettings],
+  );
+
+  const handleSidePanelRoutingChange = useCallback(
+    (openSupportingTabsInSidePanel: boolean) => {
+      void updateSettings({ openSupportingTabsInSidePanel });
     },
     [updateSettings],
   );
@@ -1362,19 +1461,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const handleSelectHost = useCallback(
     (serverId: string) => {
       setSelectedSettingsHostServerId(serverId);
-      if (view.kind === "project") {
-        const target = buildSettingsHostSectionRoute(serverId, "projects");
-        if (isCompactLayout) {
-          router.push(target);
-        } else {
-          router.replace(target);
-        }
-        return;
-      }
       if (view.kind !== "host") {
         return;
       }
-      const target = buildSettingsHostSectionRoute(serverId, view.section);
+      const section: HostSectionSlug = view.section;
+      const target = buildSettingsHostSectionRoute(serverId, section);
       if (isCompactLayout) {
         router.push(target);
       } else {
@@ -1400,6 +1491,28 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [activeHostServerId, handleAddHost, isCompactLayout, router],
   );
 
+  const handleSelectProjects = useCallback(() => {
+    if (!activeHostServerId) {
+      handleAddHost();
+      return;
+    }
+    const target = buildProjectsSettingsRoute(activeHostServerId);
+    if (isCompactLayout) {
+      router.push(target);
+    } else {
+      router.replace(target);
+    }
+  }, [activeHostServerId, handleAddHost, isCompactLayout, router]);
+
+  const handleSelectSpaces = useCallback(() => {
+    const target = buildSpacesSettingsRoute();
+    if (isCompactLayout) {
+      router.push(target);
+    } else {
+      router.replace(target);
+    }
+  }, [isCompactLayout, router]);
+
   const handleScanQr = useCallback(() => {
     closeAddConnectionFlow();
     router.push({
@@ -1416,6 +1529,14 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       router.replace(fallback);
     }
   }, [isCompactLayout, router]);
+
+  const handleBackToRoot = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/settings");
+    }
+  }, [router]);
 
   const handleBackFromDetail = useCallback(() => {
     returnFromSettings(view);
@@ -1440,8 +1561,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       if (!item) return null;
       return { title: t(item.labelKey), Icon: item.icon };
     }
-    if (view.kind === "project") {
+    if (view.kind === "project" || view.kind === "projects") {
       return { title: t("settings.projects"), Icon: FolderGit2 };
+    }
+    if (view.kind === "space" || view.kind === "spaces") {
+      return { title: "Spaces", Icon: Layers };
     }
     return null;
   })();
@@ -1455,6 +1579,9 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       if (view.kind === "host") {
         return renderHostSettingsContent(view, handleHostRemoved);
       }
+      if (view.kind === "projects") {
+        return <ProjectsScreen serverId={activeHostServerId ?? ""} />;
+      }
       if (view.kind === "project") {
         return (
           <ProjectSettingsScreen
@@ -1464,6 +1591,12 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
             showBackToProjects={!isCompactLayout}
           />
         );
+      }
+      if (view.kind === "spaces") {
+        return <SpacesScreen />;
+      }
+      if (view.kind === "space") {
+        return <SpaceSettingsScreen spaceId={view.spaceId} />;
       }
       if (view.kind === "section") {
         switch (view.section) {
@@ -1477,6 +1610,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                   handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                   handleLanguageChange={handleLanguageChange}
                   handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                  handleSidePanelRoutingChange={handleSidePanelRoutingChange}
                 />
                 {isDesktopApp ? <BrowserDataSection /> : null}
               </>
@@ -1578,6 +1712,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
             onSelectSection={handleSelectSection}
             onSelectHostSection={handleSelectHostSection}
             onSelectHost={handleSelectHost}
+            onSelectSpaces={handleSelectSpaces}
+            onSelectProjects={handleSelectProjects}
             onAddHost={handleAddHost}
             onBackToWorkspace={handleBackToWorkspace}
             activeHostServerId={activeHostServerId}
@@ -1589,13 +1725,18 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     );
   }
 
+  // Mobile detail: full-screen content with a back header. Project detail uses
+  // an app-level back (out of settings, to the workspace) since the in-body
+  // "Back to projects" ghost button handles list-level back; other detail views
+  // step back to the settings root.
+  const detailBackHandler = view.kind === "project" ? handleBackToWorkspace : handleBackToRoot;
   if (isCompactLayout) {
     return (
       <View style={styles.container}>
         <BackHeader
           title={detailHeader?.title}
           titleAccessory={detailHeader?.titleAccessory}
-          onBack={handleBackFromDetail}
+          onBack={detailBackHandler}
         />
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <View style={styles.content}>{content}</View>
@@ -1617,6 +1758,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
             onSelectSection={handleSelectSection}
             onSelectHostSection={handleSelectHostSection}
             onSelectHost={handleSelectHost}
+            onSelectSpaces={handleSelectSpaces}
+            onSelectProjects={handleSelectProjects}
             onAddHost={handleAddHost}
             onBackToWorkspace={handleBackToWorkspace}
             activeHostServerId={activeHostServerId}

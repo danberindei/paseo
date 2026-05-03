@@ -49,19 +49,6 @@ function getNotificationIcon(): Electron.NativeImage | null {
   return null;
 }
 
-function focusSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
-  const win = BrowserWindow.fromWebContents(sender) ?? BrowserWindow.getAllWindows()[0] ?? null;
-  if (!win || win.isDestroyed()) {
-    return null;
-  }
-  win.show();
-  if (win.isMinimized()) {
-    win.restore();
-  }
-  win.focus();
-  return win;
-}
-
 /**
  * macOS requires a notification to have been shown at least once before
  * the app appears in System Preferences > Notifications. We fire a
@@ -78,7 +65,24 @@ export function ensureNotificationCenterRegistration(): void {
   probe.show();
 }
 
-export function registerNotificationHandlers(): void {
+interface NotificationHandlerContext {
+  getWindowRegistry: () => Map<BrowserWindow, string | null>;
+  getLastFocusedWindow: () => BrowserWindow | null;
+}
+
+function findWindowForSpaceId(
+  registry: Map<BrowserWindow, string | null>,
+  spaceId: string,
+): BrowserWindow | null {
+  for (const [win, boundSpaceId] of registry) {
+    if (boundSpaceId === spaceId && !win.isDestroyed()) {
+      return win;
+    }
+  }
+  return null;
+}
+
+export function registerNotificationHandlers(context: NotificationHandlerContext): void {
   ipcMain.handle("paseo:notification:isSupported", () => {
     return Notification.isSupported();
   });
@@ -107,10 +111,29 @@ export function registerNotificationHandlers(): void {
     activeNotifications.add(notification);
 
     notification.on("click", () => {
-      const win = focusSenderWindow(event.sender);
-      if (win && data && Object.keys(data).length > 0) {
+      const allWindows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+      const spaceId =
+        typeof data?.spaceId === "string" && data.spaceId.length > 0 ? data.spaceId : null;
+      const registry = context.getWindowRegistry();
+      const spaceWin = spaceId ? findWindowForSpaceId(registry, spaceId) : null;
+      const focusWin =
+        spaceWin ??
+        context.getLastFocusedWindow() ??
+        BrowserWindow.fromWebContents(event.sender) ??
+        allWindows[0] ??
+        null;
+      if (focusWin && !focusWin.isDestroyed()) {
+        focusWin.show();
+        if (focusWin.isMinimized()) {
+          focusWin.restore();
+        }
+        focusWin.focus();
+      }
+      if (data && Object.keys(data).length > 0) {
         const payload: NotificationClickPayload = { data };
-        win.webContents.send("paseo:event:notification-click", payload);
+        for (const win of allWindows) {
+          win.webContents.send("paseo:event:notification-click", payload);
+        }
       }
       activeNotifications.delete(notification);
     });

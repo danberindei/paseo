@@ -412,6 +412,7 @@ export function AgentList({
         agentId,
         workspaceId: agent.workspaceId,
         pin: true,
+        projectId: agent.projectPlacement?.projectKey ?? null,
       });
     },
     [isActionSheetVisible, onAgentSelect],

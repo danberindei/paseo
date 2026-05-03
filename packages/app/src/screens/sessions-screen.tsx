@@ -18,6 +18,8 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
+import { selectActiveSpace, useSpaceStore } from "@/stores/space-store";
+import { useSessionStore } from "@/stores/session-store";
 
 /** Long enough that a typed word is one request, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 200;
@@ -85,6 +87,7 @@ function SessionsScreenContent() {
     hasMore,
     isInitialLoad,
     isLoadingMore,
+    isRevalidating,
     isError,
     isSearchSupported,
     isSearchTruncated,
@@ -119,7 +122,39 @@ function SessionsScreenContent() {
     void refreshAll().finally(() => setIsManualRefresh(false));
   }, [refreshAll]);
 
+  // Reset manual refresh flag when revalidation completes
+  useEffect(() => {
+    if (!isRevalidating && isManualRefresh) {
+      setIsManualRefresh(false);
+    }
+  }, [isRevalidating, isManualRefresh]);
+
+  const activeSpace = useSpaceStore(selectActiveSpace);
+  const sessions = useSessionStore((state) => state.sessions);
+
+  // Multi-host: map every host's workspace directories to their project ids so the
+  // active-space filter can match agents from any connected host.
+  const cwdToProjectId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const session of Object.values(sessions)) {
+      for (const workspace of session.workspaces.values()) {
+        map.set(workspace.workspaceDirectory, workspace.projectId);
+      }
+    }
+    return map;
+  }, [sessions]);
+
   // `useAgentHistory` owns the order: recency at rest, relevance under a query.
+  // The active-space filter narrows that list without reordering it.
+  const visibleAgents = useMemo(() => {
+    const spaceProjectIds = activeSpace?.projectIds;
+    if (!spaceProjectIds || spaceProjectIds.length === 0) return agents;
+    return agents.filter((a) => {
+      const projectId = cwdToProjectId.get(a.cwd);
+      return projectId !== undefined && spaceProjectIds.includes(projectId);
+    });
+  }, [agents, activeSpace, cwdToProjectId]);
+
   const emptyText = resolveEmptyText({
     t,
     isSearching,
@@ -127,7 +162,7 @@ function SessionsScreenContent() {
   });
   const showHostFilter = hosts.length > 1;
   const showFilterRow = showHostFilter || isSearchSupported;
-  const showLoadError = isError && agents.length === 0;
+  const showLoadError = isError && visibleAgents.length === 0;
 
   const handleBack = useCallback(() => {
     router.navigate(buildOpenProjectRoute());
@@ -197,7 +232,7 @@ function SessionsScreenContent() {
           </Button>
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && agents.length === 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length === 0 ? (
         <View style={styles.emptyContainer} testID="sessions-empty">
           <Text style={styles.emptyText}>{emptyText}</Text>
           {isSearching ? (
@@ -214,11 +249,11 @@ function SessionsScreenContent() {
           </Button>
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && agents.length > 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length > 0 ? (
         <AgentList
-          agents={agents}
+          agents={visibleAgents}
           showCheckoutInfo={false}
-          isRefreshing={isManualRefresh}
+          isRefreshing={isManualRefresh && isRevalidating}
           onRefresh={handleRefresh}
           listFooterComponent={listFooterComponent}
           showAttentionIndicator={false}

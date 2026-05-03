@@ -1,10 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+  },
+}));
+
 import {
   cloneGithubProjectDirectly,
   getOpenProjectFailureReason,
   openProjectDirectly,
 } from "@/hooks/open-project";
 import type { ProjectDescriptor } from "@/stores/session-store";
+import { useSpaceStore } from "@/stores/space-store";
 
 const SERVER_ID = "server-1";
 const PROJECT_PATH = "/repo/project";
@@ -67,6 +77,10 @@ function createFakeGithubCloneClient(project: ReturnType<typeof buildProjectPayl
 }
 
 describe("openProjectDirectly", () => {
+  beforeEach(() => {
+    useSpaceStore.setState({ spaces: [], activeSpaceId: null });
+  });
+
   it("adds the project and marks workspaces hydrated without opening a workspace", async () => {
     const session = createFakeSession();
     const projectPayload = buildProjectPayload();
@@ -103,6 +117,35 @@ describe("openProjectDirectly", () => {
       },
     ]);
     expect(session.hydrated).toEqual([{ serverId: SERVER_ID, hydrated: true }]);
+  });
+
+  it("adds the new project id to the active space", async () => {
+    const session = createFakeSession();
+    const spaceId = useSpaceStore.getState().createSpace("Work");
+    useSpaceStore.getState().setActiveSpaceId(spaceId);
+
+    const result = await openProjectDirectly({
+      serverId: SERVER_ID,
+      projectPath: PROJECT_PATH,
+      isConnected: true,
+      canAddProject: true,
+      client: {
+        addProject: async () => ({
+          requestId: "request-space",
+          error: null,
+          project: buildProjectPayload(),
+        }),
+      },
+      upsertProject: session.upsertProject,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+    });
+
+    expect(result).toEqual({ ok: true, project: buildProjectPayload() });
+    expect(useSpaceStore.getState().spaces).toContainEqual({
+      id: spaceId,
+      name: "Work",
+      projectIds: ["project-1"],
+    });
   });
 
   it("fails before sending when the host does not support adding projects without workspaces", async () => {

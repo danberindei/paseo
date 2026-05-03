@@ -44,7 +44,6 @@ import {
   protocol,
   screen,
   session,
-  shell,
   webContents,
 } from "electron";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
@@ -71,7 +70,7 @@ import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
 } from "./features/notifications.js";
-import { createExternalUrlOpener } from "./features/opener.js";
+import { registerOpenerHandlers } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
 import { resolveAppIconPath } from "./features/stamped-icon.js";
@@ -152,6 +151,7 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 });
 let bootstrapIsComplete = false;
 
+const WINDOWS_CHANGED_EVENT = "paseo:event:windows-changed";
 app.setName(APP_NAME);
 
 interface AttachedBrowserInput {
@@ -691,9 +691,9 @@ function persistWindowRegistry(): void {
 }
 
 function broadcastWindowsChanged(): void {
-  for (const win of BrowserWindow.getAllWindows()) {
+  for (const win of windowRegistry.keys()) {
     if (!win.isDestroyed()) {
-      win.webContents.send("paseo:event:windows-changed", {});
+      win.webContents.send(WINDOWS_CHANGED_EVENT, {});
     }
   }
 }
@@ -746,6 +746,7 @@ async function createWindow(
   const iconPath = await getEffectiveAppIconPath();
   const systemTheme = resolveSystemWindowTheme();
   const spaceId = options.spaceId ?? null;
+  const initialSpaceArg = `--paseo-space-id=${spaceId ?? ""}`;
 
   // Only the first window of a session restores and persists saved geometry.
   // Additional windows (⌘N, second-instance, "Open in new window") open at the
@@ -772,7 +773,7 @@ async function createWindow(
     }),
     webPreferences: {
       preload: getPreloadPath(),
-      additionalArguments: [windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE)],
+      additionalArguments: [windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE), initialSpaceArg],
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
@@ -809,6 +810,7 @@ async function createWindow(
   }
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+  registerWindowBinding(mainWindow, spaceId);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     if (!isPaseoBrowserWebviewAttach(params)) {
       event.preventDefault();
@@ -849,8 +851,6 @@ async function createWindow(
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
   });
-
-  registerWindowBinding(mainWindow, spaceId);
 
   if (!app.isPackaged) {
     const { loadReactDevTools } = await import("./features/react-devtools.js");
@@ -1038,17 +1038,19 @@ async function bootstrap(): Promise<void> {
   });
   ensureNotificationCenterRegistration();
   registerDaemonManager();
+  registerDialogHandlers();
+  registerNotificationHandlers({
+    getWindowRegistry: () => windowRegistry,
+    getLastFocusedWindow: () => lastFocusedWindow,
+  });
+  registerOpenerHandlers();
+  registerEditorTargetHandlers();
   registerWindowManager({
     mode: DESKTOP_WINDOW_CHROME_MODE,
     getWindowRegistry: () => windowRegistry,
     createMainWindow: (spaceId) => desktopWindowOwner.openAdditional({ spaceId }),
     broadcastWindowsChanged,
   });
-  registerDialogHandlers();
-  registerNotificationHandlers();
-  const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
-  ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
-  registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
 
   // In-app "Open in new window": opens a window that lands on the given project

@@ -5,6 +5,7 @@ import type {
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import { normalizeProjectDescriptor, type ProjectDescriptor } from "@/stores/session-store";
+import { selectActiveSpace, useSpaceStore } from "@/stores/space-store";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
 type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;
@@ -109,6 +110,13 @@ export async function openProjectDirectly(
     upsertProject: input.upsertProject,
     setHasHydratedWorkspaces: input.setHasHydratedWorkspaces,
   });
+  if (registered) {
+    const projectId = payload.project?.projectId;
+    const activeSpace = selectActiveSpace(useSpaceStore.getState());
+    if (activeSpace && projectId) {
+      useSpaceStore.getState().addProjectToSpace(activeSpace.id, projectId);
+    }
+  }
   return registered
     ? { ok: true, project: payload.project }
     : { ok: false, errorCode: null, error: "Unable to register project" };

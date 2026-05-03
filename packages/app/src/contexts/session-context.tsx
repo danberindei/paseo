@@ -41,9 +41,11 @@ import {
   useSessionStore,
   type SessionState,
 } from "@/stores/session-store";
+import { isProjectVisibleInActiveSpace, useSpaceStore } from "@/stores/space-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
-import { sendOsNotification } from "@/utils/os-notifications";
+import { sendOsNotification, dismissOsNotificationsForAgent } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
+import { getIsElectronRuntime } from "@/constants/layout";
 import {
   getInitKey,
   getInitDeferred,
@@ -182,6 +184,20 @@ function resolveAgentAttentionNotification(
   });
 }
 
+function isAgentNotificationSuppressedBySpace(
+  agentId: string,
+  session: SessionState | undefined,
+): boolean {
+  if (!getIsElectronRuntime()) {
+    return false;
+  }
+  const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+  const projectId = agent?.workspaceId
+    ? (session?.workspaces.get(agent.workspaceId)?.projectId ?? null)
+    : null;
+  return !isProjectVisibleInActiveSpace(projectId);
+}
+
 type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_setup_progress" }
@@ -295,6 +311,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
 
+  useEffect(() => {
+    if (!focusedAgentId) return;
+    void dismissOsNotificationsForAgent(focusedAgentId);
+  }, [focusedAgentId]);
+
   const notifyAgentAttention = useCallback(
     (params: {
       agentId: string;
@@ -341,10 +362,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
+      if (isAgentNotificationSuppressedBySpace(params.agentId, session)) {
+        return;
+      }
+      const spaceId = useSpaceStore.getState().activeSpaceId;
       void sendOsNotification({
         title: notification.title,
         body: notification.body,
-        data: notification.data,
+        data: spaceId ? { ...notification.data, spaceId } : notification.data,
       });
     },
     [serverId],
@@ -369,7 +394,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   }, [client, serverId, updateSessionServerInfo]);
 
   useEffect(() => {
-    const unregister = voiceRuntime?.registerSession({
+    if (!voiceRuntime) {
+      return;
+    }
+
+    return voiceRuntime.registerSession({
       serverId,
       setVoiceMode: async (enabled, agentId) => {
         if (!client) {
@@ -399,7 +428,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         setIsPlayingAudio(serverId, isPlaying);
       },
     });
-    return () => unregister?.();
   }, [client, serverId, setIsPlayingAudio, t, voiceRuntime]);
 
   useEffect(() => {
@@ -899,7 +927,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       } catch (error) {
         console.error("[Session] Failed to prepare images for agent creation:", error);
       }
-      await client.createAgent({
+      return client.createAgent({
         config,
         ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),

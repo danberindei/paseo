@@ -241,6 +241,10 @@ export function registerWindowManager(input: WindowManagerContext): void {
     Array.from(input.getWindowRegistry().values()),
   );
 
+  ipcMain.handle("paseo:window:quit", () => {
+    app.quit();
+  });
+
   ipcMain.handle("paseo:window:isSpaceInUse", (_event, spaceId?: unknown) => {
     if (typeof spaceId !== "string") {
       return false;

@@ -20,6 +20,7 @@ import {
   type SidebarWorkspacePlacement,
 } from "./sidebar-workspaces-view-model";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { selectActiveSpace, useSpaceStore } from "@/stores/space-store";
 
 export {
   appendMissingOrderKeys,
@@ -94,6 +95,14 @@ export interface SidebarWorkspacesListResult {
   refreshAll: () => void;
 }
 
+export function filterProjectsBySpaceProjectIds(
+  projects: SidebarProjectEntry[],
+  spaceProjectIds: string[] | null,
+): SidebarProjectEntry[] {
+  if (!spaceProjectIds) return projects;
+  const keySet = new Set(spaceProjectIds);
+  return projects.filter((p) => p.hosts.some((host) => keySet.has(host.projectId)));
+}
 export function useSidebarWorkspacesList(options?: {
   hostFilters?: readonly string[];
   enabled?: boolean;
@@ -156,6 +165,19 @@ export function useSidebarWorkspacesList(options?: {
       ? sidebarModel.projectNamesByViewKey
       : EMPTY_PROJECT_NAMES;
 
+  const activeSpace = useSpaceStore(selectActiveSpace);
+  const filteredProjects = useMemo(
+    () => filterProjectsBySpaceProjectIds(projects, activeSpace?.projectIds ?? null),
+    [activeSpace, projects],
+  );
+  // Status grouping reads the placements, not the projects, so they have to carry the
+  // same space filter or grouping by state shows workspaces outside the active space.
+  const filteredWorkspacePlacements = useMemo(() => {
+    if (filteredProjects === projects) return workspacePlacements;
+    const placements = filteredProjects.flatMap((project) => project.workspaces);
+    return placements.length > 0 ? placements : EMPTY_WORKSPACES;
+  }, [filteredProjects, projects, workspacePlacements]);
+
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
@@ -189,12 +211,12 @@ export function useSidebarWorkspacesList(options?: {
     isActive,
     serverIds,
     hydratedServerIds: directoryServerIds,
-    hasProjects: projects.length > 0,
+    hasProjects: filteredProjects.length > 0,
   });
 
   return {
-    workspacePlacements,
-    projects,
+    workspacePlacements: filteredWorkspacePlacements,
+    projects: filteredProjects,
     projectNamesByViewKey,
     ...loadingState,
     refreshAll,

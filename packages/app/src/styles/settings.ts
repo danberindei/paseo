@@ -16,6 +16,13 @@ export const settingsStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
+  sectionTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    marginBottom: theme.spacing[3],
+    marginLeft: theme.spacing[1],
+  },
   sectionHeaderLink: {
     alignItems: "center",
     flexDirection: "row",

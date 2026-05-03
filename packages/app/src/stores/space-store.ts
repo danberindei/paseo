@@ -1,12 +1,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { parseFormPreferences } from "@/create-agent-preferences/preferences";
 import type { FormPreferences } from "@/hooks/use-form-preferences";
 
 export interface Space {
   id: string;
   name: string;
-  projectKeys: string[];
+  projectIds: string[];
   preferences?: FormPreferences;
 }
 
@@ -17,9 +18,9 @@ export interface SpaceStoreState {
   createSpace: (name: string) => string;
   deleteSpace: (id: string) => void;
   renameSpace: (id: string, name: string) => void;
-  addProjectToSpace: (spaceId: string, projectKey: string) => void;
-  removeProjectFromSpace: (spaceId: string, projectKey: string) => void;
-  setSpaceProjects: (spaceId: string, projectKeys: string[]) => void;
+  addProjectToSpace: (spaceId: string, projectId: string) => void;
+  removeProjectFromSpace: (spaceId: string, projectId: string) => void;
+  setSpaceProjects: (spaceId: string, projectIds: string[]) => void;
 }
 
 function normalizeName(name: string): string {
@@ -27,10 +28,10 @@ function normalizeName(name: string): string {
   return trimmed.length > 0 ? trimmed : "New space";
 }
 
-function normalizeProjectKeys(projectKeys: string[]): string[] {
+function normalizeProjectIds(projectIds: string[]): string[] {
   const next: string[] = [];
   const seen = new Set<string>();
-  for (const value of projectKeys) {
+  for (const value of projectIds) {
     const trimmed = value.trim();
     if (!trimmed || seen.has(trimmed)) {
       continue;
@@ -43,6 +44,56 @@ function normalizeProjectKeys(projectKeys: string[]): string[] {
 
 function removeKey(keys: string[], key: string): string[] {
   return keys.filter((candidate) => candidate !== key);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function trimString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readPersistedProjectIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return normalizeProjectIds(value.filter((entry): entry is string => typeof entry === "string"));
+}
+
+function migrateSpaceStoreState(
+  persistedState: unknown,
+): Pick<SpaceStoreState, "spaces" | "activeSpaceId"> {
+  if (!isRecord(persistedState)) {
+    return { spaces: [], activeSpaceId: null };
+  }
+
+  const spacesInput = Array.isArray(persistedState.spaces) ? persistedState.spaces : [];
+  const spaces: Space[] = [];
+  for (const entry of spacesInput) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const id = trimString(entry.id);
+    if (!id) {
+      continue;
+    }
+
+    const projectIds = readPersistedProjectIds(entry.projectIds ?? entry.projectKeys);
+    const preferences =
+      entry.preferences === undefined ? undefined : parseFormPreferences(entry.preferences);
+
+    spaces.push({
+      id,
+      name: normalizeName(trimString(entry.name)),
+      projectIds,
+      ...(preferences ? { preferences } : {}),
+    });
+  }
+
+  const activeSpaceId = trimString(persistedState.activeSpaceId) || null;
+  return { spaces, activeSpaceId };
 }
 
 function generateSpaceId(): string {
@@ -61,7 +112,7 @@ export const useSpaceStore = create<SpaceStoreState>()(
       createSpace: (name) => {
         const id = generateSpaceId();
         set((state) => ({
-          spaces: [...state.spaces, { id, name: normalizeName(name), projectKeys: [] }],
+          spaces: [...state.spaces, { id, name: normalizeName(name), projectIds: [] }],
         }));
         return id;
       },
@@ -76,41 +127,43 @@ export const useSpaceStore = create<SpaceStoreState>()(
             space.id === id ? { ...space, name: normalizeName(name) } : space,
           ),
         })),
-      addProjectToSpace: (spaceId, projectKey) => {
-        const normalizedProjectKey = projectKey.trim();
-        if (!normalizedProjectKey) {
+      addProjectToSpace: (spaceId, projectId) => {
+        const normalizedProjectId = projectId.trim();
+        if (!normalizedProjectId) {
           return;
         }
         set((state) => ({
           spaces: state.spaces.map((space) =>
-            space.id === spaceId && !space.projectKeys.includes(normalizedProjectKey)
-              ? { ...space, projectKeys: [...space.projectKeys, normalizedProjectKey] }
+            space.id === spaceId && !space.projectIds.includes(normalizedProjectId)
+              ? { ...space, projectIds: [...space.projectIds, normalizedProjectId] }
               : space,
           ),
         }));
       },
-      removeProjectFromSpace: (spaceId, projectKey) => {
-        const normalizedProjectKey = projectKey.trim();
+      removeProjectFromSpace: (spaceId, projectId) => {
+        const normalizedProjectId = projectId.trim();
         set((state) => ({
           spaces: state.spaces.map((space) =>
             space.id === spaceId
-              ? { ...space, projectKeys: removeKey(space.projectKeys, normalizedProjectKey) }
+              ? { ...space, projectIds: removeKey(space.projectIds, normalizedProjectId) }
               : space,
           ),
         }));
       },
-      setSpaceProjects: (spaceId, projectKeys) => {
-        const normalizedProjectKeys = normalizeProjectKeys(projectKeys);
+      setSpaceProjects: (spaceId, projectIds) => {
+        const normalizedProjectIds = normalizeProjectIds(projectIds);
         set((state) => ({
           spaces: state.spaces.map((space) =>
-            space.id === spaceId ? { ...space, projectKeys: normalizedProjectKeys } : space,
+            space.id === spaceId ? { ...space, projectIds: normalizedProjectIds } : space,
           ),
         }));
       },
     }),
     {
       name: "space-store",
+      version: 2,
       storage: createJSONStorage(() => AsyncStorage),
+      migrate: migrateSpaceStoreState,
       partialize: (state) => ({
         spaces: state.spaces,
         activeSpaceId: state.activeSpaceId,
@@ -137,8 +190,11 @@ export function isProjectVisibleInActiveSpace(projectId: string | null): boolean
   if (!activeSpace) {
     return false;
   }
+  // Under an active space, a project we cannot resolve is intentionally treated
+  // as not-visible so its notifications are suppressed. Do not "fix" this to
+  // return true.
   if (!projectId) {
     return false;
   }
-  return activeSpace.projectKeys.includes(projectId);
+  return activeSpace.projectIds.includes(projectId);
 }
