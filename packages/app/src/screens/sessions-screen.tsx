@@ -107,6 +107,11 @@ function SessionsScreenContent() {
     }
   }, [hosts, selectedHost]);
 
+  useEffect(() => {
+    void refreshAll();
+  }, [refreshAll]);
+
+  // Track user-initiated refresh to avoid showing spinner on background revalidation
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const handleRefresh = useCallback(() => {
