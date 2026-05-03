@@ -7,6 +7,7 @@ export interface SkillSyncOptions {
   installDirs: readonly string[];
   codexDir: string;
   skillNames: readonly string[];
+  platform?: NodeJS.Platform;
   onSkillError?: (skillName: string, error: unknown) => void;
 }
 
@@ -133,7 +134,11 @@ async function assertManagedPathsStayInsideSkill(rootDir: string, rels: readonly
   }
 }
 
-async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<number> {
+async function syncDirectoryFiles(
+  srcDir: string,
+  dstDir: string,
+  preserveUnowned = false,
+): Promise<number> {
   const files = await listFilesRecursive(srcDir);
   const srcFileSet = new Set(files);
   const srcHashes: Record<string, string> = {};
@@ -148,10 +153,16 @@ async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<numbe
     ...Object.keys(previousManifest?.files ?? {}),
   ]);
   let changed = 0;
+  const managedHashes: Record<string, string> = {};
   for (const rel of files) {
+    if (preserveUnowned) {
+      const currentHash = await hashFile(path.join(dstDir, rel)).catch(() => null);
+      if (currentHash !== null && currentHash !== previousManifest?.files[rel]) continue;
+    }
     if (await writeFileIfChanged(path.join(srcDir, rel), path.join(dstDir, rel))) {
       changed++;
     }
+    managedHashes[rel] = srcHashes[rel];
   }
 
   const deletedRels: string[] = [];
@@ -165,13 +176,71 @@ async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<numbe
     changed++;
   }
   await pruneEmptyParentDirs(dstDir, deletedRels);
-  if (await writeManifestIfChanged(dstDir, srcHashes)) changed++;
+  if (await writeManifestIfChanged(dstDir, managedHashes)) changed++;
   return changed;
 }
 
 export interface RemoveSkillTargets {
   installDirs: readonly string[];
   codexDir: string;
+}
+
+async function ensureClaudeSkillLink(
+  skillName: string,
+  agentsDir: string,
+  claudeDir: string,
+  bundleSkillDir: string,
+  platform: NodeJS.Platform,
+  sharedAvailable: boolean,
+): Promise<number> {
+  await fs.mkdir(claudeDir, { recursive: true });
+  const target = path.join(agentsDir, skillName);
+  const linkPath = path.join(claudeDir, skillName);
+
+  // If claudeDir is itself a symlink to agentsDir (or resolves to the same
+  // real path), creating a symlink here would produce a self-referential loop.
+  // The skill is already accessible via claudeDir in that case - skip.
+  const realClaudeDir = await fs.realpath(claudeDir).catch(() => null);
+  const realAgentsDir = await fs.realpath(agentsDir).catch(() => null);
+  if (realClaudeDir !== null && realAgentsDir !== null && realClaudeDir === realAgentsDir) {
+    return 0;
+  }
+
+  // Only remove an existing symlink; refuse to delete a real file or directory
+  // so we never wipe user content. If the symlink already points at the target,
+  // there is nothing to rebuild and no change to report.
+  try {
+    const existing = await fs.lstat(linkPath);
+    if (existing.isDirectory() && (await readManagedFilesManifest(linkPath))) {
+      return await syncDirectoryFiles(bundleSkillDir, linkPath, true);
+    }
+    if (!existing.isSymbolicLink()) {
+      throw new Error(`refusing to replace non-symlink at ${linkPath}`);
+    }
+    const currentTarget = await fs.readlink(linkPath).catch(() => null);
+    const targetStat = sharedAvailable ? null : await fs.stat(linkPath).catch(() => null);
+    if (currentTarget === target && (sharedAvailable || targetStat?.isDirectory())) {
+      return 0;
+    }
+    await fs.rm(linkPath, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  if (!sharedAvailable) return await syncDirectoryFiles(bundleSkillDir, linkPath, true);
+
+  if (platform === "win32") {
+    try {
+      // Junctions don't require Developer Mode / admin like regular symlinks do.
+      await fs.symlink(target, linkPath, "junction");
+      return 1;
+    } catch {
+      return await syncDirectoryFiles(bundleSkillDir, linkPath, true);
+    }
+  }
+
+  await fs.symlink(target, linkPath);
+  return 1;
 }
 
 export async function removeSkill(skillName: string, targets: RemoveSkillTargets): Promise<void> {
@@ -240,6 +309,14 @@ async function retireManagedSkill(dstDir: string): Promise<number> {
 }
 
 export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncResult> {
+  // Roots are shared, Claude, then additional providers; paths.ts requires append-only order.
+  const [sharedRoot, claudeRoot, ...otherRoots] = options.installDirs;
+  const roots = [
+    { root: sharedRoot, isClaude: false },
+    { root: claudeRoot, isClaude: true },
+    ...otherRoots.map((root) => ({ root, isClaude: false })),
+  ];
+  const platform = options.platform ?? process.platform;
   let changedFiles = 0;
   let processedSkills = 0;
   let hasError = false;
@@ -254,11 +331,20 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
     let skillFailed = false;
     let skillError: unknown = null;
 
-    // Attempt every install root for every skill before throwing so one
-    // unwritable target does not stop updates from reaching healthy targets.
-    for (const installDir of options.installDirs) {
+    for (const { root: installDir, isClaude } of roots) {
+      if (installDir === undefined) continue;
       try {
-        changedFiles += await syncDirectoryFiles(bundleSkillDir, path.join(installDir, skillName));
+        changedFiles +=
+          isClaude && sharedRoot
+            ? await ensureClaudeSkillLink(
+                skillName,
+                sharedRoot,
+                installDir,
+                bundleSkillDir,
+                platform,
+                !skillFailed,
+              )
+            : await syncDirectoryFiles(bundleSkillDir, path.join(installDir, skillName));
       } catch (error) {
         if (!skillFailed) {
           skillFailed = true;

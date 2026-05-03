@@ -51,6 +51,116 @@ describe("syncSkills", () => {
     await fs.rm(sandbox.root, { recursive: true, force: true });
   });
 
+  it("updates an existing managed Claude directory and continues with other skills", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", {
+      "SKILL.md": "old",
+      "stale.md": "stale",
+      "modified.md": "original",
+    });
+    await syncSkills({ ...sandbox, installDirs: [sandbox.claudeDir], skillNames: ["paseo"] });
+    const claudeSkill = path.join(sandbox.claudeDir, "paseo");
+    await fs.writeFile(path.join(claudeSkill, "notes.md"), "user notes");
+    await fs.writeFile(path.join(claudeSkill, "modified.md"), "user edit");
+    await fs.writeFile(path.join(claudeSkill, "new.md"), "user file");
+    await fs.mkdir(path.join(sandbox.agentsDir, "paseo"), { recursive: true });
+    await fs.writeFile(path.join(sandbox.agentsDir, "paseo", "notes.md"), "shared notes");
+    await fs.rm(path.join(sandbox.sourceDir, "paseo", "stale.md"));
+    await writeBundleSkill(sandbox.sourceDir, "paseo", {
+      "SKILL.md": "new",
+      "modified.md": "updated",
+      "new.md": "bundled file",
+    });
+    await writeBundleSkill(sandbox.sourceDir, "paseo-loop", { "SKILL.md": "loop" });
+
+    const result = await syncSkills({ ...sandbox, skillNames: ["paseo", "paseo-loop"] });
+
+    expect(result.processedSkills).toBe(2);
+    expect(await fs.readFile(path.join(claudeSkill, "SKILL.md"), "utf-8")).toBe("new");
+    expect(await fs.readFile(path.join(claudeSkill, "notes.md"), "utf-8")).toBe("user notes");
+    expect(await fs.readFile(path.join(claudeSkill, "modified.md"), "utf-8")).toBe("user edit");
+    expect(await fs.readFile(path.join(claudeSkill, "new.md"), "utf-8")).toBe("user file");
+    await expect(fs.access(path.join(claudeSkill, "stale.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await fs.readFile(path.join(sandbox.claudeDir, "paseo-loop", "SKILL.md"), "utf-8")).toBe(
+      "loop",
+    );
+    await fs.rm(path.join(sandbox.agentsDir, "paseo", "notes.md"));
+    await fs.rm(path.join(sandbox.sourceDir, "paseo", "modified.md"));
+    await fs.rm(path.join(sandbox.sourceDir, "paseo", "new.md"));
+    await syncSkills({ ...sandbox, skillNames: ["paseo"] });
+    expect(await fs.readFile(path.join(claudeSkill, "notes.md"), "utf-8")).toBe("user notes");
+    expect(await fs.readFile(path.join(claudeSkill, "modified.md"), "utf-8")).toBe("user edit");
+    expect(await fs.readFile(path.join(claudeSkill, "new.md"), "utf-8")).toBe("user file");
+  });
+
+  it("updates healthy roots when the shared skill target fails", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "content" });
+    await fs.mkdir(sandbox.agentsDir, { recursive: true });
+    await fs.writeFile(path.join(sandbox.agentsDir, "paseo"), "blocking file");
+    const errors: string[] = [];
+
+    await syncSkills({
+      ...sandbox,
+      skillNames: ["paseo"],
+      onSkillError: (name) => errors.push(name),
+    });
+
+    expect(errors).toEqual(["paseo"]);
+    expect(await fs.readFile(path.join(sandbox.claudeDir, "paseo", "SKILL.md"), "utf-8")).toBe(
+      "content",
+    );
+    expect(await fs.readFile(path.join(sandbox.antigravityDir, "paseo", "SKILL.md"), "utf-8")).toBe(
+      "content",
+    );
+  });
+
+  it("preserves a usable Claude link when the shared skill target fails", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "bundle" });
+    const sharedSkill = path.join(sandbox.agentsDir, "paseo");
+    const claudeSkill = path.join(sandbox.claudeDir, "paseo");
+    await fs.mkdir(path.join(sharedSkill, "SKILL.md"), { recursive: true });
+    await fs.writeFile(path.join(sharedSkill, "notes.md"), "existing skill content");
+    await fs.mkdir(sandbox.claudeDir, { recursive: true });
+    await fs.symlink(sharedSkill, claudeSkill, "junction");
+    const errors: string[] = [];
+
+    await syncSkills({
+      ...sandbox,
+      skillNames: ["paseo"],
+      onSkillError: (name) => errors.push(name),
+    });
+
+    expect(errors).toEqual(["paseo"]);
+    expect((await fs.lstat(claudeSkill)).isSymbolicLink()).toBe(true);
+    expect(await fs.readlink(claudeSkill)).toBe(sharedSkill);
+    expect(await fs.readFile(path.join(claudeSkill, "notes.md"), "utf-8")).toBe(
+      "existing skill content",
+    );
+  });
+
+  it("preserves a Claude directory without a manifest and processes later skills", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "bundle" });
+    await writeBundleSkill(sandbox.sourceDir, "paseo-loop", { "SKILL.md": "loop" });
+    const claudeSkill = path.join(sandbox.claudeDir, "paseo");
+    await fs.mkdir(claudeSkill, { recursive: true });
+    await fs.writeFile(path.join(claudeSkill, "SKILL.md"), "user file");
+    const errors: string[] = [];
+
+    const result = await syncSkills({
+      ...sandbox,
+      skillNames: ["paseo", "paseo-loop"],
+      onSkillError: (name) => errors.push(name),
+    });
+
+    expect(errors).toEqual(["paseo"]);
+    expect(result.processedSkills).toBe(1);
+    expect(await fs.readFile(path.join(claudeSkill, "SKILL.md"), "utf-8")).toBe("user file");
+    expect(await fs.readFile(path.join(sandbox.claudeDir, "paseo-loop", "SKILL.md"), "utf-8")).toBe(
+      "loop",
+    );
+  });
+
   it("overwrites on-disk skill content when the bundle differs", async () => {
     await writeBundleSkill(sandbox.sourceDir, "paseo", {
       "SKILL.md": "new paseo content",
@@ -114,8 +224,11 @@ describe("syncSkills", () => {
       code: "ENOENT",
     });
 
+    // claudeDir/<skill> is a symlink pointing at the real skill directory under
+    // agentsDir; the skill files are reachable through the link.
     const claudeSkillDir = path.join(sandbox.claudeDir, "paseo-committee");
-    expect((await fs.lstat(claudeSkillDir)).isDirectory()).toBe(true);
+    expect((await fs.lstat(claudeSkillDir)).isSymbolicLink()).toBe(true);
+    expect(await fs.readlink(claudeSkillDir)).toBe(path.join(sandbox.agentsDir, "paseo-committee"));
     expect(await fs.readFile(path.join(claudeSkillDir, "SKILL.md"), "utf-8")).toBe(
       "committee content",
     );
@@ -344,6 +457,33 @@ describe("syncSkills", () => {
     });
 
     expect(await fs.readFile(path.join(deprecatedDir, "SKILL.md"), "utf-8")).toBe("old content");
+  });
+
+  it("skips symlink creation when claudeDir is a symlink to agentsDir", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "content" });
+
+    // Simulate ~/.claude/skills -> ~/.agents/skills
+    const claudeDirParent = path.dirname(sandbox.claudeDir);
+    await fs.mkdir(claudeDirParent, { recursive: true });
+    await fs.mkdir(sandbox.agentsDir, { recursive: true });
+    await fs.symlink(sandbox.agentsDir, sandbox.claudeDir);
+
+    await syncSkills({
+      sourceDir: sandbox.sourceDir,
+      installDirs: sandbox.installDirs,
+      codexDir: sandbox.codexDir,
+      skillNames: ["paseo"],
+    });
+
+    // The skill file should be written to agentsDir
+    expect(await fs.readFile(path.join(sandbox.agentsDir, "paseo", "SKILL.md"), "utf-8")).toBe(
+      "content",
+    );
+
+    // No self-referential symlink should exist inside agentsDir
+    const lstat = await fs.lstat(path.join(sandbox.agentsDir, "paseo"));
+    expect(lstat.isSymbolicLink()).toBe(false);
+    expect(lstat.isDirectory()).toBe(true);
   });
 
   it("does not crash when the source bundle directory is missing", async () => {
