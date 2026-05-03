@@ -292,6 +292,34 @@ describe("syncSkills", () => {
     expect(await fs.readFile(path.join(deprecatedDir, "SKILL.md"), "utf-8")).toBe("old content");
   });
 
+  it("skips symlink creation when claudeDir is a symlink to agentsDir", async () => {
+    await writeBundleSkill(sandbox.sourceDir, "paseo", { "SKILL.md": "content" });
+
+    // Simulate ~/.claude/skills -> ~/.agents/skills
+    const claudeDirParent = path.dirname(sandbox.claudeDir);
+    await fs.mkdir(claudeDirParent, { recursive: true });
+    await fs.mkdir(sandbox.agentsDir, { recursive: true });
+    await fs.symlink(sandbox.agentsDir, sandbox.claudeDir);
+
+    await syncSkills({
+      sourceDir: sandbox.sourceDir,
+      agentsDir: sandbox.agentsDir,
+      claudeDir: sandbox.claudeDir,
+      codexDir: sandbox.codexDir,
+      skillNames: ["paseo"],
+    });
+
+    // The skill file should be written to agentsDir
+    expect(await fs.readFile(path.join(sandbox.agentsDir, "paseo", "SKILL.md"), "utf-8")).toBe(
+      "content",
+    );
+
+    // No self-referential symlink should exist inside agentsDir
+    const lstat = await fs.lstat(path.join(sandbox.agentsDir, "paseo"));
+    expect(lstat.isSymbolicLink()).toBe(false);
+    expect(lstat.isDirectory()).toBe(true);
+  });
+
   it("does not crash when the source bundle directory is missing", async () => {
     const missingSourceDir = path.join(sandbox.root, "no-bundle-here");
 
