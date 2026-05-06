@@ -2,6 +2,7 @@ import { constants, promises as fs, type BigIntStats, type Stats } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { listWorkspaceFiles } from "../../utils/git-tracked-files.js";
 import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 import { runGitCommand } from "../../utils/run-git-command.js";
 
@@ -813,7 +814,26 @@ async function resolveScopedPath({
     assertWithinWorkspace(canonicalRoot, canonicalPath);
     return { requestedPath, resolvedPath: canonicalPath };
   } catch (error) {
-    if (isMissingEntryError(error)) return { requestedPath, resolvedPath: requestedPath };
+    if (isMissingEntryError(error)) {
+      const trimmedRelativePath = relativePath.trim();
+      if (
+        trimmedRelativePath &&
+        !trimmedRelativePath.includes("/") &&
+        trimmedRelativePath !== "."
+      ) {
+        const found = await findFileByBasename(workspacePath, trimmedRelativePath);
+        if (found) {
+          return { requestedPath, resolvedPath: found };
+        }
+      }
+      if (trimmedRelativePath.split("/").includes("...")) {
+        const found = await findFileByEllipsisPath(workspacePath, trimmedRelativePath);
+        if (found) {
+          return { requestedPath, resolvedPath: found };
+        }
+      }
+      return { requestedPath, resolvedPath: requestedPath };
+    }
     throw error;
   }
 }
@@ -822,6 +842,50 @@ function assertWithinWorkspace(root: string, candidate: string): void {
   const relative = path.relative(root, candidate);
   if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) return;
   throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+}
+
+async function findFileByBasename(root: string, basename: string): Promise<string | null> {
+  const tracked = await listWorkspaceFiles(root);
+
+  const matches = tracked.filter((f) => path.basename(f) === basename);
+  if (matches.length === 1) {
+    return path.join(root, matches[0]);
+  }
+  return null;
+}
+
+async function findFileByEllipsisPath(root: string, relative: string): Promise<string | null> {
+  const parts = relative.split("/");
+  const ellipsisIndex = parts.indexOf("...");
+  if (ellipsisIndex === -1) {
+    return null;
+  }
+
+  const prefixParts = parts.slice(0, ellipsisIndex);
+  const suffixParts = parts.slice(ellipsisIndex + 1);
+  if (suffixParts.length === 0) {
+    return null;
+  }
+
+  const prefix = prefixParts.join("/");
+  const suffix = suffixParts.join("/");
+
+  const tracked = await listWorkspaceFiles(root);
+
+  const matches = tracked.filter((f) => {
+    if (!f.endsWith(`/${suffix}`) && f !== suffix) {
+      return false;
+    }
+    if (prefix && !f.startsWith(`${prefix}/`)) {
+      return false;
+    }
+    return true;
+  });
+
+  if (matches.length === 1) {
+    return path.join(root, matches[0]);
+  }
+  return null;
 }
 
 async function openFileForRead(filePath: string): Promise<FileHandle> {
