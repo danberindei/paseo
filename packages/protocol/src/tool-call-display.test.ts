@@ -21,6 +21,24 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("uses the modified file name for edit tool calls", () => {
+    const display = buildToolCallDisplayModel({
+      name: "edit_file",
+      status: "running",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/tmp/repo/src/components/message.tsx",
+      },
+      cwd: "/tmp/repo",
+    });
+
+    expect(display).toEqual({
+      displayName: "message.tsx",
+      summary: "src/components/message.tsx",
+    });
+  });
+
   it("does not infer summaries from unknown raw detail", () => {
     const display = buildToolCallDisplayModel({
       name: "exec_command",

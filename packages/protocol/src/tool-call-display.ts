@@ -80,6 +80,11 @@ function buildFilePathDisplay(
   };
 }
 
+function getFileName(filePath: string): string {
+  const segments = filePath.split(/[\\/]/);
+  return segments[segments.length - 1] || filePath;
+}
+
 function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay {
   switch (input.detail.type) {
     case "shell":
@@ -90,7 +95,11 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
     case "read":
       return buildFilePathDisplay("Read", input.detail.filePath, input.cwd);
     case "edit":
-      return buildFilePathDisplay("Edit", input.detail.filePath, input.cwd);
+      return buildFilePathDisplay(
+        getFileName(input.detail.filePath),
+        input.detail.filePath,
+        input.cwd,
+      );
     case "write":
       return buildFilePathDisplay("Write", input.detail.filePath, input.cwd);
     case "search":

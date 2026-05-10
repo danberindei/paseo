@@ -3239,7 +3239,7 @@ describe("Codex app-server provider", () => {
       });
       if (finalToolCall?.detail.type === "sub_agent") {
         expect(finalToolCall.detail.log.match(/\[Shell\]/g)).toHaveLength(1);
-        expect(finalToolCall.detail.log).toContain("[Edit]");
+        expect(finalToolCall.detail.log).toContain("[child.ts]");
       }
       appServer.assertNoErrors();
     } finally {
