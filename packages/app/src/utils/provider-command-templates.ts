@@ -29,6 +29,9 @@ export const PROVIDER_COMMAND_TEMPLATES: Record<
   opencode: {
     resume: "opencode --session {sessionId}",
   },
+  copilot: {
+    resume: "copilot --resume {sessionId}",
+  },
 };
 
 function renderTemplate(template: string, vars: Record<string, string>): string {
