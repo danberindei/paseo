@@ -4851,6 +4851,12 @@ class OpenCodeAgentSession implements AgentSession {
 
       this.pendingPermissions.delete(requestId);
       this.pendingPermissionDirectories.delete(requestId);
+      this.notifySubscribers({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId,
+        resolution: response,
+      });
       return;
     }
 
@@ -4864,6 +4870,12 @@ class OpenCodeAgentSession implements AgentSession {
 
     this.pendingPermissions.delete(requestId);
     this.pendingPermissionDirectories.delete(requestId);
+    this.notifySubscribers({
+      type: "permission_resolved",
+      provider: this.provider,
+      requestId,
+      resolution: response,
+    });
   }
 
   describePersistence(): AgentPersistenceHandle | null {
