@@ -95,7 +95,6 @@ export class TestOpenCodeClient {
     appAgentsOptions: [] as unknown[],
     commandList: [] as unknown[],
     eventSubscribe: [] as unknown[],
-    experimentalSessionList: [] as unknown[],
     globalEvent: [] as unknown[],
     mcpAdd: [] as unknown[],
     mcpConnect: [] as unknown[],
@@ -112,6 +111,7 @@ export class TestOpenCodeClient {
     sessionDelete: [] as unknown[],
     sessionChildren: [] as unknown[],
     sessionGet: [] as unknown[],
+    sessionList: [] as unknown[],
     sessionMessages: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
     sessionStatus: [] as unknown[],
@@ -125,7 +125,6 @@ export class TestOpenCodeClient {
     | null = null;
   commandListResponse: OpenCodeResponse = { data: [] };
   eventStream: AsyncIterable<unknown>;
-  experimentalSessionListResponse: OpenCodeResponse = { data: [] };
   mcpAddResponse: OpenCodeResponse = {};
   mcpConnectResponse: OpenCodeResponse = {};
   permissionReplyResponse: OpenCodeResponse = {};
@@ -161,6 +160,7 @@ export class TestOpenCodeClient {
   sessionGetResponse: OpenCodeResponse = {
     data: { id: "session-1", directory: "/workspace/repo", title: null },
   };
+  sessionListResponse: OpenCodeResponse = { data: [] };
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionMessagesImplementation:
     | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
@@ -214,14 +214,6 @@ export class TestOpenCodeClient {
         subscribe: async (parameters: unknown, options: unknown) => {
           this.calls.eventSubscribe.push({ parameters, options });
           return { stream: this.eventStream };
-        },
-      },
-      experimental: {
-        session: {
-          list: async (parameters: unknown) => {
-            this.calls.experimentalSessionList.push(parameters);
-            return this.experimentalSessionListResponse;
-          },
         },
       },
       global: {
@@ -321,6 +313,10 @@ export class TestOpenCodeClient {
         get: async (parameters: unknown) => {
           this.calls.sessionGet.push(parameters);
           return this.sessionGetResponse;
+        },
+        list: async (parameters: unknown) => {
+          this.calls.sessionList.push(parameters);
+          return this.sessionListResponse;
         },
         messages: async (parameters: unknown, options: unknown) => {
           this.calls.sessionMessages.push(parameters);

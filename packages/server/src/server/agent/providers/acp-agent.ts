@@ -1524,7 +1524,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   /**
    * IMPORTANT: Some ACP providers (e.g., Devin CLI) require all three params
    * (sessionId, cwd, mcpServers) to be present in session/load or
-   * unstable_resumeSession — even when mcpServers is an empty array — and
+   * resumeSession — even when mcpServers is an empty array — and
    * return "Invalid params" if any are omitted. Never drop cwd or mcpServers
    * from these calls regardless of capabilities.
    */
@@ -1558,7 +1558,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
         const response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
+          this.connection!.resumeSession({
             sessionId: handle.sessionId,
             cwd: this.config.cwd,
             mcpServers: this.acpMcpServers(),
@@ -2203,7 +2203,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
       try {
         if (this.agentCapabilities?.sessionCapabilities?.close) {
-          await this.connection.unstable_closeSession({ sessionId: this.sessionId });
+          await this.connection.closeSession({ sessionId: this.sessionId });
         }
       } catch (error) {
         this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");

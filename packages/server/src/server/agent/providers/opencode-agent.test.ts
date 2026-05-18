@@ -4050,7 +4050,7 @@ describe("OpenCode persisted sessions", () => {
     const cwd = "/workspace/repo";
     const otherCwd = "/workspace/other";
 
-    openCodeClient.experimentalSessionListResponse = {
+    openCodeClient.sessionListResponse = {
       data: [
         {
           id: "ses_old",
@@ -4158,9 +4158,7 @@ describe("OpenCode persisted sessions", () => {
     });
     expect(sessions[0]?.lastActivityAt.toISOString()).toBe("1970-01-01T00:00:03.000Z");
     expect(runtime.clientCreations).toEqual([{ baseUrl: runtime.server.url, directory: cwd }]);
-    expect(openCodeClient.calls.experimentalSessionList).toEqual([
-      { archived: true, roots: true, limit: 200, directory: cwd },
-    ]);
+    expect(openCodeClient.calls.sessionList).toEqual([{ roots: true, limit: 200, directory: cwd }]);
     expect(openCodeClient.calls.sessionMessages).toEqual([]);
   });
 
@@ -4216,7 +4214,7 @@ describe("OpenCode persisted sessions", () => {
       },
     );
 
-    expect(metadataClient.calls.experimentalSessionList).toEqual([]);
+    expect(metadataClient.calls.sessionList).toEqual([]);
     expect(metadataClient.calls.sessionGet).toEqual([
       { sessionID: "ses_selected", directory: cwd },
     ]);
@@ -4249,7 +4247,7 @@ describe("OpenCode persisted sessions", () => {
     const requestedCwd = "C:/Users/Administrator/GhostFactory";
     const storedCwd = "C:\\Users\\Administrator\\GhostFactory";
 
-    openCodeClient.experimentalSessionListResponse = {
+    openCodeClient.sessionListResponse = {
       data: [
         {
           id: "ses_windows",
@@ -4279,8 +4277,8 @@ describe("OpenCode persisted sessions", () => {
       cwd: storedCwd,
       title: "Windows session",
     });
-    expect(openCodeClient.calls.experimentalSessionList).toEqual([
-      { archived: true, roots: true, limit: 200, directory: requestedCwd },
+    expect(openCodeClient.calls.sessionList).toEqual([
+      { roots: true, limit: 200, directory: requestedCwd },
     ]);
   });
 });

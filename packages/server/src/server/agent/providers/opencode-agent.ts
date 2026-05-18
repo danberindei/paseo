@@ -3,7 +3,6 @@ import {
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
-  type GlobalSession as OpenCodeGlobalSession,
   type Message as OpenCodeMessage,
   type OpencodeClient,
   type OpencodeClientConfig,
@@ -358,7 +357,7 @@ function requiresDedicatedOpenCodeServer(
   return Object.keys(launchContext?.env ?? {}).some((key) => !OPENCODE_SESSION_ENV_KEYS.has(key));
 }
 type OpenCodeMessageRole = "user" | "assistant";
-type OpenCodePersistedSession = OpenCodeSession | OpenCodeGlobalSession;
+type OpenCodePersistedSession = OpenCodeSession;
 
 interface OpenCodeSessionMessage {
   info: OpenCodeMessage;
@@ -1049,7 +1048,7 @@ function isOpenCodeDefinitiveSteerRejection(error: unknown, status?: number): bo
 }
 
 async function collectOpenCodeImportableSessionsFromSdk(
-  client: Pick<OpencodeClient, "experimental">,
+  client: Pick<OpencodeClient, "session">,
   options?: ListImportableSessionsOptions,
 ): Promise<ImportableProviderSession[]> {
   const limit = options?.limit ?? OPENCODE_PERSISTED_SESSION_LIMIT;
@@ -1058,8 +1057,7 @@ async function collectOpenCodeImportableSessionsFromSdk(
     options?.cwd ? Math.max(scanLimit, OPENCODE_PERSISTED_SESSION_LIMIT) : scanLimit,
     500,
   );
-  const response = await client.experimental.session.list({
-    archived: true,
+  const response = await client.session.list({
     roots: true,
     limit: sessionListLimit,
     ...(options?.cwd ? { directory: options.cwd } : {}),

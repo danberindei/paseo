@@ -3528,7 +3528,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     capabilities?: AgentCapabilityFlags;
     handle: AgentPersistenceHandle;
     loadSession?: ReturnType<typeof vi.fn>;
-    unstableResumeSession?: ReturnType<typeof vi.fn>;
+    resumeSession?: ReturnType<typeof vi.fn>;
   }) {
     const loadSession =
       args.loadSession ??
@@ -3538,8 +3538,8 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
         models: null,
         configOptions: [],
       });
-    const unstableResumeSession =
-      args.unstableResumeSession ??
+    const resumeSession =
+      args.resumeSession ??
       vi.fn().mockResolvedValue({
         sessionId: "session-1",
         modes: null,
@@ -3554,7 +3554,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
           connection: {
             prompt: vi.fn(),
             loadSession,
-            unstable_resumeSession: unstableResumeSession,
+            resumeSession,
           } as unknown as ClientSideConnection,
           initialize: { agentCapabilities: args.capabilities ?? {} },
         } as SpawnedACPProcess;
@@ -3582,7 +3582,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       },
     );
 
-    return { session, loadSession, unstableResumeSession };
+    return { session, loadSession, resumeSession };
   }
 
   test("loadSession is always called with sessionId, cwd, and mcpServers even when mcpServers is empty", async () => {
@@ -3775,15 +3775,15 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     });
   });
 
-  test("unstable_resumeSession is always called with sessionId, cwd, and mcpServers", async () => {
-    const { session, unstableResumeSession } = makeTestSession({
+  test("resumeSession is always called with sessionId, cwd, and mcpServers", async () => {
+    const { session, resumeSession } = makeTestSession({
       capabilities: { sessionCapabilities: { resume: {} } },
       handle: { sessionId: "session-1", provider: "claude-acp" },
     });
 
     await session.initializeResumedSession();
 
-    expect(unstableResumeSession).toHaveBeenCalledWith({
+    expect(resumeSession).toHaveBeenCalledWith({
       sessionId: "session-1",
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
