@@ -92,3 +92,64 @@ describe("overlay registration lifecycle", () => {
     expect(observed).toEqual([["Enter"], []]);
   });
 });
+
+describe("presentation ownership", () => {
+  it("orders sheets and overlays by layer, newest first on a tie, independently of key dispatch", () => {
+    const registry = createOverlayRegistry();
+    const removeSheet = registry.registerPresentation({
+      getLayer: () => 20,
+      getWorkspaceKey: () => "server:workspace",
+      getHostedTabId: () => "sheet",
+    });
+    const snapshot = registry.getPresentationOwnerSnapshot("server:workspace").split("\u0000");
+    expect(snapshot).toHaveLength(2);
+    expect(snapshot[0]).toMatch(/^\d+$/);
+    expect(snapshot[1]).toBe("sheet");
+    expect(registry.getPresentationOwner("server:workspace")).toEqual({ hostedTabId: "sheet" });
+    expect(registry.getKeys()).toEqual([]);
+    expect(registry.dispatch(keyEvent("Escape"))).toBe(false);
+
+    const removeOverlay = registry.registerPresentation({ getLayer: () => 30 });
+    expect(registry.getPresentationOwner("server:workspace")).toEqual({ hostedTabId: null });
+    expect(registry.getTopPresentationLayer()).toBe(30);
+
+    removeOverlay();
+    expect(registry.getPresentationOwner("server:workspace")).toEqual({ hostedTabId: "sheet" });
+
+    const removeTopSheet = registry.registerPresentation({
+      getLayer: () => 20,
+      getWorkspaceKey: () => "server:workspace",
+      getHostedTabId: () => "top",
+    });
+    expect(registry.getPresentationOwner("server:workspace")).toEqual({ hostedTabId: "top" });
+
+    removeTopSheet();
+    removeSheet();
+    expect(registry.getPresentationOwner("server:workspace")).toBeNull();
+    expect(registry.getPresentationOwnerSnapshot("server:workspace")).toBe("");
+  });
+
+  it("matches global presentations for every workspace and ignores another workspace's sheet", () => {
+    const registry = createOverlayRegistry();
+    const removeOther = registry.registerPresentation({
+      getLayer: () => 20,
+      getWorkspaceKey: () => "server:other",
+      getHostedTabId: () => "other",
+    });
+    expect(registry.getPresentationOwner("server:workspace")).toBeNull();
+
+    const removeGlobal = registry.registerPresentation({ getLayer: () => 10 });
+    expect(registry.getPresentationOwner("server:workspace")).toEqual({ hostedTabId: null });
+    expect(registry.getPresentationOwner("server:other")).toEqual({ hostedTabId: "other" });
+
+    removeGlobal();
+    removeOther();
+  });
+
+  it("parses a snapshot without confusing an empty hosted tab with no presentation", () => {
+    const registry = createOverlayRegistry();
+    expect(registry.parsePresentationOwnerSnapshot("")).toBeNull();
+    expect(registry.parsePresentationOwnerSnapshot("7\u0000")).toEqual({ hostedTabId: null });
+    expect(registry.parsePresentationOwnerSnapshot("7\u0000tab")).toEqual({ hostedTabId: "tab" });
+  });
+});

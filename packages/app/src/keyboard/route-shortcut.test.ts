@@ -53,6 +53,9 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ["workspace.pane.move-tab.down", { id: "workspace.pane.move-tab.down", scope: "workspace" }],
     ["workspace.pane.close", { id: "workspace.pane.close", scope: "workspace" }],
     ["view.toggle.focus", { id: "workspace.focus.toggle", scope: "workspace" }],
+    ["permission.accept", { id: "permission.accept", scope: "workspace" }],
+    ["permission.deny", { id: "permission.deny", scope: "workspace" }],
+    ["permission.focus", { id: "permission.focus", scope: "workspace" }],
   ])("%s → dispatch %j", (action, expected) => {
     expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual({
       kind: "dispatch",

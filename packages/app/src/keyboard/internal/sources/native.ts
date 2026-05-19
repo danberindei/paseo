@@ -2,6 +2,11 @@ import { matchesKeyboardShortcutContext } from "../../keyboard-shortcuts";
 import { focusSurfaces } from "../focus-surfaces";
 import { overlays } from "../overlays";
 import {
+  hasPermissionShortcutClaims,
+  PERMISSION_SHORTCUT_ACTIONS,
+  subscribePermissionShortcutClaims,
+} from "../permission-shortcut-claims";
+import {
   nativeKeyboardInput,
   type KeyboardPolicyInput,
   type KeyboardSourceHandlers,
@@ -37,11 +42,15 @@ function claimedShortcuts(
     focusScope: focusSurfaces.resolve(commandCenterOpen, true),
   };
   const claimed = new Map<string, ClaimedShortcut>();
+  const canAnswerPermission = hasPermissionShortcutClaims();
   for (const binding of policy.bindings) {
     const combo = binding.parsedChord[0];
     if (!combo || binding.preventDefault === false) continue;
     if (combo.meta || combo.ctrl || combo.mod || !(combo.shift || combo.alt)) continue;
     if (!matchesKeyboardShortcutContext(binding.when, context)) continue;
+    if (!canAnswerPermission && PERMISSION_SHORTCUT_ACTIONS.some((id) => id === binding.action)) {
+      continue;
+    }
     const shift = combo.shift === true;
     const alt = combo.alt === true;
     for (const code of combo.code === "Digit" ? DIGIT_CODES : [combo.code]) {
@@ -68,6 +77,7 @@ export function createHardwareKeyboardSource(source: HardwareKeySource) {
       const unsubscribeOverlays = overlays.subscribe(updateKeys);
       const unsubscribeFocus = focusSurfaces.subscribe(() => updateClaims());
       const unsubscribeCommandCenter = handlers.subscribeCommandCenter(() => updateClaims());
+      const unsubscribePermissionClaims = subscribePermissionShortcutClaims(() => updateClaims());
       const unsubscribeHardware = source.subscribe((input) => {
         const event = { ...input, preventDefault() {}, stopPropagation() {} };
         if (input.phase === "up") {
@@ -82,6 +92,7 @@ export function createHardwareKeyboardSource(source: HardwareKeySource) {
         unsubscribeHardware();
         unsubscribeFocus();
         unsubscribeCommandCenter();
+        unsubscribePermissionClaims();
         unsubscribeOverlays();
         updateClaims = () => {};
         source.setOverlayKeys([]);

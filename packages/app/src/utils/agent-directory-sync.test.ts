@@ -4,6 +4,7 @@ import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import { useSessionStore } from "@/stores/session-store";
+import { isRequestTombstoned } from "@/utils/agent-directory-sync";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
@@ -328,6 +329,115 @@ describe("replaceFetchedAgentDirectory", () => {
       activity: "2026-07-12T11:00:00.000Z",
     });
 
+    store.clearSession(serverId);
+  });
+});
+
+describe("resolved permission tombstones", () => {
+  function pendingRequestIds(serverId: string): string[] {
+    const pending = useSessionStore.getState().sessions[serverId]?.pendingPermissions;
+    return Array.from(pending?.values() ?? [], (entry) => entry.request.id);
+  }
+
+  // Mirrors what the session context does on agent_permission_resolved before the daemon's
+  // directory catches up: the request is tombstoned and its pending entry is removed.
+  function resolvePermission(serverId: string, agentId: string, requestId: string): void {
+    const store = useSessionStore.getState();
+    store.addResolvedPermissionIds(serverId, agentId, [requestId]);
+    store.setPendingPermissions(serverId, (previous) => {
+      const next = new Map(previous);
+      for (const [key, entry] of next) {
+        if (entry.agentId === agentId && entry.request.id === requestId) next.delete(key);
+      }
+      return next;
+    });
+  }
+
+  it("does not restore a resolved permission from a stale directory update", () => {
+    const serverId = "server-stale-resolved-permission";
+    const agentId = "agent-1";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const projection = new AgentStoreProjection(serverId);
+    const current = createAgentPayload({
+      id: agentId,
+      updatedAt: "2026-04-20T00:02:00.000Z",
+      pendingPermissions: [permission("req-1")],
+    });
+    projection.applyDelta({
+      kind: "upsert",
+      agent: current,
+      project: createEntry(current).project,
+    });
+    expect(pendingRequestIds(serverId)).toEqual(["req-1"]);
+
+    resolvePermission(serverId, agentId, "req-1");
+    expect(pendingRequestIds(serverId)).toEqual([]);
+
+    projection.applyDelta({
+      kind: "upsert",
+      agent: { ...current, updatedAt: "2026-04-20T00:01:00.000Z" },
+      project: createEntry(current).project,
+    });
+
+    expect(pendingRequestIds(serverId)).toEqual([]);
+    expect(isRequestTombstoned(serverId, agentId, "req-1")).toBe(true);
+    store.clearSession(serverId);
+  });
+
+  it("keeps an unresolved request from the same update and drops the tombstoned one", () => {
+    const serverId = "server-mixed-resolved-permission";
+    const agentId = "agent-1";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const projection = new AgentStoreProjection(serverId);
+    const first = createAgentPayload({
+      id: agentId,
+      updatedAt: "2026-04-20T00:01:00.000Z",
+      pendingPermissions: [permission("req-1")],
+    });
+    projection.applyDelta({ kind: "upsert", agent: first, project: createEntry(first).project });
+    resolvePermission(serverId, agentId, "req-1");
+
+    const next = createAgentPayload({
+      id: agentId,
+      updatedAt: "2026-04-20T00:03:00.000Z",
+      pendingPermissions: [permission("req-1"), permission("req-2")],
+    });
+    projection.applyDelta({ kind: "upsert", agent: next, project: createEntry(next).project });
+
+    expect(pendingRequestIds(serverId)).toEqual(["req-2"]);
+    expect(isRequestTombstoned(serverId, agentId, "req-1")).toBe(true);
+    expect(isRequestTombstoned(serverId, agentId, "req-2")).toBe(false);
+    store.clearSession(serverId);
+  });
+
+  it("does not restore a resolved permission from a fetched directory snapshot", () => {
+    const serverId = "server-snapshot-resolved-permission";
+    const agentId = "agent-1";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const projection = new AgentStoreProjection(serverId);
+    const first = createAgentPayload({
+      id: agentId,
+      updatedAt: "2026-04-20T00:01:00.000Z",
+      pendingPermissions: [permission("req-1")],
+    });
+    projection.replaceFetched([createEntry(first)]);
+    resolvePermission(serverId, agentId, "req-1");
+
+    projection.replaceFetched([
+      createEntry(
+        createAgentPayload({
+          id: agentId,
+          updatedAt: "2026-04-20T00:03:00.000Z",
+          pendingPermissions: [permission("req-1"), permission("req-2")],
+        }),
+      ),
+    ]);
+
+    expect(pendingRequestIds(serverId)).toEqual(["req-2"]);
+    expect(isRequestTombstoned(serverId, agentId, "req-1")).toBe(true);
     store.clearSession(serverId);
   });
 });

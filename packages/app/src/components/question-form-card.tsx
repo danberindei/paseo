@@ -1,6 +1,6 @@
 import { Alert } from "@/components/ui/alert";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useState, useCallback, useMemo, useRef, type RefObject } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import type { EditingTextInputHandle } from "@/components/ui/text-input/types";
 import { ScrollableCodeSurface } from "@/components/ui/scrollable-code-surface";
@@ -25,17 +26,25 @@ import {
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
+  resolveActiveQuestionState,
   resolveDismissLabel,
   shouldSubmitEmptyOnDismiss,
   type QuestionFormQuestion,
   type QuestionOption,
 } from "./question-form-card-core";
+import { focusWithRetries, isActiveElementTextInputWithContent } from "@/utils/web-focus";
+import { createFocusedPermissionRequestKeydownHandler } from "./permission-request-shortcuts";
+import type { PermissionShortcutActions } from "@/agent-stream/use-permission-shortcuts";
 
 interface QuestionFormCardProps {
   permission: PendingPermission;
-  onRespond: (response: AgentPermissionResponse) => void;
+  onRespond: (response: AgentPermissionResponse, actionId: "submit" | "dismiss") => void;
   isResponding: boolean;
   responseError: string | null;
+  respondingActionId: string | null;
+  isShortcutTarget: boolean;
+  isShortcutOwner: boolean;
+  registerShortcutTarget: (key: string, actions: PermissionShortcutActions) => () => void;
 }
 
 const IS_WEB = isWeb;
@@ -75,6 +84,7 @@ interface QuestionOptionRowProps {
   multiSelect: boolean;
   isResponding: boolean;
   onToggle: (qIndex: number, optIndex: number, multiSelect: boolean) => void;
+  onRef?: (qIndex: number, optIndex: number, el: View | null) => void;
 }
 
 function QuestionOptionRow({
@@ -85,7 +95,16 @@ function QuestionOptionRow({
   multiSelect,
   isResponding,
   onToggle,
+  onRef,
 }: QuestionOptionRowProps) {
+  const localRef = useRef<View | null>(null);
+  const refCallback = useCallback(
+    (el: View | null) => {
+      localRef.current = el;
+      onRef?.(qIndex, optIndex, el);
+    },
+    [onRef, qIndex, optIndex],
+  );
   const { theme } = useUnistyles();
 
   const handlePress = useCallback(
@@ -129,6 +148,7 @@ function QuestionOptionRow({
 
   return (
     <Pressable
+      ref={refCallback}
       style={pressableStyle}
       onPress={handlePress}
       disabled={isResponding}
@@ -358,6 +378,10 @@ export function QuestionFormCard({
   onRespond,
   isResponding,
   responseError,
+  respondingActionId,
+  isShortcutTarget,
+  isShortcutOwner,
+  registerShortcutTarget,
 }: QuestionFormCardProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -366,11 +390,37 @@ export function QuestionFormCard({
     () => parseQuestionFormQuestions(permission.request.input),
     [permission.request.input],
   );
+  const containerRef = useRef<View | null>(null);
+  const optionRefsMap = useRef<Map<string, View>>(new Map());
 
-  const [selections, setSelections] = useState<Record<number, Set<number>>>({});
+  const setOptionRef = useCallback((qIndex: number, optIndex: number, el: View | null) => {
+    const key = `${qIndex}-${optIndex}`;
+    if (el) {
+      optionRefsMap.current.set(key, el);
+    } else {
+      optionRefsMap.current.delete(key);
+    }
+  }, []);
+
+  const focusOption = useCallback((qIndex: number, optIndex: number) => {
+    const el = optionRefsMap.current.get(`${qIndex}-${optIndex}`);
+    if (!el) return false;
+    el.focus();
+    return true;
+  }, []);
+
+  const [selections, setSelections] = useState<Record<number, Set<number>>>(() => {
+    if (!questions) return {};
+    const initial: Record<number, Set<number>> = {};
+    for (let i = 0; i < questions.length; i++) {
+      if (questions[i].options.length > 0) {
+        initial[i] = new Set([0]);
+      }
+    }
+    return initial;
+  });
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
   const otherInputRef = useRef<EditingTextInputHandle | null>(null);
-  const [respondingAction, setRespondingAction] = useState<"submit" | "dismiss" | null>(null);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
 
   const toggleOption = useCallback(
@@ -383,8 +433,6 @@ export function QuestionFormCard({
         } else {
           next.add(optIndex);
         }
-      } else if (next.has(optIndex)) {
-        next.clear();
       } else {
         next.clear();
         next.add(optIndex);
@@ -423,25 +471,25 @@ export function QuestionFormCard({
   );
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
-  const resolvedActiveQuestionIndex = questions
-    ? Math.min(activeQuestionIndex, questions.length - 1)
-    : 0;
-  const activeQuestion = questions?.[resolvedActiveQuestionIndex];
-  const activeQuestionAnswered = activeQuestion
-    ? isQuestionAnswered(activeQuestion, resolvedActiveQuestionIndex, selections, otherTexts)
-    : false;
-  const isLastQuestion = questions ? resolvedActiveQuestionIndex === questions.length - 1 : true;
+  const {
+    index: resolvedActiveQuestionIndex,
+    question: activeQuestion,
+    answered: activeQuestionAnswered,
+    isLast: isLastQuestion,
+  } = resolveActiveQuestionState({ questions, activeQuestionIndex, selections, otherTexts });
 
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
-    setRespondingAction("submit");
-    onRespond({
-      behavior: "allow",
-      updatedInput: {
-        ...permission.request.input,
-        answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+    onRespond(
+      {
+        behavior: "allow",
+        updatedInput: {
+          ...permission.request.input,
+          answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+        },
       },
-    });
+      "submit",
+    );
   }, [
     questions,
     allAnswered,
@@ -454,22 +502,127 @@ export function QuestionFormCard({
 
   const handleDeny = useCallback(() => {
     if (!questions || isResponding) return;
-    setRespondingAction("dismiss");
     if (shouldSubmitEmptyOnDismiss(questions)) {
-      onRespond({
-        behavior: "allow",
-        updatedInput: {
-          ...permission.request.input,
-          answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+      onRespond(
+        {
+          behavior: "allow",
+          updatedInput: {
+            ...permission.request.input,
+            answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+          },
         },
-      });
+        "dismiss",
+      );
       return;
     }
-    onRespond({
-      behavior: "deny",
-      message: "Dismissed by user",
+    onRespond(
+      {
+        behavior: "deny",
+        message: "Dismissed by user",
+      },
+      "dismiss",
+    );
+  }, [questions, onRespond, isResponding, otherTexts, permission.request.input, selections]);
+
+  const activeQuestionOptionCount =
+    activeQuestion && !activeQuestion.multiSelect ? activeQuestion.options.length : 0;
+  const activeQuestionSelectedIndex = useMemo(() => {
+    const current = selections[resolvedActiveQuestionIndex];
+    return current && current.size > 0 ? Math.min(...current) : -1;
+  }, [resolvedActiveQuestionIndex, selections]);
+
+  const handleNavigateOption = useCallback(
+    (index: number) => {
+      setSelections((prev) => ({ ...prev, [resolvedActiveQuestionIndex]: new Set([index]) }));
+      if (otherTexts[resolvedActiveQuestionIndex]) {
+        setOtherTexts((prev) => {
+          if (!prev[resolvedActiveQuestionIndex]) return prev;
+          const next = { ...prev };
+          delete next[resolvedActiveQuestionIndex];
+          return next;
+        });
+        otherInputRef.current?.replaceText("");
+      }
+      focusOption(resolvedActiveQuestionIndex, index);
+    },
+    [focusOption, otherTexts, resolvedActiveQuestionIndex],
+  );
+
+  const focusCard = useStableEvent(() => {
+    const selected = activeQuestionSelectedIndex >= 0 ? activeQuestionSelectedIndex : 0;
+    if (!focusOption(resolvedActiveQuestionIndex, selected)) {
+      containerRef.current?.focus();
+    }
+  });
+
+  useEffect(() => {
+    return registerShortcutTarget(permission.key, {
+      accept: handleSubmit,
+      deny: handleDeny,
+      focus: focusCard,
+      isResponding: () => isResponding,
     });
-  }, [questions, isResponding, onRespond, otherTexts, permission.request.input, selections]);
+  }, [focusCard, handleSubmit, handleDeny, isResponding, permission.key, registerShortcutTarget]);
+
+  const handleKeyDown = useMemo(
+    () =>
+      createFocusedPermissionRequestKeydownHandler({
+        isResponding: () => isResponding,
+        isShortcutOwner,
+        onAccept: handleSubmit,
+        onDeny: handleDeny,
+        arrowNavigation: {
+          itemCount: () => activeQuestionOptionCount,
+          currentIndex: () => activeQuestionSelectedIndex,
+          onNavigate: handleNavigateOption,
+          isOptionTarget: (target) => {
+            for (let index = 0; index < activeQuestionOptionCount; index++) {
+              if (optionRefsMap.current.get(`${resolvedActiveQuestionIndex}-${index}`) === target) {
+                return true;
+              }
+            }
+            return false;
+          },
+        },
+      }),
+    [
+      activeQuestionOptionCount,
+      activeQuestionSelectedIndex,
+      handleDeny,
+      handleNavigateOption,
+      handleSubmit,
+      isResponding,
+      isShortcutOwner,
+      resolvedActiveQuestionIndex,
+    ],
+  );
+
+  useEffect(() => {
+    if (!IS_WEB || !isShortcutTarget) {
+      return;
+    }
+
+    const element = containerRef.current;
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    if (isActiveElementTextInputWithContent()) {
+      return;
+    }
+
+    return focusWithRetries({
+      focus: () => {
+        if (isActiveElementTextInputWithContent()) return;
+        focusCard();
+      },
+      isFocused: () => {
+        if (isActiveElementTextInputWithContent()) return true;
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        return active instanceof HTMLElement && element.contains(active);
+      },
+    });
+  }, [focusCard, isShortcutTarget, resolvedActiveQuestionIndex]);
 
   const handleSelectQuestion = useCallback((index: number) => {
     setActiveQuestionIndex(index);
@@ -502,7 +655,6 @@ export function QuestionFormCard({
     [theme.colors.surface2, theme.colors.surface1, theme.colors.borderAccent],
   );
 
-  const pendingAction = isResponding ? respondingAction : null;
   const primaryDisabled = isResponding || (isLastQuestion ? !allAnswered : !activeQuestionAnswered);
   const primaryActionLabel = isLastQuestion
     ? t("message.question.submit")
@@ -525,10 +677,10 @@ export function QuestionFormCard({
       styles.container,
       {
         backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.border,
+        borderColor: isShortcutTarget ? theme.colors.borderAccent : theme.colors.border,
       },
     ],
-    [theme.colors.surface1, theme.colors.border],
+    [theme.colors.surface1, theme.colors.border, theme.colors.borderAccent, isShortcutTarget],
   );
   // Single-select radios need a group; checkboxes are valid standalone.
   const optionsGroupAccessibility = useMemo(
@@ -564,8 +716,21 @@ export function QuestionFormCard({
   const otherText = otherTexts[resolvedActiveQuestionIndex] ?? "";
   const showTextInput = questionShowsTextInput(questions[resolvedActiveQuestionIndex]);
 
+  let webTabIndex: number | undefined;
+  if (IS_WEB) {
+    webTabIndex = isShortcutTarget ? 0 : -1;
+  }
+
   return (
-    <View style={containerStyle} testID="question-form-card">
+    <View
+      ref={containerRef}
+      style={containerStyle}
+      // @ts-ignore - tabIndex is web-only
+      tabIndex={webTabIndex}
+      // @ts-ignore - onKeyDown is web-only
+      onKeyDown={handleKeyDown}
+      testID="question-form-card"
+    >
       <QuestionNav
         questions={questions}
         activeIndex={resolvedActiveQuestionIndex}
@@ -593,6 +758,7 @@ export function QuestionFormCard({
                   multiSelect={activeQuestion.multiSelect}
                   isResponding={isResponding}
                   onToggle={toggleOption}
+                  onRef={setOptionRef}
                 />
               ))}
             </View>
@@ -627,7 +793,7 @@ export function QuestionFormCard({
           accessibilityLabel={dismissLabel}
           testID="question-form-dismiss"
         >
-          {pendingAction === "dismiss" ? (
+          {respondingActionId === "dismiss" ? (
             <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
           ) : (
             <View style={styles.actionContent}>
@@ -645,7 +811,7 @@ export function QuestionFormCard({
           accessibilityLabel={primaryActionLabel}
           testID="question-form-primary-action"
         >
-          {pendingAction === "submit" ? (
+          {respondingActionId === "submit" ? (
             <LoadingSpinner size="small" color={theme.colors.accentForeground} />
           ) : (
             <View style={styles.actionContent}>

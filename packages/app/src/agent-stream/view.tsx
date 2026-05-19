@@ -112,6 +112,9 @@ import {
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useForkAgent } from "@/hooks/use-fork-agent";
+import { createFocusedPermissionRequestKeydownHandler } from "@/components/permission-request-shortcuts";
+import { usePermissionShortcuts, type PermissionShortcutActions } from "./use-permission-shortcuts";
+import { focusWithRetries, isActiveElementTextInputWithContent } from "@/utils/web-focus";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
@@ -150,6 +153,11 @@ function BottomOverlayInset({ height }: { height: number }) {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  shortcutTargetKey: string | null;
+  isShortcutOwner: boolean;
+  registerShortcutTarget: (key: string, actions: PermissionShortcutActions) => () => void;
+  onStartResponding: (key: string) => void;
+  onStopResponding: (key: string) => void;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -157,7 +165,16 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          isShortcutTarget={permission.key === input.shortcutTargetKey}
+          isShortcutOwner={input.isShortcutOwner}
+          registerShortcutTarget={input.registerShortcutTarget}
+          onStartResponding={input.onStartResponding}
+          onStopResponding={input.onStopResponding}
+        />
       ))}
     </View>
   );
@@ -987,14 +1004,41 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
       [pendingPermissions, agentId],
     );
+    const permissionShortcutHandlerId = useMemo(
+      () => `permission-shortcuts:${resolvedServerId}:${agentId}`,
+      [agentId, resolvedServerId],
+    );
+    const {
+      shortcutTargetKey,
+      isShortcutOwner,
+      registerShortcutTarget: registerPermissionShortcutTarget,
+      onStartResponding: handlePermissionStartResponding,
+      onStopResponding: handlePermissionStopResponding,
+    } = usePermissionShortcuts(pendingPermissionItems, {
+      handlerId: permissionShortcutHandlerId,
+      isVisible: isActive,
+    });
 
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          shortcutTargetKey,
+          isShortcutOwner,
+          registerShortcutTarget: registerPermissionShortcutTarget,
+          onStartResponding: handlePermissionStartResponding,
+          onStopResponding: handlePermissionStopResponding,
         }),
-      [client, pendingPermissionItems],
+      [
+        client,
+        pendingPermissionItems,
+        shortcutTargetKey,
+        isShortcutOwner,
+        registerPermissionShortcutTarget,
+        handlePermissionStartResponding,
+        handlePermissionStopResponding,
+      ],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1491,15 +1535,28 @@ function PermissionActionButton({
   );
 }
 
-function PermissionRequestCard({
+// oxlint-disable-next-line complexity
+export function PermissionRequestCard({
   permission,
   client,
+  isShortcutTarget,
+  isShortcutOwner,
+  registerShortcutTarget,
+  onStartResponding,
+  onStopResponding,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  isShortcutTarget: boolean;
+  isShortcutOwner: boolean;
+  registerShortcutTarget: (key: string, actions: PermissionShortcutActions) => () => void;
+  onStartResponding: (key: string) => void;
+  onStopResponding: (key: string) => void;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const containerRef = useRef<View | null>(null);
+  const isRespondingRef = useRef(false);
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
@@ -1542,6 +1599,18 @@ function PermissionRequestCard({
     ];
   }, [isPlanRequest, request, t]);
 
+  const acceptAction = useMemo(
+    () =>
+      resolvedActions.find((a) => a.behavior === "allow" && a.variant === "primary") ??
+      resolvedActions.find((a) => a.behavior === "allow") ??
+      null,
+    [resolvedActions],
+  );
+  const denyAction = useMemo(
+    () => resolvedActions.find((a) => a.behavior === "deny") ?? null,
+    [resolvedActions],
+  );
+
   const planMarkdown = useMemo(() => {
     if (!request) {
       return undefined;
@@ -1574,21 +1643,35 @@ function PermissionRequestCard({
         15000,
       );
     },
+    onError: () => {
+      isRespondingRef.current = false;
+      setRespondingActionId(null);
+      onStopResponding(permission.key);
+    },
   });
   const {
     reset: resetPermissionMutation,
     mutateAsync: respondToPermission,
-    isPending: isResponding,
+    isPending: isPermissionPending,
   } = permissionMutation;
 
   const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
+  const isResponding = isPermissionPending || respondingActionId !== null;
+  isRespondingRef.current = isResponding;
+
+  const resetPermissionMutationRef = useRef(resetPermissionMutation);
+  resetPermissionMutationRef.current = resetPermissionMutation;
 
   useEffect(() => {
-    resetPermissionMutation();
+    resetPermissionMutationRef.current();
     setRespondingActionId(null);
-  }, [permission.request.id, resetPermissionMutation]);
+  }, [permission.request.id]);
   const handleResponse = useCallback(
-    (response: AgentPermissionResponse) => {
+    (response: AgentPermissionResponse, actionId: string) => {
+      if (isRespondingRef.current) return;
+      isRespondingRef.current = true;
+      setRespondingActionId(actionId);
+      onStartResponding(permission.key);
       respondToPermission({
         agentId: permission.agentId,
         requestId: permission.request.id,
@@ -1597,27 +1680,101 @@ function PermissionRequestCard({
         console.error("[PermissionRequestCard] Failed to respond to permission:", error);
       });
     },
-    [permission.agentId, permission.request.id, respondToPermission],
+    [
+      permission.agentId,
+      permission.request.id,
+      permission.key,
+      respondToPermission,
+      onStartResponding,
+    ],
   );
   const handleActionPress = useCallback(
     (action: AgentPermissionAction) => {
-      setRespondingActionId(action.id);
       if (action.behavior === "allow") {
-        handleResponse({
-          behavior: "allow",
-          selectedActionId: action.id,
-        });
+        handleResponse(
+          {
+            behavior: "allow",
+            selectedActionId: action.id,
+          },
+          action.id,
+        );
         return;
       }
-      handleResponse({
-        behavior: "deny",
-        selectedActionId: action.id,
-        message: "Denied by user",
-      });
+      handleResponse(
+        {
+          behavior: "deny",
+          selectedActionId: action.id,
+          message: "Denied by user",
+        },
+        action.id,
+      );
     },
     [handleResponse],
   );
 
+  const handleAccept = useCallback(() => {
+    if (!acceptAction) return;
+    handleActionPress(acceptAction);
+  }, [acceptAction, handleActionPress]);
+  const handleDeny = useCallback(() => {
+    if (!denyAction) return;
+    handleActionPress(denyAction);
+  }, [denyAction, handleActionPress]);
+  const handleKeyDown = useMemo(
+    () =>
+      createFocusedPermissionRequestKeydownHandler({
+        isResponding: () => isRespondingRef.current,
+        isShortcutOwner,
+        onAccept: handleAccept,
+        onDeny: handleDeny,
+      }),
+    [handleAccept, handleDeny, isShortcutOwner],
+  );
+
+  const focusCard = useCallback(() => {
+    containerRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (request.kind === "question") {
+      return;
+    }
+
+    return registerShortcutTarget(permission.key, {
+      accept: handleAccept,
+      deny: handleDeny,
+      focus: focusCard,
+      isResponding: () => isRespondingRef.current,
+    });
+  }, [focusCard, handleAccept, handleDeny, permission.key, registerShortcutTarget, request.kind]);
+
+  useEffect(() => {
+    if (!isWeb || !isShortcutTarget) {
+      return;
+    }
+
+    const element = containerRef.current;
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    if (isActiveElementTextInputWithContent()) {
+      return;
+    }
+
+    return focusWithRetries({
+      focus: () => {
+        if (isActiveElementTextInputWithContent()) return;
+        element.focus();
+      },
+      isFocused: () => {
+        if (isActiveElementTextInputWithContent()) return true;
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        return active instanceof HTMLElement && element.contains(active);
+      },
+    });
+  }, [isShortcutTarget]);
+
+  const webTabIndex = isShortcutTarget ? 0 : -1;
   const optionsContainerStyle = useMemo(
     () => [
       permissionStyles.optionsContainer,
@@ -1638,6 +1795,10 @@ function PermissionRequestCard({
         onRespond={handleResponse}
         isResponding={isResponding}
         responseError={responseError}
+        respondingActionId={respondingActionId}
+        isShortcutTarget={isShortcutTarget}
+        isShortcutOwner={isShortcutOwner}
+        registerShortcutTarget={registerShortcutTarget}
       />
     );
   }
@@ -1678,20 +1839,35 @@ function PermissionRequestCard({
 
   if (isPlanRequest && planMarkdown) {
     return (
-      <PlanCard
-        title={title}
-        description={description}
-        text={planMarkdown}
-        outcome="pending"
-        footer={footer}
-        testID="permission-plan-card"
-        disableOuterSpacing
-      />
+      <View
+        ref={containerRef}
+        // @ts-ignore - tabIndex is web-only
+        tabIndex={isWeb ? webTabIndex : undefined}
+        // @ts-ignore - onKeyDown is web-only
+        onKeyDown={handleKeyDown}
+      >
+        <PlanCard
+          title={title}
+          description={description}
+          text={planMarkdown}
+          outcome="pending"
+          footer={footer}
+          testID="permission-plan-card"
+          disableOuterSpacing
+        />
+      </View>
     );
   }
 
   return (
-    <View style={permissionStyles.container}>
+    <View
+      ref={containerRef}
+      style={[permissionStyles.container, isShortcutTarget && permissionStyles.containerTarget]}
+      // @ts-ignore - tabIndex is web-only
+      tabIndex={isWeb ? webTabIndex : undefined}
+      // @ts-ignore - onKeyDown is web-only
+      onKeyDown={handleKeyDown}
+    >
       <Text style={permissionStyles.title}>{title}</Text>
 
       {description ? <Text style={permissionStyles.description}>{description}</Text> : null}
@@ -1803,6 +1979,10 @@ const permissionStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     backgroundColor: theme.colors.surface1,
     borderColor: theme.colors.border,
+  },
+  containerTarget: {
+    backgroundColor: theme.colors.surface2,
+    borderColor: theme.colors.borderAccent,
   },
   title: {
     fontSize: theme.fontSize.base,

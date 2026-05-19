@@ -1,5 +1,6 @@
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
-import type { Agent } from "@/stores/session-store";
+import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -14,6 +15,27 @@ interface PendingPermissionEntry {
   key: string;
   agentId: string;
   request: Agent["pendingPermissions"][number];
+}
+
+function selectAgentTombstones(serverId: string, agentId: string): Set<string> | undefined {
+  return useSessionStore.getState().sessions[serverId]?.resolvedPermissionIds.get(agentId);
+}
+
+export function filterAgentPendingPermissions(
+  serverId: string,
+  agentId: string,
+  requests: AgentPermissionRequest[],
+): AgentPermissionRequest[] {
+  const tombstones = selectAgentTombstones(serverId, agentId);
+  if (!tombstones || tombstones.size === 0) {
+    return requests;
+  }
+  const filtered = requests.filter((request) => !tombstones.has(request.id));
+  return filtered.length === requests.length ? requests : filtered;
+}
+
+export function isRequestTombstoned(serverId: string, agentId: string, requestId: string): boolean {
+  return selectAgentTombstones(serverId, agentId)?.has(requestId) ?? false;
 }
 
 export function buildAgentDirectoryState(input: {
@@ -38,7 +60,11 @@ export function buildAgentDirectoryState(input: {
     };
     agents.set(agent.id, agent);
 
-    for (const request of agent.pendingPermissions) {
+    for (const request of filterAgentPendingPermissions(
+      input.serverId,
+      agent.id,
+      agent.pendingPermissions,
+    )) {
       const key = derivePendingPermissionKey(agent.id, request);
       pendingPermissions.set(key, { key, agentId: agent.id, request });
     }

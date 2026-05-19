@@ -31,6 +31,27 @@ const portalStore = vi.hoisted(() => {
   };
 });
 
+const sheetStore = vi.hoisted(() => {
+  let change: ((index: number) => void) | null = null;
+  let dismiss: (() => void) | null = null;
+  return {
+    setHandlers(nextChange: ((index: number) => void) | null, nextDismiss: (() => void) | null) {
+      change = nextChange;
+      dismiss = nextDismiss;
+    },
+    change(index: number) {
+      change?.(index);
+    },
+    dismiss() {
+      dismiss?.();
+    },
+    reset() {
+      change = null;
+      dismiss = null;
+    },
+  };
+});
+
 vi.mock("@gorhom/portal", () => ({
   Portal: ({ children }: { children?: React.ReactNode }) => {
     React.useEffect(() => {
@@ -50,34 +71,50 @@ vi.mock("@gorhom/bottom-sheet", async () => {
   return {
     BottomSheetModalProvider: ({ children }: { children?: React.ReactNode }) =>
       React.createElement("div", { "data-bottom-sheet-provider": true }, children),
-    BottomSheetModal: React.forwardRef(
-      (
-        {
-          children,
-          stackBehavior,
-          waitFor,
-          simultaneousHandlers,
-        }: {
-          children?: React.ReactNode;
-          stackBehavior?: string;
-          waitFor?: unknown;
-          simultaneousHandlers?: unknown;
-        },
-        _ref,
-      ) => {
-        sheetWaitFor.push(waitFor);
-        sheetSimultaneousHandlers.push(simultaneousHandlers);
-        return React.createElement(
-          Portal,
-          null,
-          React.createElement("div", { "data-stack-behavior": stackBehavior }, children),
-        );
+    BottomSheetModal: React.forwardRef(function FakeBottomSheetModal(
+      {
+        children,
+        stackBehavior,
+        waitFor,
+        simultaneousHandlers,
+        onChange,
+        onDismiss,
+      }: {
+        children?: React.ReactNode;
+        stackBehavior?: string;
+        waitFor?: unknown;
+        simultaneousHandlers?: unknown;
+        onChange?: (index: number) => void;
+        onDismiss?: () => void;
       },
-    ),
+      ref,
+    ) {
+      sheetWaitFor.push(waitFor);
+      sheetSimultaneousHandlers.push(simultaneousHandlers);
+      React.useImperativeHandle(ref, () => ({
+        present() {},
+        dismiss() {},
+        snapToIndex() {},
+        snapToPosition() {},
+        expand() {},
+        collapse() {},
+        close() {},
+        forceClose() {},
+      }));
+      React.useEffect(() => {
+        sheetStore.setHandlers(onChange ?? null, onDismiss ?? null);
+      }, [onChange, onDismiss]);
+      return React.createElement(
+        Portal,
+        null,
+        React.createElement("div", { "data-stack-behavior": stackBehavior }, children),
+      );
+    }),
   };
 });
 
 import { IsolatedBottomSheetModal, type ContextBridge } from ".";
+import { getPresentationOwnerSnapshot, parsePresentationOwnerSnapshot } from "@/keyboard";
 import { useAnimatedLayout } from "@gorhom/bottom-sheet/src/hooks/useAnimatedLayout";
 import {
   useAttachSheetContentDrag,
@@ -92,6 +129,9 @@ function PortalHostProbe() {
 }
 
 const LabelContext = createContext("unbridged");
+
+/** The scope every sheet in this suite presents under. */
+const PRESENTATION_SCOPE = { workspaceKey: "server:workspace", hostedTabId: "tab" } as const;
 
 function Label() {
   return <div data-label={useContext(LabelContext)} />;
@@ -410,4 +450,75 @@ describe("bottom sheet native drag relations", () => {
       }
     },
   );
+});
+
+describe("IsolatedBottomSheetModal presentation ownership", () => {
+  const WORKSPACE_KEY = PRESENTATION_SCOPE.workspaceKey;
+  let container: HTMLDivElement;
+  let root: Root;
+  let ref: React.RefObject<React.ComponentRef<typeof IsolatedBottomSheetModal> | null>;
+
+  beforeEach(() => {
+    sheetStore.reset();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    ref = React.createRef();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    portalStore.reset();
+    sheetStore.reset();
+  });
+
+  function owner() {
+    return parsePresentationOwnerSnapshot(getPresentationOwnerSnapshot(WORKSPACE_KEY));
+  }
+
+  function renderSheet() {
+    act(() => {
+      root.render(
+        <IsolatedBottomSheetModal
+          ref={ref}
+          contextBridge={null}
+          presentationScope={PRESENTATION_SCOPE}
+        >
+          Sheet
+        </IsolatedBottomSheetModal>,
+      );
+    });
+  }
+
+  it("registers on present and leaves on dismiss or unmount", () => {
+    renderSheet();
+    expect(owner()).toBeNull();
+
+    act(() => ref.current?.present());
+    expect(owner()).toEqual({ hostedTabId: "tab" });
+
+    act(() => sheetStore.dismiss());
+    expect(owner()).toBeNull();
+
+    act(() => ref.current?.present());
+    expect(owner()).toEqual({ hostedTabId: "tab" });
+
+    act(() => root.unmount());
+    expect(owner()).toBeNull();
+  });
+
+  it("keeps a vetoed close registered until the sheet actually dismisses", () => {
+    renderSheet();
+    act(() => ref.current?.present());
+
+    act(() => sheetStore.change(-1));
+    expect(owner()).toEqual({ hostedTabId: "tab" });
+
+    act(() => sheetStore.change(0));
+    expect(owner()).toEqual({ hostedTabId: "tab" });
+
+    act(() => sheetStore.dismiss());
+    expect(owner()).toBeNull();
+  });
 });

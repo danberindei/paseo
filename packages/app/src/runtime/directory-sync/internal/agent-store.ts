@@ -2,7 +2,11 @@ import equal from "fast-deep-equal";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
-import { buildAgentDirectoryState, type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
+import {
+  buildAgentDirectoryState,
+  filterAgentPendingPermissions,
+  type AgentDirectoryDelta,
+} from "@/utils/agent-directory-sync";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
@@ -164,7 +168,13 @@ export class AgentStoreProjection {
   replacePendingPermissions(agent: Agent): void {
     const pending = new Map(useSessionStore.getState().sessions[this.serverId]?.pendingPermissions);
     for (const [key, entry] of pending) if (entry.agentId === agent.id) pending.delete(key);
-    for (const request of agent.pendingPermissions) {
+    // A stale directory update keeps the stored agent, whose snapshot still lists requests that
+    // resolved since it arrived. Derive the pending set through the tombstones so those stay gone.
+    for (const request of filterAgentPendingPermissions(
+      this.serverId,
+      agent.id,
+      agent.pendingPermissions,
+    )) {
       const key = derivePendingPermissionKey(agent.id, request);
       pending.set(key, { key, agentId: agent.id, request });
     }
@@ -210,6 +220,7 @@ export class AgentStoreProjection {
     store.setAgentAuthoritativeHistoryApplied(this.serverId, agentId, false);
     store.setAgentStreamTail(this.serverId, removeKey);
     store.clearAgentStreamHead(this.serverId, agentId);
+    store.clearResolvedPermissionIdsForAgent(this.serverId, agentId);
   }
 
   archive(agentId: string, archivedAt: string): Agent | null {

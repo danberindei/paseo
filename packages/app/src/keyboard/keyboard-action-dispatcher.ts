@@ -57,7 +57,11 @@ export type KeyboardActionId =
   | "workspace.pin"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
-  | "workspace.setup.show";
+  | "workspace.setup.show"
+  // Permission requests: bound to Alt+A/D/Q on every platform.
+  | "permission.accept"
+  | "permission.deny"
+  | "permission.focus";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -117,7 +121,10 @@ export type KeyboardActionDefinition =
   | { id: "workspace.archive.undo"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
-  | { id: "workspace.setup.show"; scope: KeyboardActionScope };
+  | { id: "workspace.setup.show"; scope: KeyboardActionScope }
+  | { id: "permission.accept"; scope: KeyboardActionScope }
+  | { id: "permission.deny"; scope: KeyboardActionScope }
+  | { id: "permission.focus"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {
   handlerId: string;

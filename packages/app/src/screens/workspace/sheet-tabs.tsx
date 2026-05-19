@@ -1,5 +1,5 @@
 import { useIsFocused } from "expo-router/react-navigation";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   FULL_SHEET_SNAP_POINTS,
   SheetBackground,
@@ -27,6 +27,7 @@ export interface SheetTabsProps {
 
 interface SheetTabSheetProps {
   sheet: SheetTab;
+  workspaceKey: string;
   /** Only the top sheet answers Android Back; the ones below wait their turn. */
   isTop: boolean;
   /** Runs the guarded close and resolves to whether the tab is still open. */
@@ -68,6 +69,7 @@ function WorkspaceSheetTabs({
           // Keyed by tab id and kind, so the registration and its descriptor hook stay fixed.
           key={`${sheet.tab.tabId}:${sheet.tab.target.kind}`}
           sheet={sheet}
+          workspaceKey={workspaceKey}
           isTop={index === sheets.length - 1}
           onClose={handleClose}
         />
@@ -76,12 +78,16 @@ function WorkspaceSheetTabs({
   );
 }
 
-function SheetTabSheet({ sheet, isTop, onClose }: SheetTabSheetProps) {
+function SheetTabSheet({ sheet, workspaceKey, isTop, onClose }: SheetTabSheetProps) {
   const { tab } = sheet;
   const sheetRef = useRef<IsolatedBottomSheetModalRef>(null);
   const isScreenFocused = useIsFocused();
   const { isWorkspaceFocused } = useSheetPaneHost();
   const contextBridge = useSheetPaneBridge();
+  const presentationScope = useMemo(
+    () => ({ workspaceKey, hostedTabId: tab.tabId }),
+    [workspaceKey, tab.tabId],
+  );
 
   // The sheet lives as long as its store entry: it presents on mount, and unmounting takes it off
   // the stack, which uncovers the sheet below. Gorhom slides an unmounting sheet down and still
@@ -123,6 +129,7 @@ function SheetTabSheet({ sheet, isTop, onClose }: SheetTabSheetProps) {
     <IsolatedBottomSheetModal
       ref={sheetRef}
       contextBridge={contextBridge}
+      presentationScope={presentationScope}
       snapPoints={FULL_SHEET_SNAP_POINTS}
       enableDynamicSizing={false}
       enablePanDownToClose

@@ -25,6 +25,8 @@ import {
   type AttachSheetContentDrag,
   type SheetContentDragGesture,
 } from "@/components/ui/bottom-sheet-scope";
+import { usePresentationRegistration } from "@/keyboard";
+import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { SheetBackdrop } from "./sheet-backdrop";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
@@ -74,6 +76,15 @@ type IsolatedBottomSheetModalProps = Omit<
    * inside the sheet and it throws on device only.
    */
   contextBridge: ContextBridge | null;
+  /**
+   * Which workspace and pane this sheet covers. A workspace sheet names the tab it hosts so that
+   * tab's permission card can answer shortcuts; a sheet with no hosted tab blocks the panes under
+   * it.
+   */
+  presentationScope?: {
+    workspaceKey: string | null;
+    hostedTabId?: string | null;
+  };
 };
 
 export type IsolatedBottomSheetModalRef = GorhomBottomSheetModalMethods;
@@ -85,28 +96,17 @@ export const IsolatedBottomSheetModal = forwardRef<
   // Gorhom puts this ref into its provider queue and reads `.current` for stack operations.
   // A callback ref accepts the handle but leaves that queue unable to dismiss or restore it.
   const modalRef = useRef<GorhomBottomSheetModalMethods>(null);
-  useImperativeHandle(
-    ref,
-    () => ({
-      present: (...args) => modalRef.current?.present(...args),
-      dismiss: (...args) => modalRef.current?.dismiss(...args),
-      snapToIndex: (...args) => modalRef.current?.snapToIndex(...args),
-      snapToPosition: (...args) => modalRef.current?.snapToPosition(...args),
-      expand: (...args) => modalRef.current?.expand(...args),
-      collapse: (...args) => modalRef.current?.collapse(...args),
-      close: (...args) => modalRef.current?.close(...args),
-      forceClose: (...args) => modalRef.current?.forceClose(...args),
-    }),
-    [],
-  );
   const {
     children,
     presentation = "push",
     contextBridge,
+    presentationScope,
     backdropOpacity,
     enableDismissOnClose = true,
     waitFor,
     simultaneousHandlers,
+    onChange,
+    onDismiss,
     ...bottomSheetProps
   } = props;
   // State, not a ref the child fills in: Gorhom builds its pan once per `waitFor`, and RNGH reads
@@ -130,6 +130,61 @@ export const IsolatedBottomSheetModal = forwardRef<
       ],
     };
   }, [contentDragGesture, waitFor, simultaneousHandlers]);
+  // A sheet is presented through the ref (or reports its first snap) and stays registered until
+  // Gorhom actually unmounts it. `onChange(-1)` alone is not a dismissal: a vetoed close parks
+  // the sheet at -1 and can bring it back.
+  const [isPresented, setIsPresented] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+  const presentationLayer = useGlobalOverlayLayer("modal", isPresented);
+  usePresentationRegistration({
+    active: isPresented,
+    layer: presentationLayer,
+    workspaceKey: presentationScope?.workspaceKey ?? null,
+    hostedTabId: presentationScope?.hostedTabId ?? null,
+  });
+  const markPresented = useCallback(() => {
+    if (mountedRef.current) setIsPresented(true);
+  }, []);
+  const handleSheetChange = useCallback(
+    (...args: Parameters<NonNullable<BottomSheetModalProps["onChange"]>>) => {
+      if (args[0] >= 0) markPresented();
+      onChange?.(...args);
+    },
+    [markPresented, onChange],
+  );
+  const handleSheetDismiss = useCallback(() => {
+    if (mountedRef.current) setIsPresented(false);
+    onDismiss?.();
+  }, [onDismiss]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      present: (...args) => {
+        markPresented();
+        modalRef.current?.present(...args);
+      },
+      dismiss: (...args) => modalRef.current?.dismiss(...args),
+      snapToIndex: (...args) => {
+        markPresented();
+        modalRef.current?.snapToIndex(...args);
+      },
+      snapToPosition: (...args) => modalRef.current?.snapToPosition(...args),
+      expand: (...args) => {
+        markPresented();
+        modalRef.current?.expand(...args);
+      },
+      collapse: (...args) => modalRef.current?.collapse(...args),
+      close: (...args) => modalRef.current?.close(...args),
+      forceClose: (...args) => modalRef.current?.forceClose(...args),
+    }),
+    [markPresented],
+  );
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
       <SheetBackdrop
@@ -146,12 +201,16 @@ export const IsolatedBottomSheetModal = forwardRef<
       ref={modalRef}
       enableDismissOnClose={enableDismissOnClose}
       stackBehavior={presentation}
+      onChange={handleSheetChange}
+      onDismiss={handleSheetDismiss}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
       waitFor={contentDragHandlers.waitFor}
       simultaneousHandlers={contentDragHandlers.simultaneousHandlers}
     >
       <BottomSheetScope attachContentDrag={attachContentDrag}>
-        {contextBridge ? contextBridge(children) : children}
+        <OverlayLayerProvider layer={presentationLayer}>
+          {contextBridge ? contextBridge(children) : children}
+        </OverlayLayerProvider>
       </BottomSheetScope>
     </GorhomBottomSheetModal>
   );

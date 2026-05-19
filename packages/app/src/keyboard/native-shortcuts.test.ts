@@ -183,6 +183,8 @@ describe("hardware source adapter", () => {
   it("claims the Shift and Option shortcuts a focused text control would otherwise type", async () => {
     const { createHardwareKeyboardSource } = await import("./internal/sources/native");
     const { focusSurfaces } = await import("./internal/focus-surfaces");
+    const { registerPermissionShortcutClaims } =
+      await import("./internal/permission-shortcut-claims");
     let claimed: string[] = [];
     const source = createHardwareKeyboardSource({
       subscribe: () => () => {},
@@ -226,6 +228,15 @@ describe("hardware source adapter", () => {
     setCommandCenterOpen(false);
     expect(claimed).toEqual(["Shift+Tab"]);
     releaseComposer();
+    expect(claimed).toEqual([]);
+
+    const releasePermission = registerPermissionShortcutClaims();
+    expect(claimed).toEqual(["Alt+KeyA", "Alt+KeyD", "Alt+KeyQ"]);
+    setCommandCenterOpen(true);
+    expect(claimed).toEqual([]);
+    setCommandCenterOpen(false);
+    expect(claimed).toEqual(["Alt+KeyA", "Alt+KeyD", "Alt+KeyQ"]);
+    releasePermission();
     expect(claimed).toEqual([]);
 
     source.publishPolicy({

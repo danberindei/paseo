@@ -105,6 +105,7 @@ export const SquarePen = StubIcon;
 export const SquareSlash = StubIcon;
 export const SquareTerminal = StubIcon;
 export const Star = StubIcon;
+export const Summary = StubIcon;
 export const Sun = StubIcon;
 export const Terminal = StubIcon;
 export const Trash2 = StubIcon;

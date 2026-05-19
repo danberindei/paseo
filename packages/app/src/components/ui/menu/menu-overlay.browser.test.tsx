@@ -1,8 +1,12 @@
-import React, { act, useEffect, useState, type ReactNode } from "react";
+import React, { act, useCallback, useEffect, useState, type ReactNode } from "react";
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { createRoot, type Root } from "react-dom/client";
 import { Text, View } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
+import { getPresentationOwnerSnapshot, parsePresentationOwnerSnapshot } from "@/keyboard";
+import { PaneProvider, type PaneContextValue } from "@/panels/pane-context";
+import { useMenuContext } from "./menu-context";
 import {
   MenuItem,
   MenuRoot,
@@ -12,6 +16,28 @@ import {
   type MenuPageDefinition,
   type Size,
 } from "./index";
+
+const layoutRef = vi.hoisted(() => ({ compact: false }));
+vi.mock("@/constants/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/constants/layout")>()),
+  useIsCompactFormFactor: () => layoutRef.compact,
+}));
+
+/** A pane the menu is opened from, so the sheet is scoped to its workspace. */
+const PANE_CONTEXT: PaneContextValue = {
+  serverId: "server",
+  workspaceId: "workspace",
+  host: "main",
+  tabId: "main",
+  target: { kind: "agent", agentId: "agent" },
+  openTab: () => undefined,
+  openPreferredTarget: () => undefined,
+  closeCurrentTab: () => undefined,
+  retargetCurrentTab: () => undefined,
+  setCurrentTabState: () => undefined,
+  openFileInWorkspace: () => undefined,
+  openImportSheet: () => undefined,
+};
 
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
@@ -190,5 +216,77 @@ describe("submenu flyout on a touch screen", () => {
     await wait(HOVER_CLOSE_SETTLED_MS);
 
     expect(document.querySelector('[data-testid="show-option"]')).not.toBeNull();
+  });
+});
+
+describe("menu sheet presentation ownership", () => {
+  const WORKSPACE_KEY = "server:workspace";
+
+  function owner(workspaceKey = WORKSPACE_KEY) {
+    return parsePresentationOwnerSnapshot(getPresentationOwnerSnapshot(workspaceKey));
+  }
+
+  /**
+   * Pushes a page through the menu's own state. This project stubs the Gorhom sheet so no sheet
+   * body is drawn; the surface still receives the page the way a tapped sub-trigger would.
+   */
+  function OpenPageButton({ id }: { id: string }) {
+    const menu = useMenuContext("OpenPageButton");
+    const openPage = useCallback(() => menu.openSub({ id, depth: 0 }), [id, menu]);
+    return (
+      <button type="button" data-testid="open-fill-page" onClick={openPage}>
+        Open fill page
+      </button>
+    );
+  }
+
+  function mountSheetMenu({ open = true }: { open?: boolean } = {}) {
+    mount(
+      <BottomSheetModalProvider>
+        <PaneProvider value={PANE_CONTEXT}>
+          <MenuRoot compactMode="sheet" defaultOpen={open}>
+            <MenuTrigger testID="sheet-trigger" accessibilityLabel="Open menu">
+              <Text>Open menu</Text>
+            </MenuTrigger>
+            <OpenPageButton id="fill-page" />
+            <MenuSurface
+              sheetTitle="Sheet menu"
+              testID="sheet-panel"
+              pages={[
+                { id: "fill-page", fill: true, content: <View testID="fill-page-content" /> },
+              ]}
+            >
+              <Text>Menu body</Text>
+            </MenuSurface>
+          </MenuRoot>
+        </PaneProvider>
+      </BottomSheetModalProvider>,
+    );
+  }
+
+  beforeEach(async () => {
+    layoutRef.compact = true;
+    await page.viewport(390, 844);
+  });
+
+  afterEach(() => {
+    layoutRef.compact = false;
+  });
+
+  it("registers the sheet for its own workspace and hosts the fill page it opens", () => {
+    mountSheetMenu();
+
+    expect(owner()).toEqual({ hostedTabId: null });
+    // Scoped to the pane's workspace, so a retained pane of another workspace stays uncovered.
+    expect(owner("server:other")).toBeNull();
+
+    act(() => element("open-fill-page").click());
+    expect(owner()).toEqual({ hostedTabId: "fill-page" });
+  });
+
+  it("registers no sheet while the menu is closed", () => {
+    mountSheetMenu({ open: false });
+
+    expect(owner()).toBeNull();
   });
 });

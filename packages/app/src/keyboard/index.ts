@@ -1,10 +1,17 @@
 export { useOverlayRegistration } from "./internal/overlay-registration";
-export type { KeyboardInputEvent } from "./internal/overlays";
+export { usePresentationRegistration } from "./internal/presentation-registration";
+export {
+  PERMISSION_SHORTCUT_ACTIONS,
+  registerPermissionShortcutClaims,
+} from "./internal/permission-shortcut-claims";
+export type { KeyboardInputEvent, PresentationOwner } from "./internal/overlays";
 export {
   dispatchTopOverlayKeyDown,
   hasActiveOverlay,
   getTopOverlayKeys,
   getTopOverlayLayer,
+  getPresentationOwnerSnapshot,
+  parsePresentationOwnerSnapshot,
   subscribeOverlays,
 } from "./internal/overlay-dispatch";
 export { hasFocusedTextInput } from "./internal/focused-text-input";

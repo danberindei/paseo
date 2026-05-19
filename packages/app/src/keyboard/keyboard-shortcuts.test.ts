@@ -427,6 +427,36 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, usesDesktopBindings: false },
       action: "workspace.tab.close.current",
     },
+    {
+      name: "matches Alt+A to accept a pending permission request",
+      event: { key: "a", code: "KeyA", altKey: true },
+      context: {},
+      action: "permission.accept",
+    },
+    {
+      name: "matches Alt+D to deny a pending permission request",
+      event: { key: "d", code: "KeyD", altKey: true },
+      context: {},
+      action: "permission.deny",
+    },
+    {
+      name: "matches Alt+Q to focus a pending permission request",
+      event: { key: "q", code: "KeyQ", altKey: true },
+      context: {},
+      action: "permission.focus",
+    },
+    {
+      name: "matches Alt+A while the message input is focused",
+      event: { key: "a", code: "KeyA", altKey: true },
+      context: { focusScope: "message-input" },
+      action: "permission.accept",
+    },
+    {
+      name: "matches Alt+A on macOS when Option substitutes event.key",
+      event: { key: "\u00E5", code: "KeyA", altKey: true },
+      context: { isMac: true },
+      action: "permission.accept",
+    },
   ];
 
   it.each(matchingCases)(
@@ -606,6 +636,29 @@ describe("keyboard-shortcuts", () => {
       name: "does not cycle theme on macOS when Cmd is missing (Alt+T alone)",
       event: { key: "\u2020", code: "KeyT", altKey: true },
       context: { isMac: true },
+    },
+    // The permission keys are the bare Alt+letter chord. AltGr arrives as
+    // Ctrl+Alt, and the remaining modifier combinations belong to other
+    // bindings, so none of them may approve or deny a request.
+    {
+      name: "does not accept a permission request on Ctrl+Alt+A",
+      event: { key: "a", code: "KeyA", altKey: true, ctrlKey: true },
+      context: {},
+    },
+    {
+      name: "does not deny a permission request on Shift+Alt+D",
+      event: { key: "d", code: "KeyD", altKey: true, shiftKey: true },
+      context: {},
+    },
+    {
+      name: "does not accept a permission request on Meta+Alt+A",
+      event: { key: "a", code: "KeyA", altKey: true, metaKey: true },
+      context: {},
+    },
+    {
+      name: "does not accept a permission request while the command center is open",
+      event: { key: "a", code: "KeyA", altKey: true },
+      context: { commandCenterOpen: true },
     },
   ];
 

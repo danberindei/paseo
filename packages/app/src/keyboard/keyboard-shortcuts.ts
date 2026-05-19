@@ -1277,6 +1277,28 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Mute/unmute voice mode",
     },
   },
+
+  // --- Permission requests ---
+  // No `help` entry: the permission card does not show its keys, so there is no
+  // rebindable row to list in the Shortcuts settings.
+  {
+    id: "permission-accept-alt-a",
+    action: "permission.accept",
+    combo: "Alt+A",
+    when: { commandCenter: false },
+  },
+  {
+    id: "permission-deny-alt-d",
+    action: "permission.deny",
+    combo: "Alt+D",
+    when: { commandCenter: false },
+  },
+  {
+    id: "permission-focus-alt-q",
+    action: "permission.focus",
+    combo: "Alt+Q",
+    when: { commandCenter: false },
+  },
 ];
 
 // --- Parse bindings at module load ---

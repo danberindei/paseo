@@ -34,6 +34,8 @@ import { isHoverPointer } from "./menu-pointer";
 import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
 import type { Alignment, Placement } from "../anchor";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
+import { usePaneContextIfAny } from "@/panels/pane-context";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -396,6 +398,20 @@ function MenuSheetSurface({
   const depth = menu.path.length;
   const fillPage = openPage?.fill === true ? openPage : null;
   const listPage = openPage?.fill === true ? null : openPage;
+  // A menu can open outside a pane. When it has one, scope its presentation to that workspace so
+  // another workspace's retained pane never reads this sheet as its cover.
+  const paneContext = usePaneContextIfAny();
+  const workspaceKey = paneContext
+    ? buildWorkspaceTabPersistenceKey({
+        serverId: paneContext.serverId,
+        workspaceId: paneContext.workspaceId,
+      })
+    : null;
+  const hostedTabId = fillPage?.id ?? null;
+  const presentationScope = useMemo(
+    () => ({ workspaceKey, hostedTabId }),
+    [workspaceKey, hostedTabId],
+  );
 
   // The sheet's content is teleported out of this subtree, so both menu contexts have to be
   // rebuilt on the other side. Providing them around the modal instead would put them on the
@@ -413,6 +429,7 @@ function MenuSheetSurface({
     <IsolatedBottomSheetModal
       ref={sheetRef}
       contextBridge={contextBridge}
+      presentationScope={presentationScope}
       backgroundComponent={SheetBackground}
       handleComponent={SheetHandle}
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height

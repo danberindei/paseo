@@ -79,6 +79,11 @@ export function usePaneHost(): PaneHost | null {
   return useContext(PaneContext)?.host ?? null;
 }
 
+/** The caller's pane, or null where the surface may open outside a pane. */
+export function usePaneContextIfAny(): PaneContextValue | null {
+  return useContext(PaneContext);
+}
+
 export function usePaneFocus(): PaneFocusContextValue {
   const value = useContext(PaneFocusContext);
   invariant(value, "PaneFocusContext is required");

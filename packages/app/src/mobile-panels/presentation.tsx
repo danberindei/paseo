@@ -3,6 +3,8 @@ import { Pressable, StyleSheet } from "react-native";
 import { GestureDetector, type GestureType } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { isWeb } from "@/constants/platform";
+import { usePresentationRegistration } from "@/keyboard";
+import { useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { usePanelStore, type MobilePanelView } from "@/stores/panel-store";
 import { getMobilePanelFrame } from "./model";
@@ -34,6 +36,16 @@ export function MobilePanelOverlay({
   const overlayOpen = useIsMobilePanelActive(panel);
   const docked = presentation === "dock";
   const isOpen = docked ? dockVisible : overlayOpen;
+  // A compact sidebar covers the workspace without being a keyboard overlay. A dock sits beside
+  // the workspace and never covers it.
+  const overlayActive = !docked && isOpen;
+  const presentationLayer = useGlobalOverlayLayer("floating", overlayActive);
+  usePresentationRegistration({
+    active: overlayActive,
+    layer: presentationLayer,
+    workspaceKey: null,
+    hostedTabId: null,
+  });
   const hostId = useId();
   const isLeft = panel === "agent-list";
   const width = isLeft ? leftPanelWidth : windowWidth;

@@ -27,7 +27,8 @@ must be claimed up front. `UIKeyCommand` takes only those keys: composer Return,
 top overlay's Enter and arrows, and the Shift or Option shortcuts whose binding is
 active in the current focus scope, such as Shift+Tab in the composer.
 `sources/native.ts` computes the claims from the published bindings and recomputes
-them when the focus scope changes. Cmd and Ctrl combos are never claimed, because
+them when the focus scope changes. It claims Alt+A/D/Q while a permission card is
+available to answer. Cmd and Ctrl combos are never claimed, because
 text controls do not type them. Android takes no claims: a focused `EditText`
 types nothing for these combos. Keep the stream as the sole shortcut emitter: a command-owned
 press is still observed by the window.
@@ -65,6 +66,13 @@ center rotates its tabs with it. Native sources drop Tab from the declarations.
 Capture a global overlay’s layer in state for its opening lifetime. Memo caches can
 be discarded or removed by React Compiler; recomputing against the registry lets an
 open modal rise above its own children and creates competing focus traps.
+
+Permission shortcuts use the same ordered surfaces. Every keyboard overlay is also a
+presentation entry; bottom sheets and compact sidebars register one when they present.
+For a workspace, the top entry owns Alt+A/D/Q only when it hosts the focused pane's tab.
+An entry that hosts no permission card blocks the panes under it, and the Explorer dock
+never owns. A sheet keeps its entry until Gorhom dismisses it, so a vetoed close keeps
+the card answerable.
 
 Declare Enter and arrow keys only while the surface owns them. Native sources
 use the top overlay's declarations to take those keys before text controls edit.
