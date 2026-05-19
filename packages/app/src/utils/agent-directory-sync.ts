@@ -1,5 +1,6 @@
 import equal from "fast-deep-equal";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
+import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import { type Agent, useSessionStore } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
@@ -92,7 +93,11 @@ export function replaceAgentPendingPermissions(serverId: string, agent: Agent): 
   for (const [key, pending] of pendingPermissions) {
     if (pending.agentId === agent.id) pendingPermissions.delete(key);
   }
-  for (const request of agent.pendingPermissions) {
+  for (const request of filterAgentPendingPermissions(
+    serverId,
+    agent.id,
+    agent.pendingPermissions,
+  )) {
     const key = derivePendingPermissionKey(agent.id, request);
     pendingPermissions.set(key, { key, agentId: agent.id, request });
   }
@@ -120,6 +125,7 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
     }
     return next.size === current.size ? current : next;
   });
+  store.clearResolvedPermissionIdsForAgent(serverId, agentId);
   store.setAgentAuthoritativeHistoryApplied(serverId, agentId, false);
   store.setAgentStreamTail(serverId, removeKey);
   store.clearAgentStreamHead(serverId, agentId);
@@ -145,6 +151,27 @@ interface PendingPermissionEntry {
   request: Agent["pendingPermissions"][number];
 }
 
+function selectAgentTombstones(serverId: string, agentId: string): Set<string> | undefined {
+  return useSessionStore.getState().sessions[serverId]?.resolvedPermissionIds.get(agentId);
+}
+
+export function filterAgentPendingPermissions(
+  serverId: string,
+  agentId: string,
+  requests: AgentPermissionRequest[],
+): AgentPermissionRequest[] {
+  const tombstones = selectAgentTombstones(serverId, agentId);
+  if (!tombstones || tombstones.size === 0) {
+    return requests;
+  }
+  const filtered = requests.filter((request) => !tombstones.has(request.id));
+  return filtered.length === requests.length ? requests : filtered;
+}
+
+export function isRequestTombstoned(serverId: string, agentId: string, requestId: string): boolean {
+  return selectAgentTombstones(serverId, agentId)?.has(requestId) ?? false;
+}
+
 export function buildAgentDirectoryState(input: {
   serverId: string;
   entries: AgentDirectoryFetchEntry[];
@@ -167,7 +194,11 @@ export function buildAgentDirectoryState(input: {
     };
     agents.set(agent.id, agent);
 
-    for (const request of agent.pendingPermissions) {
+    for (const request of filterAgentPendingPermissions(
+      input.serverId,
+      agent.id,
+      agent.pendingPermissions,
+    )) {
       const key = derivePendingPermissionKey(agent.id, request);
       pendingPermissions.set(key, { key, agentId: agent.id, request });
     }

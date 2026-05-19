@@ -78,6 +78,7 @@ import {
   useHostRuntimeLastError,
   useHosts,
 } from "@/runtime/host-runtime";
+import { filterAgentPendingPermissions } from "@/utils/agent-directory-sync";
 import {
   deriveRouteBottomAnchorIntent,
   deriveRouteBottomAnchorRequest,
@@ -334,7 +335,11 @@ function storeFetchedAgentDetail(input: {
         next.delete(key);
       }
     }
-    for (const request of hydrated.pendingPermissions) {
+    for (const request of filterAgentPendingPermissions(
+      input.serverId,
+      hydrated.id,
+      hydrated.pendingPermissions,
+    )) {
       const key = derivePendingPermissionKey(hydrated.id, request);
       next.set(key, { key, agentId: hydrated.id, request });
     }

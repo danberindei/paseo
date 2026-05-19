@@ -52,6 +52,7 @@ import {
 } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey } from "@/utils/agent-snapshots";
+import { isRequestTombstoned } from "@/utils/agent-directory-sync";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -239,6 +240,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setAgents = useSessionStore((state) => state.setAgents);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
+  const addResolvedPermissionIds = useSessionStore((state) => state.addResolvedPermissionIds);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
   const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
@@ -634,6 +636,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.type !== "agent_permission_request") return;
       const { agentId, request } = message.payload;
 
+      if (isRequestTombstoned(serverId, agentId, request.id)) return;
+
       setPendingPermissions(serverId, (prev) => {
         const next = new Map(prev);
         const key = derivePendingPermissionKey(agentId, request);
@@ -645,6 +649,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubPermissionResolved = client.on("agent_permission_resolved", (message) => {
       if (message.type !== "agent_permission_resolved") return;
       const { requestId, agentId } = message.payload;
+
+      addResolvedPermissionIds(serverId, agentId, [requestId]);
 
       setPendingPermissions(serverId, (prev) => {
         const next = new Map(prev);
@@ -802,6 +808,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setInitializingAgents,
     setAgents,
     setPendingPermissions,
+    addResolvedPermissionIds,
     notifyAgentAttention,
     applyWorkspaceSetupProgress,
     applyTimelineResponse,

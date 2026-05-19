@@ -414,6 +414,7 @@ export interface SessionState {
 
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
+  resolvedPermissionIds: Map<string, Set<string>>;
 
   // File explorer
   fileExplorer: Map<string, AgentFileExplorerState>;
@@ -592,6 +593,8 @@ interface SessionStoreActions {
       | Map<string, PendingPermission>
       | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>),
   ) => void;
+  addResolvedPermissionIds: (serverId: string, agentId: string, requestIds: string[]) => void;
+  clearResolvedPermissionIdsForAgent: (serverId: string, agentId: string) => void;
 
   // File explorer
   setFileExplorer: (
@@ -623,6 +626,8 @@ interface SessionStoreActions {
 type SessionStore = SessionStoreState & SessionStoreActions;
 
 const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
+
+const MAX_RESOLVED_PERMISSION_IDS_PER_AGENT = 100;
 
 // Helper to create initial session state
 function createInitialSessionState(
@@ -662,6 +667,7 @@ function createInitialSessionState(
     projects: new Map(),
     restoringWorkspaces: new Map(),
     pendingPermissions: new Map(),
+    resolvedPermissionIds: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
   };
@@ -1814,6 +1820,62 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, pendingPermissions: nextPerms },
+            },
+          };
+        });
+      },
+
+      addResolvedPermissionIds: (serverId, agentId, requestIds) => {
+        if (requestIds.length === 0) {
+          return;
+        }
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const existing = session.resolvedPermissionIds.get(agentId);
+          const nextForAgent = new Set(existing);
+          let changed = false;
+          for (const id of requestIds) {
+            if (!nextForAgent.has(id)) {
+              nextForAgent.add(id);
+              changed = true;
+            }
+          }
+          if (!changed) {
+            return prev;
+          }
+          while (nextForAgent.size > MAX_RESOLVED_PERMISSION_IDS_PER_AGENT) {
+            const oldest = nextForAgent.values().next().value;
+            if (oldest === undefined) break;
+            nextForAgent.delete(oldest);
+          }
+          const nextMap = new Map(session.resolvedPermissionIds);
+          nextMap.set(agentId, nextForAgent);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, resolvedPermissionIds: nextMap },
+            },
+          };
+        });
+      },
+
+      clearResolvedPermissionIdsForAgent: (serverId, agentId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || !session.resolvedPermissionIds.has(agentId)) {
+            return prev;
+          }
+          const nextMap = new Map(session.resolvedPermissionIds);
+          nextMap.delete(agentId);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, resolvedPermissionIds: nextMap },
             },
           };
         });

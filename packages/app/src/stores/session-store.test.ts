@@ -749,3 +749,59 @@ describe("removeWorkspace", () => {
     expect(after.workspaces).toBe(before.workspaces);
   });
 });
+
+describe("resolvedPermissionIds", () => {
+  it("adds request ids under the agent's tombstone set", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.addResolvedPermissionIds("test-server", "agent-1", ["req-1", "req-2"]);
+    const state = useSessionStore.getState().sessions["test-server"];
+    const tombstones = state?.resolvedPermissionIds.get("agent-1");
+    expect(tombstones).toBeDefined();
+    expect(Array.from(tombstones ?? [])).toEqual(["req-1", "req-2"]);
+  });
+
+  it("is a no-op when all ids are already tombstoned", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
+    const before = useSessionStore.getState().sessions["test-server"]?.resolvedPermissionIds;
+    store.addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
+    const after = useSessionStore.getState().sessions["test-server"]?.resolvedPermissionIds;
+    expect(after).toBe(before);
+  });
+
+  it("clears tombstones for a single agent on clearResolvedPermissionIdsForAgent", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
+    store.addResolvedPermissionIds("test-server", "agent-2", ["req-2"]);
+    store.clearResolvedPermissionIdsForAgent("test-server", "agent-1");
+    const tombstones = useSessionStore.getState().sessions["test-server"]?.resolvedPermissionIds;
+    expect(tombstones?.has("agent-1")).toBe(false);
+    expect(tombstones?.get("agent-2")).toBeDefined();
+  });
+
+  it("re-initializing a session after clearSession starts with no tombstones", () => {
+    initializeTestSession();
+    useSessionStore.getState().addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
+    useSessionStore.getState().clearSession("test-server");
+    initializeTestSession();
+    const resolved = useSessionStore.getState().sessions["test-server"]?.resolvedPermissionIds;
+    expect(resolved?.size).toBe(0);
+  });
+
+  it("caps tombstones at 100 per agent, evicting oldest ids first", () => {
+    initializeTestSession();
+    const ids = Array.from({ length: 105 }, (_, i) => `req-${i}`);
+    useSessionStore.getState().addResolvedPermissionIds("test-server", "agent-1", ids);
+    const tombstones = useSessionStore
+      .getState()
+      .sessions["test-server"]?.resolvedPermissionIds.get("agent-1");
+    expect(tombstones?.size).toBe(100);
+    expect(tombstones?.has("req-0")).toBe(false);
+    expect(tombstones?.has("req-4")).toBe(false);
+    expect(tombstones?.has("req-5")).toBe(true);
+    expect(tombstones?.has("req-104")).toBe(true);
+  });
+});
