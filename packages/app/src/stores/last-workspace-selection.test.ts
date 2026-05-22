@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createLastWorkspaceSelectionStore,
   type ActiveWorkspaceSelection,
+  type LastWorkspaceSelectionSnapshot,
   type LastWorkspaceSelectionStorage,
 } from "./last-workspace-selection";
 
@@ -24,14 +25,11 @@ class DelayedWorkspaceSelectionStorage implements LastWorkspaceSelectionStorage 
     this.saved = null;
   }
 
-  finishHydrationWith(selection: ActiveWorkspaceSelection | null) {
+  finishHydrationWith(selection: ActiveWorkspaceSelection | LastWorkspaceSelectionSnapshot | null) {
     this.finishRead(selection ? JSON.stringify(selection) : null);
   }
 
-  getSavedSelection(): ActiveWorkspaceSelection | null {
-    if (!this.saved) return null;
-    const parsed: unknown = JSON.parse(this.saved);
-    if (!parsed || typeof parsed !== "object") return null;
+  getSavedSnapshot(): LastWorkspaceSelectionSnapshot | ActiveWorkspaceSelection | null {
     return this.saved ? JSON.parse(this.saved) : null;
   }
 }
@@ -46,6 +44,10 @@ describe("last workspace selection", () => {
     await hydration;
 
     expect(store.getSelection()).toEqual({
+      serverId: "server-saved",
+      workspaceId: "workspace-saved",
+    });
+    expect(store.getSelection("space-a")).toEqual({
       serverId: "server-saved",
       workspaceId: "workspace-saved",
     });
@@ -65,9 +67,57 @@ describe("last workspace selection", () => {
       serverId: "server-new",
       workspaceId: "workspace-new",
     });
-    expect(storage.getSavedSelection()).toEqual({
-      serverId: "server-new",
-      workspaceId: "workspace-new",
+    expect(storage.getSavedSnapshot()).toEqual({
+      defaultSelection: {
+        serverId: "server-new",
+        workspaceId: "workspace-new",
+      },
+    });
+  });
+
+  it("stores independent workspace selections per space", async () => {
+    const storage = new DelayedWorkspaceSelectionStorage();
+    const store = createLastWorkspaceSelectionStore(storage);
+    storage.finishHydrationWith(null);
+    await store.hydrate();
+
+    store.remember({ serverId: "server-a", workspaceId: "workspace-a" }, "space-a");
+    store.remember({ serverId: "server-b", workspaceId: "workspace-b" }, "space-b");
+
+    expect(store.getSelection("space-a")).toEqual({
+      serverId: "server-a",
+      workspaceId: "workspace-a",
+    });
+    expect(store.getSelection("space-b")).toEqual({
+      serverId: "server-b",
+      workspaceId: "workspace-b",
+    });
+    expect(store.getSelection()).toBeNull();
+    expect(storage.getSavedSnapshot()).toEqual({
+      selectionBySpaceId: {
+        "space-a": { serverId: "server-a", workspaceId: "workspace-a" },
+        "space-b": { serverId: "server-b", workspaceId: "workspace-b" },
+      },
+    });
+  });
+
+  it("writes a scoped selection even when it matches the legacy default selection", async () => {
+    const storage = new DelayedWorkspaceSelectionStorage();
+    const store = createLastWorkspaceSelectionStore(storage);
+    storage.finishHydrationWith({ serverId: "server-a", workspaceId: "workspace-a" });
+    await store.hydrate();
+
+    store.remember({ serverId: "server-a", workspaceId: "workspace-a" }, "space-a");
+
+    expect(store.getSelection("space-a")).toEqual({
+      serverId: "server-a",
+      workspaceId: "workspace-a",
+    });
+    expect(storage.getSavedSnapshot()).toEqual({
+      defaultSelection: { serverId: "server-a", workspaceId: "workspace-a" },
+      selectionBySpaceId: {
+        "space-a": { serverId: "server-a", workspaceId: "workspace-a" },
+      },
     });
   });
 });
