@@ -149,6 +149,9 @@ jobs:
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
 
+      - name: Build web app for desktop
+        run: npm run build:web:desktop --workspace=@getpaseo/app
+
       - name: Build desktop release
         shell: bash
         env:
@@ -266,6 +269,9 @@ jobs:
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
 
+      - name: Build web app for desktop
+        run: npm run build:web:desktop --workspace=@getpaseo/app
+
       - name: Install Linux smoke display
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
 
@@ -374,6 +380,18 @@ jobs:
           packageJson.version = version;
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
+
+      - name: Build workspace dependencies
+        run: npm run build:workspace-deps --workspace=@getpaseo/app
+
+      - name: Build web app for desktop
+        shell: pwsh
+        run: |
+          $patchPath = (Get-Item "$env:GITHUB_WORKSPACE/scripts/metro-config-windows-loader-patch.cjs").FullName
+          $env:NODE_OPTIONS = "--require=$patchPath"
+          $env:PASEO_WEB_PLATFORM = "electron"
+          npx expo export --platform web
+        working-directory: packages/app
 
       - name: Build desktop release
         shell: bash
