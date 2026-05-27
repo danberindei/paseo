@@ -211,7 +211,7 @@ export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions
    * When set, only providers in this set are scanned, in addition to the
    * built-in importable allowlist + enabled + non-derived rules.
    */
-  providerFilter?: Set<string>;
+  providerFilter?: ReadonlySet<string>;
 };
 
 export interface ManagedImportableProviderSession extends ImportableProviderSession {
@@ -677,6 +677,7 @@ export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
+  private readonly providerDerivedFrom = new Map<AgentProvider, string | null>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
@@ -764,6 +765,7 @@ export class AgentManager {
       if (definition) {
         this.providerEnabled.set(provider, definition.enabled);
         this.providerDefinitions.set(provider, definition);
+        this.providerDerivedFrom.set(provider, definition.derivedFromProviderId ?? null);
       }
     }
 
@@ -989,7 +991,7 @@ export class AgentManager {
 
   private isProviderImportable(
     provider: AgentProvider,
-    providerFilter: Set<string> | undefined,
+    providerFilter: ReadonlySet<string> | undefined,
   ): boolean {
     if (this.providerEnabled.get(provider) === false) {
       return false;
