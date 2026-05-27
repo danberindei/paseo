@@ -155,30 +155,19 @@ function formatProviderList(providers: readonly string[]): string {
 }
 
 function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
-  const config: AgentSessionConfig = {
-    provider: record.provider,
+  const c = record.config;
+  return stripInternalPaseoMcpServer({
+    provider: record.provider as AgentProvider,
     cwd: record.cwd,
-  };
-  if (!record.config) {
-    return config;
-  }
-  if (record.config.modeId != null) config.modeId = record.config.modeId;
-  if (record.config.model != null) config.model = record.config.model;
-  if (record.config.thinkingOptionId != null) {
-    config.thinkingOptionId = record.config.thinkingOptionId;
-  }
-  if (record.config.featureValues != null) {
-    config.featureValues = record.config.featureValues;
-  }
-  if (record.config.providerOptions != null) {
-    config.providerOptions = record.config.providerOptions;
-  }
-  if (record.config.toolPolicy != null) config.toolPolicy = record.config.toolPolicy;
-  if (record.config.systemPrompt != null) {
-    config.systemPrompt = record.config.systemPrompt;
-  }
-  if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
-  return stripInternalPaseoMcpServer(config);
+    ...(c?.modeId != null ? { modeId: c.modeId } : {}),
+    ...(c?.model != null ? { model: c.model } : {}),
+    ...(c?.thinkingOptionId != null ? { thinkingOptionId: c.thinkingOptionId } : {}),
+    ...(c?.featureValues != null ? { featureValues: c.featureValues } : {}),
+    ...(c?.providerOptions != null ? { providerOptions: c.providerOptions } : {}),
+    ...(c?.toolPolicy != null ? { toolPolicy: c.toolPolicy } : {}),
+    ...(c?.systemPrompt != null ? { systemPrompt: c.systemPrompt } : {}),
+    ...(c?.mcpServers != null ? { mcpServers: c.mcpServers } : {}),
+  });
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
