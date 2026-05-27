@@ -16,6 +16,7 @@ import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
@@ -352,11 +353,19 @@ export function WorkspaceDraftAgentTab({
     workspaceDirectory,
     initialSetup: draftSetup,
   });
-  const draftInitialValues = buildDraftInitialValues({
-    workingDir: draftWorkingDirectory,
-    initialSetup: draftSetup,
-  });
-  const onlineServerIds = resolveOnlineServerIds({ isConnected, serverId });
+  const draftInitialFeatureValues = draftSetup?.featureValues;
+  const draftInitialValues = useMemo(
+    () =>
+      buildDraftInitialValues({
+        workingDir: draftWorkingDirectory,
+        initialSetup: draftSetup,
+      }),
+    [draftSetup, draftWorkingDirectory],
+  );
+  const onlineServerIds = useMemo(
+    () => resolveOnlineServerIds({ isConnected, serverId }),
+    [isConnected, serverId],
+  );
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
@@ -366,16 +375,26 @@ export function WorkspaceDraftAgentTab({
       }),
     [draftId, serverId, tabId],
   );
-  const draftInput = useAgentInputDraft({
-    draftKey: draftStoreKey,
-    composer: {
+  const composerOptions = useMemo(
+    () => ({
       initialServerId: serverId,
       initialValues: draftInitialValues,
-      initialFeatureValues: draftSetup?.featureValues,
+      initialFeatureValues: draftInitialFeatureValues,
       isVisible: true,
       onlineServerIds,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
-    },
+    }),
+    [
+      draftInitialFeatureValues,
+      draftInitialValues,
+      draftWorkingDirectory,
+      onlineServerIds,
+      serverId,
+    ],
+  );
+  const draftInput = useAgentInputDraft({
+    draftKey: draftStoreKey,
+    composer: composerOptions,
   });
   const composerState = draftInput.composerState;
   if (!composerState) {
@@ -640,6 +659,8 @@ export function WorkspaceDraftAgentTab({
     }),
     [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
   );
+  const stableHandleCreateFromInput = useStableEvent(handleCreateFromInput);
+
   return (
     <FileDropZone style={styles.container}>
       <View style={styles.contentContainer}>
@@ -684,7 +705,7 @@ export function WorkspaceDraftAgentTab({
           workspaceId={workspaceId}
           externalKeyboardShift
           isPaneFocused={isPaneFocused}
-          onSubmitMessage={handleCreateFromInput}
+          onSubmitMessage={stableHandleCreateFromInput}
           isSubmitLoading={isSubmitting}
           blurOnSubmit={true}
           value={draftInput.text}
