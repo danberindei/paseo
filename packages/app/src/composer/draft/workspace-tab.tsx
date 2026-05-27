@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { type ComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
@@ -303,9 +304,14 @@ export function WorkspaceDraftComposer({
     workspaceDirectory,
     initialSetup: draftSetup,
   });
-  const draftInitialValues = buildDraftInitialValues({
-    initialSetup: draftSetup,
-  });
+  const draftInitialProviderOptions = draftSetup?.providerOptions;
+  const draftInitialValues = useMemo(
+    () =>
+      buildDraftInitialValues({
+        initialSetup: draftSetup,
+      }),
+    [draftSetup],
+  );
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
@@ -315,15 +321,19 @@ export function WorkspaceDraftComposer({
       }),
     [draftId, serverId, tabId],
   );
-  const draftInput = useAgentInputDraft({
-    draftKey: draftStoreKey,
-    composer: {
+  const composerOptions = useMemo(
+    () => ({
       initialServerId: serverId,
       initialValues: draftInitialValues,
-      initialProviderOptions: draftSetup?.providerOptions,
+      initialProviderOptions: draftInitialProviderOptions,
       isVisible: true,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
-    },
+    }),
+    [draftInitialProviderOptions, draftInitialValues, draftWorkingDirectory, serverId],
+  );
+  const draftInput = useAgentInputDraft({
+    draftKey: draftStoreKey,
+    composer: composerOptions,
   });
   const composerState = draftInput.composerState;
   if (!composerState) {
@@ -534,6 +544,7 @@ export function WorkspaceDraftComposer({
     }),
     [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
   );
+  const stableHandleCreateFromInput = useStableEvent(handleCreateFromInput);
   return (
     <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
       {formErrorMessage ? (
@@ -558,7 +569,7 @@ export function WorkspaceDraftComposer({
         serverId={serverId}
         workspaceId={workspaceId}
         isPaneFocused={isPaneFocused}
-        onSubmitMessage={handleCreateFromInput}
+        onSubmitMessage={stableHandleCreateFromInput}
         isSubmitLoading={isSubmitting}
         blurOnSubmit={true}
         textSource={draftInput.textSource}
