@@ -886,6 +886,7 @@ function appendUserMessage(
   text: string,
   timestamp: Date,
   _source: StreamUpdateSource,
+  mutable: boolean,
   messageId?: string,
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
@@ -906,7 +907,47 @@ function appendUserMessage(
     text: chunk,
     timestamp,
   });
-  return upsertUserMessage(state, nextItem);
+
+  if (!mutable) {
+    return upsertUserMessage(state, nextItem);
+  }
+  const upserted = produceUserMessage(state, nextItem, null, "existing");
+  if (upserted.matched) {
+    return replaceAtMaybe(state, upserted.index, upserted.message, true);
+  }
+  return pushMaybe(state, nextItem, true);
+}
+
+function pushMaybe<T>(state: T[], item: T, mutable: boolean): T[] {
+  if (mutable) {
+    state.push(item);
+    return state;
+  }
+  return [...state, item];
+}
+
+function replaceAtMaybe<T>(state: T[], index: number, item: T, mutable: boolean): T[] {
+  if (mutable) {
+    state[index] = item;
+    return state;
+  }
+  const next = [...state];
+  next[index] = item;
+  return next;
+}
+
+function spliceReplaceMaybe<T>(
+  state: T[],
+  startIndex: number,
+  deleteCount: number,
+  insertItems: T[],
+  mutable: boolean,
+): T[] {
+  if (mutable) {
+    state.splice(startIndex, deleteCount, ...insertItems);
+    return state;
+  }
+  return [...state.slice(0, startIndex), ...insertItems, ...state.slice(startIndex + deleteCount)];
 }
 
 function appendAssistantMessage(
@@ -914,6 +955,7 @@ function appendAssistantMessage(
   text: string,
   timestamp: Date,
   source: StreamUpdateSource,
+  mutable: boolean,
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
@@ -935,7 +977,7 @@ function appendAssistantMessage(
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -1), updated];
+    return replaceAtMaybe(state, state.length - 1, updated, mutable);
   }
 
   // A submitted user row can follow the streaming assistant during interrupt.
@@ -953,7 +995,7 @@ function appendAssistantMessage(
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -2), updated, last];
+    return replaceAtMaybe(state, state.length - 2, updated, mutable);
   }
 
   if (!hasContent) {
@@ -970,13 +1012,14 @@ function appendAssistantMessage(
     text: chunk,
     timestamp,
   };
-  return [...state, item];
+  return pushMaybe(state, item, mutable);
 }
 
 function appendThought(
   state: StreamItem[],
   text: string,
   timestamp: Date,
+  mutable: boolean,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
@@ -993,7 +1036,7 @@ function appendThought(
       timestamp,
       status: "loading",
     };
-    return [...state.slice(0, -1), updated];
+    return replaceAtMaybe(state, state.length - 1, updated, mutable);
   }
 
   if (!hasContent) {
@@ -1009,10 +1052,20 @@ function appendThought(
     timestamp,
     status: "loading",
   };
-  return [...state, item];
+  return pushMaybe(state, item, mutable);
 }
 
-function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
+function finalizeActiveThoughts(state: StreamItem[], mutable: boolean): StreamItem[] {
+  if (mutable) {
+    for (let i = 0; i < state.length; i += 1) {
+      const entry = state[i];
+      if (entry.kind === "thought" && entry.status !== "ready") {
+        state[i] = markThoughtReady(entry);
+      }
+    }
+    return state;
+  }
+
   let mutated = false;
   const nextState = state.map((entry) => {
     if (entry.kind === "thought" && entry.status !== "ready") {
@@ -1188,12 +1241,13 @@ interface AppendAgentToolCallInput {
   state: StreamItem[];
   data: AgentToolCallData;
   timestamp: Date;
+  mutable: boolean;
   turnId?: string;
   timelineCursor?: TimelinePosition;
 }
 
 function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
-  const { state, data, timestamp, turnId, timelineCursor } = input;
+  const { state, data, timestamp, mutable, turnId, timelineCursor } = input;
   const identity = agentToolCallIdentity({ callId: data.callId, turnId });
   const existingIndex = findExistingTimelineIdentityIndex(state, identity);
 
@@ -1217,9 +1271,7 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
       return state;
     }
 
-    const next = [...state];
-    next[existingIndex] = merged;
-    return next;
+    return replaceAtMaybe(state, existingIndex, merged, mutable);
   }
 
   const item: ToolCallItem = {
@@ -1237,23 +1289,26 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
     },
   };
 
-  return [...state, item];
+  return pushMaybe(state, item, mutable);
 }
 
-function appendNotification(state: StreamItem[], entry: NotificationItem): StreamItem[] {
+function appendNotification(
+  state: StreamItem[],
+  entry: NotificationItem,
+  mutable: boolean,
+): StreamItem[] {
   const index = state.findIndex((existing) => existing.id === entry.id);
   if (index >= 0) {
-    const next = [...state];
-    next[index] = entry;
-    return next;
+    return replaceAtMaybe(state, index, entry, mutable);
   }
-  return [...state, entry];
+  return pushMaybe(state, entry, mutable);
 }
 
 function appendPluginTimelineItem(
   state: StreamItem[],
   item: Extract<AgentTimelineItem, { type: "plugin" }>,
   timestamp: Date,
+  mutable: boolean,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const identity = timelineItemIdentity(item);
@@ -1270,12 +1325,10 @@ function appendPluginTimelineItem(
     ...(timelineCursor ? { timelineCursor } : {}),
   };
   const existingIndex = findExistingTimelineIdentityIndex(state, identity);
-  if (existingIndex < 0) return [...state, nextItem];
+  if (existingIndex < 0) return pushMaybe(state, nextItem, mutable);
   const existing = state[existingIndex];
   if (!existing || existing.kind !== "plugin") return state;
-  const next = [...state];
-  next[existingIndex] = { ...nextItem, id: existing.id };
-  return next;
+  return replaceAtMaybe(state, existingIndex, { ...nextItem, id: existing.id }, mutable);
 }
 
 function appendTodoList(
@@ -1283,6 +1336,7 @@ function appendTodoList(
   provider: AgentProvider,
   items: TodoEntry[],
   timestamp: Date,
+  mutable: boolean,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const normalizedItems = items.map((item) => ({
@@ -1302,14 +1356,13 @@ function appendTodoList(
 
   if (activities.length === 0) {
     if (!previous || previous.kind !== "todo_list") return state;
-    const next = [...state];
-    next[previousIndex] = {
+    const updated: TodoListItem = {
       ...previous,
       ...(timelineCursor ? { timelineCursor } : {}),
       items: normalizedItems,
       timestamp,
     };
-    return next;
+    return replaceAtMaybe(state, previousIndex, updated, mutable);
   }
 
   const lastItem = state[state.length - 1];
@@ -1321,18 +1374,17 @@ function appendTodoList(
     lastItem.activity.type === "created" &&
     normalizedItems.every((item) => taskStatus(item) === "pending")
   ) {
-    const next = [...state];
-    next[next.length - 1] = {
+    const updated: TodoListItem = {
       ...lastItem,
       ...(timelineCursor ? { timelineCursor } : {}),
       items: normalizedItems,
       activity: { type: "created", count: normalizedItems.length },
       timestamp,
     };
-    return next;
+    return replaceAtMaybe(state, state.length - 1, updated, mutable);
   }
 
-  const next = [...state];
+  const next = mutable ? state : [...state];
   for (const activity of activities) {
     const idSeed = `${provider}:${JSON.stringify(activity)}:${JSON.stringify(normalizedItems)}`;
     next.push({
@@ -1393,6 +1445,7 @@ function reduceTimelineToolCall(
     { type: "tool_call" }
   >,
   timestamp: Date,
+  mutable: boolean,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const normalizedToolName = item.name
@@ -1416,6 +1469,7 @@ function reduceTimelineToolCall(
       event.provider,
       tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
       timestamp,
+      mutable,
       timelineCursor,
     );
   }
@@ -1436,6 +1490,7 @@ function reduceTimelineToolCall(
       event.provider,
       tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
       timestamp,
+      mutable,
       timelineCursor,
     );
   }
@@ -1452,6 +1507,7 @@ function reduceTimelineToolCall(
       metadata: item.metadata,
     },
     timestamp,
+    mutable,
     timelineCursor,
     turnId: event.turnId,
   });
@@ -1464,6 +1520,7 @@ function reduceTimelineCompaction(
     { type: "compaction" }
   >,
   timestamp: Date,
+  mutable: boolean,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   if (item.status === "completed") {
@@ -1477,7 +1534,7 @@ function reduceTimelineCompaction(
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
       };
-      return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
+      return spliceReplaceMaybe(state, loadingIdx, 1, [updated], mutable);
     }
     if (loadingIdx >= 0) {
       return state;
@@ -1492,50 +1549,53 @@ function reduceTimelineCompaction(
     trigger: item.trigger,
     preTokens: item.preTokens,
   };
-  return [...state, compaction];
+  return pushMaybe(state, compaction, mutable);
 }
 
+// oxlint-disable-next-line complexity
 function reduceTimelineEvent(
   state: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
   timestamp: Date,
   source: StreamUpdateSource,
+  mutable: boolean,
+  deferFinalize: boolean,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const item = event.item;
+  let nextState = state;
   switch (item.type) {
     case "user_message":
-      return finalizeActiveThoughts(
-        appendUserMessage(
-          state,
-          item.text,
-          timestamp,
-          source,
-          item.messageId,
-          item.clientMessageId,
-          timelineCursor,
-          event.turnId,
-        ),
+      nextState = appendUserMessage(
+        state,
+        item.text,
+        timestamp,
+        source,
+        mutable,
+        item.messageId,
+        item.clientMessageId,
+        timelineCursor,
+        event.turnId,
       );
+      break;
     case "assistant_message":
-      return finalizeActiveThoughts(
-        appendAssistantMessage(
-          state,
-          item.text,
-          timestamp,
-          source,
-          item.messageId,
-          reservedItemIds,
-          timelineCursor,
-        ),
+      nextState = appendAssistantMessage(
+        state,
+        item.text,
+        timestamp,
+        source,
+        mutable,
+        item.messageId,
+        reservedItemIds,
+        timelineCursor,
       );
+      break;
     case "reasoning":
-      return appendThought(state, item.text, timestamp, timelineCursor);
+      return appendThought(state, item.text, timestamp, mutable, timelineCursor);
     case "tool_call":
-      return finalizeActiveThoughts(
-        reduceTimelineToolCall(state, event, item, timestamp, timelineCursor),
-      );
+      nextState = reduceTimelineToolCall(state, event, item, timestamp, mutable, timelineCursor);
+      break;
     case "todo": {
       const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
         text: todo.text,
@@ -1544,9 +1604,8 @@ function reduceTimelineEvent(
         status: todo.status,
         activeForm: todo.activeForm,
       }));
-      return finalizeActiveThoughts(
-        appendTodoList(state, event.provider, items, timestamp, timelineCursor),
-      );
+      nextState = appendTodoList(state, event.provider, items, timestamp, mutable, timelineCursor);
+      break;
     }
     case "error": {
       const notification: NotificationItem = {
@@ -1558,7 +1617,8 @@ function reduceTimelineEvent(
         level: "error",
         message: item.message ?? "Unknown error",
       };
-      return finalizeActiveThoughts(appendNotification(state, notification));
+      nextState = appendNotification(state, notification, mutable);
+      break;
     }
     case "notification": {
       const notification: NotificationItem = {
@@ -1570,16 +1630,59 @@ function reduceTimelineEvent(
         level: item.level,
         message: item.message,
       };
-      return finalizeActiveThoughts(appendNotification(state, notification));
+      nextState = appendNotification(state, notification, mutable);
+      break;
     }
     case "compaction":
-      return finalizeActiveThoughts(
-        reduceTimelineCompaction(state, item, timestamp, timelineCursor),
-      );
+      nextState = reduceTimelineCompaction(state, item, timestamp, mutable, timelineCursor);
+      break;
     case "plugin":
-      return finalizeActiveThoughts(
-        appendPluginTimelineItem(state, item, timestamp, timelineCursor),
+      nextState = appendPluginTimelineItem(state, item, timestamp, mutable, timelineCursor);
+      break;
+    default:
+      return state;
+  }
+  return deferFinalize ? nextState : finalizeActiveThoughts(nextState, mutable);
+}
+
+interface ReduceInternalOptions {
+  source: StreamUpdateSource;
+  mutable: boolean;
+  deferFinalize: boolean;
+  reservedItemIds?: ReadonlySet<string>;
+  timelineCursor?: TimelinePosition;
+}
+
+function reduceStreamUpdateImpl(
+  state: StreamItem[],
+  event: AgentStreamEventPayload,
+  timestamp: Date,
+  options: ReduceInternalOptions,
+): StreamItem[] {
+  const { source, mutable, deferFinalize, reservedItemIds, timelineCursor } = options;
+  switch (event.type) {
+    case "timeline": {
+      const nextState = reduceTimelineEvent(
+        state,
+        event,
+        timestamp,
+        source,
+        mutable,
+        deferFinalize,
+        reservedItemIds,
+        timelineCursor,
       );
+      return applyTimelineTurnId(nextState, event, mutable);
+    }
+    case "thread_started":
+    case "turn_started":
+    case "turn_completed":
+    case "turn_failed":
+    case "turn_canceled":
+    case "permission_requested":
+    case "permission_resolved":
+    case "attention_required":
+      return deferFinalize ? state : finalizeActiveThoughts(state, mutable);
     default:
       return state;
   }
@@ -1594,59 +1697,38 @@ export function reduceStreamUpdate(
   timestamp: Date,
   options?: StreamUpdateOptions,
 ): StreamItem[] {
-  const source = options?.source ?? "live";
-  switch (event.type) {
-    case "timeline":
-      return applyTimelineTurnId(
-        reduceTimelineEvent(
-          state,
-          event,
-          timestamp,
-          source,
-          options?.reservedItemIds,
-          options?.timelineCursor,
-        ),
-        event,
-      );
-    case "thread_started":
-    case "turn_started":
-    case "turn_completed":
-    case "turn_failed":
-    case "turn_canceled":
-    case "permission_requested":
-    case "permission_resolved":
-    case "attention_required":
-      return finalizeActiveThoughts(state);
-    default:
-      return state;
-  }
+  return reduceStreamUpdateImpl(state, event, timestamp, {
+    source: options?.source ?? "live",
+    mutable: false,
+    deferFinalize: false,
+    reservedItemIds: options?.reservedItemIds,
+    timelineCursor: options?.timelineCursor,
+  });
 }
 
 function applyTimelineTurnId(
   items: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+  mutable: boolean,
 ): StreamItem[] {
   const clientMessageId =
     event.item.type === "user_message" ? event.item.clientMessageId : undefined;
   if (clientMessageId) {
-    return reconcileCanonicalUserTurnMembership(items, clientMessageId, event.turnId);
+    return reconcileCanonicalUserTurnMembership(items, clientMessageId, event.turnId, mutable);
   }
 
   if (!event.turnId || items.length === 0) return items;
   const index = items.length - 1;
   const last = items[index];
   if (!last || last.turnId === event.turnId) return items;
-  return [
-    ...items.slice(0, index),
-    { ...last, turnId: event.turnId } as StreamItem,
-    ...items.slice(index + 1),
-  ];
+  return replaceAtMaybe(items, index, { ...last, turnId: event.turnId } as StreamItem, mutable);
 }
 
 function reconcileCanonicalUserTurnMembership(
   items: StreamItem[],
   clientMessageId: string,
   turnId: string | undefined,
+  mutable: boolean,
 ): StreamItem[] {
   const index = items.findIndex(
     (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
@@ -1664,11 +1746,14 @@ function reconcileCanonicalUserTurnMembership(
         const { turnId: _, ...withoutTurnId } = matched;
         return withoutTurnId;
       })();
-  return [...items.slice(0, index), next, ...items.slice(index + 1)];
+  return replaceAtMaybe(items, index, next, mutable);
 }
 
 /**
- * Hydrate stream state from a batch of AgentManager stream events
+ * Hydrate stream state from a batch of AgentManager stream events.
+ *
+ * Uses a mutable accumulator and defers thought finalization to the end so that
+ * N events with M item-appends run in O(N + M) instead of O(N * M).
  */
 export function hydrateStreamState(
   events: Array<{
@@ -1678,11 +1763,18 @@ export function hydrateStreamState(
   }>,
   options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
-  const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
-    return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });
-  }, []);
-
-  return finalizeActiveThoughts(hydrated);
+  const source = options?.source ?? "live";
+  const state: StreamItem[] = [];
+  for (let i = 0; i < events.length; i += 1) {
+    const { event, timestamp, timelineCursor } = events[i];
+    reduceStreamUpdateImpl(state, event, timestamp, {
+      source,
+      mutable: true,
+      deferFinalize: true,
+      timelineCursor,
+    });
+  }
+  return finalizeActiveThoughts(state, true);
 }
 
 /**
@@ -1709,7 +1801,7 @@ function applyCompletionToTail(
   timestamp: Date,
   source: StreamUpdateSource,
 ): StreamItem[] {
-  const finalized = finalizeActiveThoughts(tail);
+  const finalized = finalizeActiveThoughts(tail, false);
   return reduceStreamUpdate(finalized, event, timestamp, { source });
 }
 
@@ -1978,6 +2070,7 @@ function applyCanonicalUserMessageEvent(params: {
           reconciled.tail,
           canonical.clientMessageId,
           event.turnId,
+          false,
         )
       : reconciled.tail;
     const reconciledHead = canonical.clientMessageId
@@ -1985,6 +2078,7 @@ function applyCanonicalUserMessageEvent(params: {
           reconciled.head,
           canonical.clientMessageId,
           event.turnId,
+          false,
         )
       : reconciled.head;
     return {
@@ -2004,6 +2098,7 @@ function applyCanonicalUserMessageEvent(params: {
         reconciled.items,
         canonical.clientMessageId,
         event.turnId,
+        false,
       )
     : reconciled.items;
   return {
