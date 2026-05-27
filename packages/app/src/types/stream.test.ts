@@ -1458,6 +1458,74 @@ describe("stream reducer canonical tool calls", () => {
     ]);
   });
 
+  it("uses the latest todo activity for its provider after interleaved updates", () => {
+    const pending = [{ id: "a", text: "Task", completed: false, status: "pending" as const }];
+    const completed = [{ ...pending[0], completed: true, status: "completed" as const }];
+    const events = [
+      todoTimeline(pending, "claude"),
+      todoTimeline(completed, "claude"),
+      todoTimeline(pending, "codex"),
+      todoTimeline(completed, "claude"),
+      todoTimeline([{ ...pending[0], status: "in_progress" }], "claude"),
+    ].map((event, index) => ({ event, timestamp: new Date(index) }));
+
+    const state = hydrateStreamState(events);
+
+    expect(state).toEqual([
+      expect.objectContaining({
+        kind: "todo_list",
+        provider: "claude",
+        activity: { type: "created", count: 1 },
+        items: pending,
+        timestamp: new Date(0),
+      }),
+      expect.objectContaining({
+        kind: "todo_list",
+        provider: "claude",
+        activity: { type: "completed", task: "Task" },
+        items: completed,
+        timestamp: new Date(3),
+      }),
+      expect.objectContaining({
+        kind: "todo_list",
+        provider: "codex",
+        activity: { type: "created", count: 1 },
+        items: pending,
+        timestamp: new Date(2),
+      }),
+      expect.objectContaining({
+        kind: "todo_list",
+        provider: "claude",
+        activity: { type: "started", task: "Task" },
+        timestamp: new Date(4),
+      }),
+    ]);
+  });
+
+  it("completes loading compactions in row order across successive lookups", () => {
+    const events = [
+      compactionTimeline("loading", "auto"),
+      compactionTimeline("loading", "manual"),
+      compactionTimeline("completed"),
+      compactionTimeline("completed"),
+    ].map((event, index) => ({ event, timestamp: new Date(index) }));
+
+    expect(hydrateStreamState(events)).toEqual([
+      expect.objectContaining({
+        kind: "compaction",
+        status: "completed",
+        trigger: "auto",
+        timestamp: new Date(0),
+      }),
+      expect.objectContaining({
+        kind: "compaction",
+        status: "completed",
+        trigger: "manual",
+        timestamp: new Date(1),
+      }),
+    ]);
+  });
+
   it("terminalizes the loading compaction before a completed turn", () => {
     const state = hydrateStreamState([
       {
@@ -2257,35 +2325,171 @@ describe("turn lifecycle events", () => {
     assert.strictEqual(userMessages[0]?.text, "future server echo");
   });
 
-  it("keeps canonical repeated user messages distinct during hydration", () => {
-    const state = hydrateStreamState(
-      [
-        {
-          event: {
-            type: "timeline",
-            provider: "codex",
-            item: { type: "user_message", text: "repeat", messageId: "native-1" },
-          },
-          timestamp: new Date("2025-01-01T15:03:00Z"),
+  it("keeps canonical repeated user messages distinct after legacy text reconciliation", () => {
+    const clientMessageId = "local-1";
+    const events = [
+      { type: "user_message", text: "repeat", clientMessageId },
+      { type: "user_message", text: "repeat", messageId: "native-1" },
+      { type: "user_message", text: "repeat", messageId: "native-2" },
+      { type: "user_message", text: "repeat", messageId: "native-3" },
+      { type: "user_message", text: "different text", messageId: "native-2" },
+    ].map((item, index) => ({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { ...item, type: "user_message" },
+      } satisfies AgentStreamEventPayload,
+      timestamp: new Date(index),
+    }));
+
+    const state = hydrateStreamState(events, { source: "canonical" });
+
+    expect(state).toEqual([
+      expect.objectContaining({
+        kind: "user_message",
+        clientMessageId,
+        messageId: "native-1",
+        text: "repeat",
+        timestamp: new Date(0),
+      }),
+      expect.objectContaining({
+        kind: "user_message",
+        id: "native-2",
+        text: "repeat",
+        timestamp: new Date(2),
+      }),
+      expect.objectContaining({
+        kind: "user_message",
+        id: "native-3",
+        text: "repeat",
+        timestamp: new Date(3),
+      }),
+    ]);
+  });
+
+  it.each(["text", "messageId"] as const)(
+    "reconciles the earliest user row when %s matches before another key",
+    (firstMatch) => {
+      const local = { type: "user_message", text: "repeat", clientMessageId: "local-1" } as const;
+      const canonical = {
+        type: "user_message",
+        text: "other text",
+        messageId: "native-1",
+      } as const;
+      const initial = firstMatch === "text" ? [local, canonical] : [canonical, local];
+      const events = [
+        ...initial,
+        { type: "user_message", text: "repeat", messageId: "native-1" } as const,
+      ].map((item, index) => ({
+        event: { type: "timeline", provider: "codex", item } satisfies AgentStreamEventPayload,
+        timestamp: new Date(index),
+        timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+      }));
+
+      const state = hydrateStreamState(events, { source: "canonical" });
+
+      expect(state).toEqual([
+        expect.objectContaining({
+          kind: "user_message",
+          text: initial[0].text,
+          messageId: "native-1",
+          timestamp: new Date(0),
+          timelineCursor: { epoch: "epoch-1", seq: 3 },
+        }),
+        expect.objectContaining({
+          kind: "user_message",
+          text: initial[1].text,
+          timestamp: new Date(1),
+          timelineCursor: { epoch: "epoch-1", seq: 2 },
+        }),
+      ]);
+    },
+  );
+
+  it("reconciles the earliest client row after an earlier row acquires its client id", () => {
+    const events = [
+      { type: "user_message", text: "first", messageId: "native-1" },
+      { type: "user_message", text: "second", clientMessageId: "local-1" },
+      {
+        type: "user_message",
+        text: "first",
+        messageId: "native-1",
+        clientMessageId: "local-1",
+      },
+      {
+        type: "user_message",
+        text: "updated",
+        messageId: "native-2",
+        clientMessageId: "local-1",
+      },
+      { type: "user_message", text: "separate", messageId: "native-1" },
+    ].map((item, index) => ({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { ...item, type: "user_message" },
+      } satisfies AgentStreamEventPayload,
+      timestamp: new Date(index),
+    }));
+
+    const state = hydrateStreamState(events, { source: "canonical" });
+
+    expect(state).toEqual([
+      expect.objectContaining({
+        kind: "user_message",
+        id: "native-1",
+        messageId: "native-2",
+        clientMessageId: "local-1",
+        text: "first",
+      }),
+      expect.objectContaining({
+        kind: "user_message",
+        clientMessageId: "local-1",
+        text: "second",
+      }),
+      expect.objectContaining({
+        kind: "user_message",
+        messageId: "native-1",
+        text: "separate",
+        timestamp: new Date(4),
+      }),
+    ]);
+  });
+
+  it("keeps the stored turn id when hydration replays an unchanged canonical user message", () => {
+    const timestamp = new Date("2025-01-01T15:04:00Z");
+    const events: Array<{ event: AgentStreamEventPayload; timestamp: Date }> = [
+      {
+        event: {
+          type: "timeline",
+          provider: "codex",
+          turnId: "turn-a",
+          item: { type: "user_message", text: "hello", messageId: "native-1" },
         },
-        {
-          event: {
-            type: "timeline",
-            provider: "codex",
-            item: { type: "user_message", text: "repeat", messageId: "native-2" },
-          },
-          timestamp: new Date("2025-01-01T15:03:01Z"),
+        timestamp,
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "codex",
+          turnId: "turn-b",
+          item: { type: "user_message", text: "hello", messageId: "native-1" },
         },
-      ],
-      { source: "canonical" },
+        timestamp,
+      },
+    ];
+
+    const hydrated = hydrateStreamState(events);
+    const live = events.reduce<StreamItem[]>(
+      (state, update) =>
+        reduceStreamUpdate(state, update.event, update.timestamp, { source: "live" }),
+      [],
     );
 
-    const userMessages = state.filter((item) => item.kind === "user_message");
-    assert.strictEqual(userMessages.length, 2);
-    assert.deepStrictEqual(
-      userMessages.map((item) => item.id),
-      ["native-1", "native-2"],
-    );
+    expect(hydrated).toEqual([
+      expect.objectContaining({ kind: "user_message", id: "native-1", turnId: "turn-a" }),
+    ]);
+    assert.deepStrictEqual(hydrated, live);
   });
 });
 

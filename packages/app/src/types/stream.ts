@@ -55,6 +55,7 @@ function createAssistantItemId(
   messageId: string | undefined,
   text: string,
   timestamp: Date,
+  mutable: MutableFlag,
   reservedItemIds?: ReadonlySet<string>,
 ): string {
   if (!messageId) {
@@ -62,7 +63,7 @@ function createAssistantItemId(
   }
 
   const isOccupied = (id: string) =>
-    reservedItemIds?.has(id) === true || state.some((item) => item.id === id);
+    reservedItemIds?.has(id) === true || findRowIdIndex(state, id, mutable) >= 0;
   if (!isOccupied(messageId)) {
     return messageId;
   }
@@ -239,10 +240,9 @@ function produceUserMessage(
   insertAt: number | null,
   presentationPolicy: UserMessagePresentationPolicy,
   matchPolicy: UserMessageMatchPolicy = "canonical-incoming",
+  mutable: MutableFlag = false,
 ): UserMessageProductionResult {
-  const index = items.findIndex(
-    (item) => item.kind === "user_message" && matchesUserMessage(item, incoming, matchPolicy),
-  );
+  const index = findUserMessageMatchIndex(items, incoming, matchPolicy, mutable);
   if (index < 0) {
     if (insertAt === null) {
       return { items, index: -1, message: incoming, matched: false };
@@ -278,9 +278,12 @@ function produceUserMessage(
   ) {
     return { items, index, message: existing, matched: true };
   }
-  const next = [...items];
-  next[index] = merged;
-  return { items: next, index, message: merged, matched: true };
+  return {
+    items: replaceAtMaybe(items, index, merged, mutable),
+    index,
+    message: merged,
+    matched: true,
+  };
 }
 
 export interface UserMessageStreamUpsertInput {
@@ -919,6 +922,7 @@ function appendUserMessage(
   text: string,
   timestamp: Date,
   _source: StreamUpdateSource,
+  mutable: MutableFlag,
   messageId?: string,
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
@@ -939,7 +943,212 @@ function appendUserMessage(
     text: chunk,
     timestamp,
   });
-  return upsertUserMessage(state, nextItem);
+
+  if (!mutable) {
+    return upsertUserMessage(state, nextItem);
+  }
+  // An unchanged canonical row returns the accumulator untouched, so the event
+  // does not own that row and must not claim turn membership for it.
+  const upserted = produceUserMessage(
+    state,
+    nextItem,
+    null,
+    "existing",
+    "canonical-incoming",
+    mutable,
+  );
+  return upserted.matched ? upserted.items : pushMaybe(state, nextItem, mutable);
+}
+
+/**
+ * Row positions by lookup key for the hydration accumulator. A row is registered
+ * under its current keys on every write. Legacy text membership is removed when
+ * reconciliation makes it ineligible. Other keys may retain stale positions, so
+ * lookups verify each candidate against the current row.
+ */
+type RowIndex = Map<string, Set<number>>;
+
+/**
+ * In-place accumulator used by hydrateStreamState. `written` holds the row indices
+ * each event created or replaced, so turn membership can be assigned without copying
+ * the whole array per event. `index` is built on the first indexed lookup and updated
+ * by every later write.
+ */
+interface MutableTimeline {
+  written: number[];
+  index: RowIndex | null;
+}
+
+/** False keeps the immutable, copy-on-write path used by live updates. */
+type MutableFlag = MutableTimeline | false;
+
+function legacyUserMessageTextKey(row: StreamItem): string | null {
+  if (
+    row.kind !== "user_message" ||
+    row.clientMessageId === undefined ||
+    row.messageId !== undefined
+  ) {
+    return null;
+  }
+  return `text:${row.text}`;
+}
+
+function rowLookupKeys(row: StreamItem): string[] {
+  const keys = [`id:${row.id}`];
+  if (row.kind === "user_message") {
+    if (row.clientMessageId) keys.push(`client:${row.clientMessageId}`);
+    if (row.messageId) keys.push(`message:${row.messageId}`);
+    // Only unreconciled submitted rows can match canonical ingestion by text.
+    const textKey = legacyUserMessageTextKey(row);
+    if (textKey !== null) keys.push(textKey);
+  } else if (row.kind === "todo_list") {
+    keys.push(`todo:${row.provider}`);
+  } else if (row.kind === "compaction" && row.status === "loading") {
+    keys.push("compaction:loading");
+  }
+  const identity = streamTimelineItemIdentity(row);
+  if (identity !== null) keys.push(`identity:${identity}`);
+  return keys;
+}
+
+/** Registers row `at` under its current keys, once the index exists. */
+function indexRow(
+  state: StreamItem[],
+  mutable: MutableTimeline,
+  at: number,
+  previous?: StreamItem,
+): void {
+  const index = mutable.index;
+  const row = state[at];
+  if (!index || !row) return;
+  const previousTextKey = previous ? legacyUserMessageTextKey(previous) : null;
+  if (previousTextKey !== null && previousTextKey !== legacyUserMessageTextKey(row)) {
+    const entry = index.get(previousTextKey);
+    entry?.delete(at);
+    if (entry?.size === 0) index.delete(previousTextKey);
+  }
+  for (const key of rowLookupKeys(row)) {
+    const entry = index.get(key);
+    if (entry) {
+      entry.add(at);
+    } else {
+      index.set(key, new Set([at]));
+    }
+  }
+}
+
+function ensureRowIndex(state: StreamItem[], mutable: MutableTimeline): RowIndex {
+  if (!mutable.index) {
+    mutable.index = new Map();
+    for (let at = 0; at < state.length; at += 1) indexRow(state, mutable, at);
+  }
+  return mutable.index;
+}
+
+/**
+ * Finds the row a scan over the accumulated rows would return: the first, or the
+ * last with `fromEnd`, row registered under one of `keys` that `matches` accepts.
+ * Live updates have no index and fall back to the scan itself.
+ */
+function findRow(
+  state: StreamItem[],
+  mutable: MutableFlag,
+  keys: readonly string[],
+  matches: (row: StreamItem) => boolean,
+  fromEnd = false,
+): number {
+  if (!mutable) {
+    return fromEnd ? state.findLastIndex(matches) : state.findIndex(matches);
+  }
+  const index = ensureRowIndex(state, mutable);
+  let selected = -1;
+  for (const key of keys) {
+    const positions = index.get(key);
+    if (!positions) continue;
+    for (const at of positions) {
+      // Writes can register an earlier row after a later one under the same key.
+      if (selected >= 0 && (fromEnd ? at <= selected : at >= selected)) continue;
+      const row = state[at];
+      if (row && matches(row)) selected = at;
+    }
+  }
+  return selected;
+}
+
+function findUserMessageMatchIndex(
+  items: StreamItem[],
+  incoming: UserMessageItem,
+  matchPolicy: UserMessageMatchPolicy,
+  mutable: MutableFlag,
+): number {
+  const keys = [`text:${incoming.text}`];
+  if (incoming.clientMessageId) {
+    keys.push(`client:${incoming.clientMessageId}`, `message:${incoming.clientMessageId}`);
+  }
+  if (incoming.messageId) {
+    keys.push(`message:${incoming.messageId}`, `client:${incoming.messageId}`);
+  }
+  return findRow(
+    items,
+    mutable,
+    keys,
+    (row) => row.kind === "user_message" && matchesUserMessage(row, incoming, matchPolicy),
+  );
+}
+
+function findRowIdIndex(state: StreamItem[], id: string, mutable: MutableFlag = false): number {
+  return findRow(state, mutable, [`id:${id}`], (row) => row.id === id);
+}
+
+function pushMaybe(state: StreamItem[], item: StreamItem, mutable: MutableFlag): StreamItem[] {
+  if (!mutable) {
+    return [...state, item];
+  }
+  state.push(item);
+  mutable.written.push(state.length - 1);
+  indexRow(state, mutable, state.length - 1);
+  return state;
+}
+
+function replaceAtMaybe(
+  state: StreamItem[],
+  index: number,
+  item: StreamItem,
+  mutable: MutableFlag,
+): StreamItem[] {
+  if (!mutable) {
+    const next = [...state];
+    next[index] = item;
+    return next;
+  }
+  const previous = state[index];
+  state[index] = item;
+  mutable.written.push(index);
+  indexRow(state, mutable, index, previous);
+  return state;
+}
+
+function spliceReplaceMaybe(
+  state: StreamItem[],
+  startIndex: number,
+  deleteCount: number,
+  insertItems: StreamItem[],
+  mutable: MutableFlag,
+): StreamItem[] {
+  if (!mutable) {
+    return [
+      ...state.slice(0, startIndex),
+      ...insertItems,
+      ...state.slice(startIndex + deleteCount),
+    ];
+  }
+  state.splice(startIndex, deleteCount, ...insertItems);
+  // A splice can move every following row, so the next lookup rebuilds the index.
+  mutable.index = null;
+  for (let at = startIndex; at < startIndex + insertItems.length; at += 1) {
+    mutable.written.push(at);
+  }
+  return state;
 }
 
 function appendAssistantMessage(
@@ -947,6 +1156,7 @@ function appendAssistantMessage(
   text: string,
   timestamp: Date,
   source: StreamUpdateSource,
+  mutable: MutableFlag,
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
@@ -968,7 +1178,7 @@ function appendAssistantMessage(
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -1), updated];
+    return replaceAtMaybe(state, state.length - 1, updated, mutable);
   }
 
   // A submitted user row can follow the streaming assistant during interrupt.
@@ -986,7 +1196,7 @@ function appendAssistantMessage(
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -2), updated, last];
+    return replaceAtMaybe(state, state.length - 2, updated, mutable);
   }
 
   if (!hasContent) {
@@ -994,7 +1204,14 @@ function appendAssistantMessage(
   }
 
   const idSeed = chunk.trim() || chunk;
-  const entryId = createAssistantItemId(state, messageId, idSeed, timestamp, reservedItemIds);
+  const entryId = createAssistantItemId(
+    state,
+    messageId,
+    idSeed,
+    timestamp,
+    mutable,
+    reservedItemIds,
+  );
   const item: AssistantMessageItem = {
     kind: "assistant_message",
     id: entryId,
@@ -1003,13 +1220,14 @@ function appendAssistantMessage(
     text: chunk,
     timestamp,
   };
-  return [...state, item];
+  return pushMaybe(state, item, mutable);
 }
 
 function appendThought(
   state: StreamItem[],
   text: string,
   timestamp: Date,
+  mutable: MutableFlag,
   timelineCursor?: TimelinePosition,
   turnId?: string,
 ): StreamItem[] {
@@ -1027,7 +1245,7 @@ function appendThought(
       timestamp,
       status: "loading",
     };
-    return [...state.slice(0, -1), updated];
+    return replaceAtMaybe(state, state.length - 1, updated, mutable);
   }
 
   if (!hasContent) {
@@ -1043,10 +1261,20 @@ function appendThought(
     timestamp,
     status: "loading",
   };
-  return [...state, item];
+  return pushMaybe(state, item, mutable);
 }
 
-function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
+function finalizeActiveThoughts(state: StreamItem[], mutable: MutableFlag): StreamItem[] {
+  if (mutable) {
+    for (let i = 0; i < state.length; i += 1) {
+      const entry = state[i];
+      if (entry.kind === "thought" && entry.status !== "ready") {
+        state[i] = markThoughtReady(entry);
+      }
+    }
+    return state;
+  }
+
   let mutated = false;
   const nextState = state.map((entry) => {
     if (entry.kind === "thought" && entry.status !== "ready") {
@@ -1080,8 +1308,17 @@ function agentToolCallIdentity(input: AgentToolCallIdentityInput): string {
   return `turn:${encodeURIComponent(input.turnId)}/${encodeURIComponent(input.callId)}`;
 }
 
-function findExistingTimelineIdentityIndex(state: StreamItem[], identity: string): number {
-  return state.findIndex((entry) => streamTimelineItemIdentity(entry) === identity);
+function findExistingTimelineIdentityIndex(
+  state: StreamItem[],
+  identity: string,
+  mutable: MutableFlag = false,
+): number {
+  return findRow(
+    state,
+    mutable,
+    [`identity:${identity}`],
+    (row) => streamTimelineItemIdentity(row) === identity,
+  );
 }
 
 function hasNonEmptyObject(value: unknown): boolean {
@@ -1222,14 +1459,15 @@ interface AppendAgentToolCallInput {
   state: StreamItem[];
   data: AgentToolCallData;
   timestamp: Date;
+  mutable: MutableFlag;
   turnId?: string;
   timelineCursor?: TimelinePosition;
 }
 
 function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
-  const { state, data, timestamp, turnId, timelineCursor } = input;
+  const { state, data, timestamp, mutable, turnId, timelineCursor } = input;
   const identity = agentToolCallIdentity({ callId: data.callId, turnId });
-  const existingIndex = findExistingTimelineIdentityIndex(state, identity);
+  const existingIndex = findExistingTimelineIdentityIndex(state, identity, mutable);
 
   if (existingIndex >= 0) {
     const existing = state[existingIndex];
@@ -1251,9 +1489,7 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
       return state;
     }
 
-    const next = [...state];
-    next[existingIndex] = merged;
-    return next;
+    return replaceAtMaybe(state, existingIndex, merged, mutable);
   }
 
   const item: ToolCallItem = {
@@ -1271,23 +1507,26 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
     },
   };
 
-  return [...state, item];
+  return pushMaybe(state, item, mutable);
 }
 
-function appendNotification(state: StreamItem[], entry: NotificationItem): StreamItem[] {
-  const index = state.findIndex((existing) => existing.id === entry.id);
+function appendNotification(
+  state: StreamItem[],
+  entry: NotificationItem,
+  mutable: MutableFlag,
+): StreamItem[] {
+  const index = findRowIdIndex(state, entry.id, mutable);
   if (index >= 0) {
-    const next = [...state];
-    next[index] = entry;
-    return next;
+    return replaceAtMaybe(state, index, entry, mutable);
   }
-  return [...state, entry];
+  return pushMaybe(state, entry, mutable);
 }
 
 function appendPluginTimelineItem(
   state: StreamItem[],
   item: Extract<AgentTimelineItem, { type: "plugin" }>,
   timestamp: Date,
+  mutable: MutableFlag,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const identity = timelineItemIdentity(item);
@@ -1303,13 +1542,11 @@ function appendPluginTimelineItem(
     timestamp,
     ...(timelineCursor ? { timelineCursor } : {}),
   };
-  const existingIndex = findExistingTimelineIdentityIndex(state, identity);
-  if (existingIndex < 0) return [...state, nextItem];
+  const existingIndex = findExistingTimelineIdentityIndex(state, identity, mutable);
+  if (existingIndex < 0) return pushMaybe(state, nextItem, mutable);
   const existing = state[existingIndex];
   if (!existing || existing.kind !== "plugin") return state;
-  const next = [...state];
-  next[existingIndex] = { ...nextItem, id: existing.id };
-  return next;
+  return replaceAtMaybe(state, existingIndex, { ...nextItem, id: existing.id }, mutable);
 }
 
 function appendTodoList(
@@ -1317,6 +1554,7 @@ function appendTodoList(
   provider: AgentProvider,
   items: TodoEntry[],
   timestamp: Date,
+  mutable: MutableFlag,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const normalizedItems = items.map((item) => ({
@@ -1327,8 +1565,12 @@ function appendTodoList(
     ...(item.activeForm ? { activeForm: item.activeForm } : {}),
   }));
 
-  const previousIndex = state.findLastIndex(
-    (item) => item.kind === "todo_list" && item.provider === provider,
+  const previousIndex = findRow(
+    state,
+    mutable,
+    [`todo:${provider}`],
+    (row) => row.kind === "todo_list" && row.provider === provider,
+    true,
   );
   const previous = state[previousIndex];
   const previousItems = previous?.kind === "todo_list" ? previous.items : [];
@@ -1336,14 +1578,13 @@ function appendTodoList(
 
   if (activities.length === 0) {
     if (!previous || previous.kind !== "todo_list") return state;
-    const next = [...state];
-    next[previousIndex] = {
+    const updated: TodoListItem = {
       ...previous,
       ...(timelineCursor ? { timelineCursor } : {}),
       items: normalizedItems,
       timestamp,
     };
-    return next;
+    return replaceAtMaybe(state, previousIndex, updated, mutable);
   }
 
   const lastItem = state[state.length - 1];
@@ -1355,21 +1596,20 @@ function appendTodoList(
     lastItem.activity.type === "created" &&
     normalizedItems.every((item) => taskStatus(item) === "pending")
   ) {
-    const next = [...state];
-    next[next.length - 1] = {
+    const updated: TodoListItem = {
       ...lastItem,
       ...(timelineCursor ? { timelineCursor } : {}),
       items: normalizedItems,
       activity: { type: "created", count: normalizedItems.length },
       timestamp,
     };
-    return next;
+    return replaceAtMaybe(state, state.length - 1, updated, mutable);
   }
 
-  const next = [...state];
+  const next = mutable ? state : [...state];
   for (const activity of activities) {
     const idSeed = `${provider}:${JSON.stringify(activity)}:${JSON.stringify(normalizedItems)}`;
-    next.push({
+    const row: TodoListItem = {
       kind: "todo_list",
       id: createUniqueTimelineId(next, "todo", idSeed, timestamp),
       ...(timelineCursor ? { timelineCursor } : {}),
@@ -1377,7 +1617,12 @@ function appendTodoList(
       provider,
       items: normalizedItems,
       activity,
-    });
+    };
+    if (mutable) {
+      pushMaybe(next, row, mutable);
+    } else {
+      next.push(row);
+    }
   }
   return next;
 }
@@ -1427,6 +1672,7 @@ function reduceTimelineToolCall(
     { type: "tool_call" }
   >,
   timestamp: Date,
+  mutable: MutableFlag,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const normalizedToolName = item.name
@@ -1446,6 +1692,7 @@ function reduceTimelineToolCall(
       event.provider,
       tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
       timestamp,
+      mutable,
       timelineCursor,
     );
   }
@@ -1466,6 +1713,7 @@ function reduceTimelineToolCall(
       event.provider,
       tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
       timestamp,
+      mutable,
       timelineCursor,
     );
   }
@@ -1483,6 +1731,7 @@ function reduceTimelineToolCall(
       ...(item.agentMessage ? { agentMessage: item.agentMessage } : {}),
     },
     timestamp,
+    mutable,
     timelineCursor,
     turnId: event.turnId,
   });
@@ -1495,10 +1744,16 @@ function reduceTimelineCompaction(
     { type: "compaction" }
   >,
   timestamp: Date,
+  mutable: MutableFlag,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   if (item.status === "completed") {
-    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
+    const loadingIdx = findRow(
+      state,
+      mutable,
+      ["compaction:loading"],
+      (row) => row.kind === "compaction" && row.status === "loading",
+    );
     const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
     if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
       const updated: CompactionItem = {
@@ -1508,7 +1763,7 @@ function reduceTimelineCompaction(
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
       };
-      return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
+      return spliceReplaceMaybe(state, loadingIdx, 1, [updated], mutable);
     }
     if (loadingIdx >= 0) {
       return state;
@@ -1523,7 +1778,7 @@ function reduceTimelineCompaction(
     trigger: item.trigger,
     preTokens: item.preTokens,
   };
-  return [...state, compaction];
+  return pushMaybe(state, compaction, mutable);
 }
 
 function reduceTimelineEvent(
@@ -1531,6 +1786,7 @@ function reduceTimelineEvent(
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
   timestamp: Date,
   source: StreamUpdateSource,
+  mutable: MutableFlag,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
@@ -1542,6 +1798,7 @@ function reduceTimelineEvent(
         item.text,
         timestamp,
         source,
+        mutable,
         item.messageId,
         item.clientMessageId,
         timelineCursor,
@@ -1553,14 +1810,15 @@ function reduceTimelineEvent(
         item.text,
         timestamp,
         source,
+        mutable,
         item.messageId,
         reservedItemIds,
         timelineCursor,
       );
     case "reasoning":
-      return appendThought(state, item.text, timestamp, timelineCursor, event.turnId);
+      return appendThought(state, item.text, timestamp, mutable, timelineCursor, event.turnId);
     case "tool_call":
-      return reduceTimelineToolCall(state, event, item, timestamp, timelineCursor);
+      return reduceTimelineToolCall(state, event, item, timestamp, mutable, timelineCursor);
     case "todo": {
       const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
         text: todo.text,
@@ -1569,7 +1827,7 @@ function reduceTimelineEvent(
         status: todo.status,
         activeForm: todo.activeForm,
       }));
-      return appendTodoList(state, event.provider, items, timestamp, timelineCursor);
+      return appendTodoList(state, event.provider, items, timestamp, mutable, timelineCursor);
     }
     case "error": {
       const notification: NotificationItem = {
@@ -1581,7 +1839,7 @@ function reduceTimelineEvent(
         level: "error",
         message: item.message ?? "Unknown error",
       };
-      return appendNotification(state, notification);
+      return appendNotification(state, notification, mutable);
     }
     case "notification": {
       const notification: NotificationItem = {
@@ -1593,12 +1851,59 @@ function reduceTimelineEvent(
         level: item.level,
         message: item.message,
       };
-      return appendNotification(state, notification);
+      return appendNotification(state, notification, mutable);
     }
     case "compaction":
-      return reduceTimelineCompaction(state, item, timestamp, timelineCursor);
+      return reduceTimelineCompaction(state, item, timestamp, mutable, timelineCursor);
     case "plugin":
-      return appendPluginTimelineItem(state, item, timestamp, timelineCursor);
+      return appendPluginTimelineItem(state, item, timestamp, mutable, timelineCursor);
+    default:
+      return state;
+  }
+}
+
+interface ReduceInternalOptions {
+  source: StreamUpdateSource;
+  mutable: MutableFlag;
+  deferFinalize: boolean;
+  reservedItemIds?: ReadonlySet<string>;
+  timelineCursor?: TimelinePosition;
+}
+
+function reduceStreamUpdateImpl(
+  state: StreamItem[],
+  event: AgentStreamEventPayload,
+  timestamp: Date,
+  options: ReduceInternalOptions,
+): StreamItem[] {
+  const { source, mutable, deferFinalize, reservedItemIds, timelineCursor } = options;
+  // Reset per event so turn membership only covers rows this event wrote.
+  if (mutable) mutable.written.length = 0;
+  switch (event.type) {
+    case "timeline": {
+      const nextState = reduceTimelineEvent(
+        state,
+        event,
+        timestamp,
+        source,
+        mutable,
+        reservedItemIds,
+        timelineCursor,
+      );
+      const updated = applyTimelineTurnId(state, nextState, event, mutable);
+      return deferFinalize || event.item.type === "reasoning"
+        ? updated
+        : finalizeActiveThoughts(updated, mutable);
+    }
+    case "thread_started":
+    case "turn_started":
+    case "turn_completed":
+    case "turn_failed":
+    case "turn_canceled":
+    case "permission_requested":
+    case "permission_resolved":
+    case "attention_required":
+      return deferFinalize ? state : finalizeActiveThoughts(state, mutable);
     default:
       return state;
   }
@@ -1613,49 +1918,41 @@ export function reduceStreamUpdate(
   timestamp: Date,
   options?: StreamUpdateOptions,
 ): StreamItem[] {
-  const source = options?.source ?? "live";
-  switch (event.type) {
-    case "timeline": {
-      const updated = applyTimelineTurnId(
-        state,
-        reduceTimelineEvent(
-          state,
-          event,
-          timestamp,
-          source,
-          options?.reservedItemIds,
-          options?.timelineCursor,
-        ),
-        event,
-      );
-      return event.item.type === "reasoning" ? updated : finalizeActiveThoughts(updated);
-    }
-    case "thread_started":
-    case "turn_started":
-    case "turn_completed":
-    case "turn_failed":
-    case "turn_canceled":
-    case "permission_requested":
-    case "permission_resolved":
-    case "attention_required":
-      return finalizeActiveThoughts(state);
-    default:
-      return state;
-  }
+  return reduceStreamUpdateImpl(state, event, timestamp, {
+    source: options?.source ?? "live",
+    mutable: false,
+    deferFinalize: false,
+    reservedItemIds: options?.reservedItemIds,
+    timelineCursor: options?.timelineCursor,
+  });
 }
 
 function applyTimelineTurnId(
   previous: StreamItem[],
   items: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+  mutable: MutableFlag,
 ): StreamItem[] {
   const clientMessageId =
     event.item.type === "user_message" ? event.item.clientMessageId : undefined;
   if (clientMessageId) {
-    return reconcileCanonicalUserTurnMembership(items, clientMessageId, event.turnId);
+    return reconcileCanonicalUserTurnMembership(items, clientMessageId, event.turnId, mutable);
   }
 
-  if (!event.turnId || items === previous) return items;
+  if (!event.turnId) return items;
+  if (mutable) {
+    // The accumulator mutated `items` in place, so row ownership comes from the
+    // write log instead of an identity comparison against `previous`.
+    for (const index of mutable.written) {
+      const item = items[index];
+      if (!item || item.turnId === event.turnId) continue;
+      items[index] = { ...item, turnId: event.turnId } as StreamItem;
+      // The turn id is part of a tool call identity, so the row needs reindexing.
+      indexRow(items, mutable, index);
+    }
+    return items;
+  }
+  if (items === previous) return items;
   // Assign membership only to rows written by this event, before finalizing
   // unrelated reasoning rows. Late lifecycle updates can replace an earlier row.
   return items.map((item, index) =>
@@ -1669,9 +1966,13 @@ function reconcileCanonicalUserTurnMembership(
   items: StreamItem[],
   clientMessageId: string,
   turnId: string | undefined,
+  mutable: MutableFlag,
 ): StreamItem[] {
-  const index = items.findIndex(
-    (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
+  const index = findRow(
+    items,
+    mutable,
+    [`client:${clientMessageId}`],
+    (row) => row.kind === "user_message" && row.clientMessageId === clientMessageId,
   );
   const matched = items[index];
   if (!matched || matched.kind !== "user_message" || matched.turnId === turnId) {
@@ -1686,11 +1987,15 @@ function reconcileCanonicalUserTurnMembership(
         const { turnId: _, ...withoutTurnId } = matched;
         return withoutTurnId;
       })();
-  return [...items.slice(0, index), next, ...items.slice(index + 1)];
+  return replaceAtMaybe(items, index, next, mutable);
 }
 
 /**
- * Hydrate stream state from a batch of AgentManager stream events
+ * Hydrate stream state from a batch of AgentManager stream events.
+ *
+ * Mutates a private accumulator and finalizes thoughts once after replay.
+ * The lookup index is built on demand. Shared lookup keys can require scanning
+ * multiple rows, so replay cost depends on the event mix.
  */
 export function hydrateStreamState(
   events: Array<{
@@ -1700,11 +2005,20 @@ export function hydrateStreamState(
   }>,
   options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
-  const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
-    return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });
-  }, []);
-
-  return finalizeActiveThoughts(hydrated);
+  const source = options?.source ?? "live";
+  const state: StreamItem[] = [];
+  const mutable: MutableTimeline = { written: [], index: null };
+  for (let i = 0; i < events.length; i += 1) {
+    const { event, timestamp, timelineCursor } = events[i];
+    reduceStreamUpdateImpl(state, event, timestamp, {
+      source,
+      mutable,
+      deferFinalize: true,
+      reservedItemIds: options?.reservedItemIds,
+      timelineCursor,
+    });
+  }
+  return finalizeActiveThoughts(state, mutable);
 }
 
 /**
@@ -1731,7 +2045,7 @@ function applyCompletionToTail(
   timestamp: Date,
   source: StreamUpdateSource,
 ): StreamItem[] {
-  const finalized = finalizeActiveThoughts(tail);
+  const finalized = finalizeActiveThoughts(tail, false);
   return reduceStreamUpdate(finalized, event, timestamp, { source });
 }
 
@@ -1925,6 +2239,7 @@ function applyCanonicalUserMessageEvent(params: {
           reconciled.tail,
           canonical.clientMessageId,
           event.turnId,
+          false,
         )
       : reconciled.tail;
     const reconciledHead = canonical.clientMessageId
@@ -1932,6 +2247,7 @@ function applyCanonicalUserMessageEvent(params: {
           reconciled.head,
           canonical.clientMessageId,
           event.turnId,
+          false,
         )
       : reconciled.head;
     return {
@@ -1951,6 +2267,7 @@ function applyCanonicalUserMessageEvent(params: {
         reconciled.items,
         canonical.clientMessageId,
         event.turnId,
+        false,
       )
     : reconciled.items;
   return {
