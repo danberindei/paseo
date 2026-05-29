@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
@@ -83,7 +84,7 @@ test.describe("Sidebar workspace rename", () => {
       expect(workspace.workspaceName).toBe("main");
 
       await page.setViewportSize({ width: 1280, height: 800 });
-      await gotoAppShell(page);
+      await gotoWorkspace(page, workspace.workspaceId);
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
         timeout: 30_000,
       });
@@ -106,6 +107,7 @@ test.describe("Sidebar workspace rename", () => {
       await page.keyboard.press("Enter");
 
       await expect(input).toHaveCount(0, { timeout: 15_000 });
+      await expect(page).toHaveTitle(/ - Payments Refactor - .* - Paseo$/);
       // The title is shown exactly as typed — not slugified into a branch name.
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         customTitle,
@@ -121,6 +123,7 @@ test.describe("Sidebar workspace rename", () => {
         customTitle,
         { timeout: 30_000 },
       );
+      await expect(page).toHaveTitle(/ - Payments Refactor - .* - Paseo$/);
     } finally {
       await workspace.cleanup();
     }

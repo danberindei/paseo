@@ -149,7 +149,6 @@ import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
-import { WorkspaceTabPresentationResolver } from "@/screens/workspace/workspace-tab-presentation";
 import {
   useWorkspaceTabRename,
   WorkspaceTabRenameModal,
@@ -212,7 +211,7 @@ import {
 } from "@/panels/panel-instance-attributes";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
-import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import { getIsElectron, isWeb } from "@/constants/platform";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -325,28 +324,6 @@ function useSyncWorkspaceActiveBrowser(input: {
   }, [focusedBrowserId, input.workspaceId]);
 }
 
-function WorkspaceDocumentTitleEffect({
-  label,
-  titleState,
-}: {
-  label: string;
-  titleState: "ready" | "loading";
-}) {
-  const { t } = useTranslation();
-  useEffect(() => {
-    if (isNative || typeof document === "undefined") {
-      return;
-    }
-    const resolvedLabel = label.trim();
-    document.title =
-      titleState === "loading"
-        ? t("workspace.tabs.loading")
-        : resolvedLabel || t("workspace.tabs.fallback.workspace");
-  }, [label, titleState, t]);
-
-  return null;
-}
-
 interface MobileMountedTabSlotProps {
   tabDescriptor: WorkspaceTabDescriptor;
   isVisible: boolean;
@@ -429,9 +406,10 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   workspaceId,
   isRouteFocused,
 }: WorkspaceScreenProps) {
-  // Every reader of the panel registry renders inside the workspace screen, so it registers the
-  // panels before any of them renders. A reader importing the registration instead would import
-  // every panel, and the panels render readers.
+  // Panels register from here rather than from the module that defines them, because the panels
+  // render readers of the registry. Readers inside the screen can rely on the registration being
+  // present; readers outside it, such as the window title sync, use `usePanelRegistration` to
+  // re-render once it happens.
   ensurePanelsRegistered();
   const navigationFocused = useIsFocused();
   useEffect(() => {
@@ -835,33 +813,6 @@ function renderWorkspaceScreenGateShell(input: {
         </View>
       </View>
     </WorkspaceFocusProvider>
-  );
-}
-
-function WorkspaceDocumentTitleEffectSlot({
-  tab,
-  serverId,
-  workspaceId,
-  isRouteFocused,
-}: {
-  tab: WorkspaceTabDescriptor | null;
-  serverId: string;
-  workspaceId: string;
-  isRouteFocused: boolean;
-}) {
-  if (!isRouteFocused || !isWeb || !tab) {
-    return null;
-  }
-
-  return (
-    <WorkspaceTabPresentationResolver tab={tab} serverId={serverId} workspaceId={workspaceId}>
-      {(presentation) => (
-        <WorkspaceDocumentTitleEffect
-          label={presentation.label}
-          titleState={presentation.titleState}
-        />
-      )}
-    </WorkspaceTabPresentationResolver>
   );
 }
 
@@ -2961,12 +2912,6 @@ function WorkspaceScreenContent({
     () => !isMobile && !canRenderDesktopPaneSplits,
     [isMobile, canRenderDesktopPaneSplits],
   );
-  useEffect(() => {
-    if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
-      return;
-    }
-    document.title = "Workspace";
-  }, [activeTabDescriptor, isRouteFocused]);
   const buildPaneContentModel = useCallback(
     (input: {
       tab: WorkspaceTabDescriptor;
@@ -3810,12 +3755,6 @@ function WorkspaceScreenContent({
   const renderedWorkspaceScreen = (
     <RenderProfile id="WorkspaceScreenContent">
       <View style={containerStyle}>
-        <WorkspaceDocumentTitleEffectSlot
-          tab={activeTabDescriptor}
-          serverId={normalizedServerId}
-          workspaceId={normalizedWorkspaceId}
-          isRouteFocused={isRouteFocused}
-        />
         <WorkspacePanelSurface
           launcher={newTabLauncher}
           workspaceKey={workspacePanelKey}

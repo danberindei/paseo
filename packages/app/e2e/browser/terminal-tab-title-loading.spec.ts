@@ -44,6 +44,7 @@ async function recordRestoredTabText(page: Page, terminalId: string) {
 
 async function expectRestoredTitle(page: Page, terminalId: string, title: string, stage: string) {
   await expect(terminalTab(page, terminalId)).toHaveText(title, { timeout: 30_000 });
+  await expect(page).toHaveTitle(/ - Named workspace - My named terminal - Paseo$/);
   const samples = await page.evaluate(
     () => (window as unknown as { terminalTitleSamples: string[] }).terminalTitleSamples,
   );
@@ -56,7 +57,11 @@ async function expectRestoredTitle(page: Page, terminalId: string, title: string
 }
 
 test("restored terminal titles do not flash a default name while loading", async ({ page }) => {
-  const workspace = await seedWorkspace({ repoPrefix: "terminal-title-loading-", git: false });
+  const workspace = await seedWorkspace({
+    repoPrefix: "terminal-title-loading-",
+    git: false,
+    title: "Named workspace",
+  });
   const other = await seedWorkspace({ repoPrefix: "terminal-title-other-", git: false });
   try {
     const title = "My named terminal";

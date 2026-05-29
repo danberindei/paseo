@@ -132,6 +132,7 @@ test.describe("Workspace agent title handoff", () => {
         .poll(() => fetchActiveAgentTitle(workspace.client, agentId), { timeout: 10_000 })
         .toBe(promptTitle);
       await expect(agentTab).toContainText(promptTitle, { timeout: 15_000 });
+      await expect(page).toHaveTitle(/ - Investigate optimistic tab title handoff - Paseo$/);
       await agentTab.click({ button: "right" });
       await expect(page.getByRole("menuitem", { name: "Rename", exact: true })).toBeVisible({
         timeout: 10_000,
@@ -148,6 +149,7 @@ test.describe("Workspace agent title handoff", () => {
       await expect(page.getByRole("button", { name: generatedTitle }).first()).toBeVisible({
         timeout: 15_000,
       });
+      await expect(page).toHaveTitle(/ - Generated Handoff Title - Paseo$/);
     } finally {
       agentCreatedDelay.release();
       await workspace.cleanup();

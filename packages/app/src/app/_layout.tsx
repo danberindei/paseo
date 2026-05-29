@@ -107,6 +107,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
+import { WindowTitleSync } from "@/components/window-title-sync";
 import { useInitialSpaceId } from "@/hooks/use-initial-space-id";
 import { useKeyboardShortcuts } from "@/keyboard/use-shortcuts";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
@@ -709,6 +710,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
         <OfferLinkListener />
         <HostSessionManager />
         <FaviconStatusSync />
+        {isWeb ? <WindowTitleSync /> : null}
         {children}
       </VoiceProvider>
     </AppearanceProvider>

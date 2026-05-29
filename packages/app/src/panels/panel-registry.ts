@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { useSyncExternalStore, type ComponentType } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
@@ -90,15 +90,49 @@ export function definePanel<K extends WorkspaceTabTarget["kind"]>(
 }
 
 const panelRegistry = new Map<WorkspaceTabTarget["kind"], PanelRegistration>();
+const registryListeners = new Set<() => void>();
 
 export function registerPanel<K extends WorkspaceTabTarget["kind"]>(
   registration: PanelRegistration<K>,
 ): void {
   panelRegistry.set(registration.kind, registration as unknown as PanelRegistration);
+  notifyPanelRegistryListeners();
 }
 
 export function getPanelRegistration(
   kind: WorkspaceTabTarget["kind"],
 ): PanelRegistration | undefined {
   return panelRegistry.get(kind);
+}
+
+function subscribeToPanelRegistry(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
+// `ensurePanelsRegistered` runs from the workspace screen's render body, so notifying synchronously
+// would update a reader in another component tree, such as the window title sync, during render.
+function notifyPanelRegistryListeners(): void {
+  if (registryListeners.size === 0) {
+    return;
+  }
+  queueMicrotask(() => {
+    for (const listener of registryListeners) {
+      listener();
+    }
+  });
+}
+
+// Panels register lazily when the workspace screen mounts, so a reader outside that screen sees an
+// empty registry on its first render and needs the notification to pick the registration up.
+export function usePanelRegistration(
+  kind: WorkspaceTabTarget["kind"] | null,
+): PanelRegistration | undefined {
+  return useSyncExternalStore(
+    subscribeToPanelRegistry,
+    () => (kind === null ? undefined : getPanelRegistration(kind)),
+    () => (kind === null ? undefined : getPanelRegistration(kind)),
+  );
 }
