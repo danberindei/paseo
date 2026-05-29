@@ -87,6 +87,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
+import { useWindowTitle } from "@/hooks/use-window-title";
 import { useInitialSpaceId } from "@/hooks/use-initial-space-id";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { resolveExplorerSidebarPresentation } from "@/workspace-tabs/explorer-sidebar";
@@ -892,6 +893,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
 
 function FaviconStatusSync() {
   useFaviconStatus();
+  useWindowTitle();
   return null;
 }
 

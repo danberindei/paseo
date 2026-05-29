@@ -256,6 +256,12 @@ export function registerWindowManager(input: WindowManagerContext): void {
     }
     return false;
   });
+
+  ipcMain.handle("paseo:window:setTitle", (event, title?: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || typeof title !== "string") return;
+    win.setTitle(title);
+  });
 }
 
 export function setupWindowResizeEvents(win: BrowserWindow): void {

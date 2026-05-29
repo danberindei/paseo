@@ -43,6 +43,9 @@ import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-bu
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { SpaceSwitcher } from "@/components/space-switcher";
+import { selectActiveSpace, useSpaceStore } from "@/stores/space-store";
+import { useWorkspaceProjectName } from "@/hooks/use-workspace-project-name";
+import { formatWindowTitle } from "@/utils/window-title";
 import { useToast } from "@/contexts/toast-context";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
@@ -487,21 +490,37 @@ function ResolvedMobileActiveTabTrigger({
 function WorkspaceDocumentTitleEffect({
   label,
   titleState,
+  serverId,
+  workspaceId,
 }: {
   label: string;
   titleState: "ready" | "loading";
+  serverId: string;
+  workspaceId: string;
 }) {
+  const activeSpace = useSpaceStore(selectActiveSpace);
+  const activeSpaceName = activeSpace?.name ?? null;
+  const projectName = useWorkspaceProjectName(serverId, workspaceId);
   const { t } = useTranslation();
   useEffect(() => {
     if (isNative || typeof document === "undefined") {
       return;
     }
     const resolvedLabel = label.trim();
-    document.title =
+    const nextTitle =
       titleState === "loading"
-        ? t("workspace.tabs.loading")
-        : resolvedLabel || t("workspace.tabs.fallback.workspace");
-  }, [label, titleState, t]);
+        ? formatWindowTitle({
+            spaceName: activeSpaceName,
+            projectName,
+            tabLabel: t("workspace.tabs.loading"),
+          })
+        : formatWindowTitle({
+            spaceName: activeSpaceName,
+            projectName,
+            tabLabel: resolvedLabel || t("workspace.tabs.fallback.workspace"),
+          });
+    document.title = nextTitle;
+  }, [activeSpaceName, projectName, label, titleState, t]);
 
   return null;
 }
@@ -1360,6 +1379,8 @@ function WorkspaceDocumentTitleEffectSlot({
         <WorkspaceDocumentTitleEffect
           label={presentation.label}
           titleState={presentation.titleState}
+          serverId={serverId}
+          workspaceId={workspaceId}
         />
       )}
     </WorkspaceTabPresentationResolver>
@@ -1521,6 +1542,7 @@ function useLastMainPane(input: {
   return lastMainPaneRef;
 }
 
+// oxlint-disable-next-line complexity
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -3478,6 +3500,11 @@ function WorkspaceScreenContent({
       }),
     [activeFileLineEnd, activeFileLineStart, activeFilePath],
   );
+  const activeSpace = useSpaceStore(selectActiveSpace);
+  const documentTitleProjectName = useWorkspaceProjectName(
+    normalizedServerId,
+    normalizedWorkspaceId,
+  );
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const shouldRenderDesktopPaneFallback = useMemo(
     () => !isMobile && !canRenderDesktopPaneSplits,
@@ -3487,8 +3514,11 @@ function WorkspaceScreenContent({
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
     }
-    document.title = "Workspace";
-  }, [activeTabDescriptor, isRouteFocused]);
+    document.title = formatWindowTitle({
+      spaceName: activeSpace?.name,
+      projectName: documentTitleProjectName,
+    });
+  }, [activeSpace?.name, documentTitleProjectName, activeTabDescriptor, isRouteFocused]);
   const buildPaneContentModel = useCallback(
     (input: {
       tab: WorkspaceTabDescriptor;
