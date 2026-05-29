@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "@/i18n/i18next";
+import { lightTheme } from "@/styles/theme";
 import { UsageWindowBar } from "./window-bar";
 import type { UsageBalance, UsageWindow } from "./types";
 import { UsageBalanceBar } from "./balance-bar";
@@ -11,6 +12,12 @@ const window: UsageWindow = { id: "session", label: "Session", usedPct: 70 };
 const exhaustedWindow: UsageWindow = { ...window, usedPct: 100 };
 const balance: UsageBalance = { id: "credits", label: "Credits", unit: "usd", remaining: 12 };
 const ignorePin = () => {};
+
+function cssColor(color: string): string {
+  const style = document.createElement("div").style;
+  style.backgroundColor = color;
+  return style.backgroundColor;
+}
 
 let root: Root;
 let container: HTMLDivElement;
@@ -72,10 +79,10 @@ it("colors healthy quota bars green and keeps the warning and danger colors", ()
     (track) => getComputedStyle(track.firstElementChild!).backgroundColor,
   );
   expect(colors).toEqual([
-    "rgb(21, 128, 61)",
-    "rgb(21, 128, 61)",
-    "rgb(217, 119, 6)",
-    "rgb(185, 28, 28)",
+    cssColor(lightTheme.colors.statusSuccess),
+    cssColor(lightTheme.colors.statusSuccess),
+    cssColor(lightTheme.colors.statusWarning),
+    cssColor(lightTheme.colors.statusDanger),
     "rgb(212, 212, 216)",
   ]);
 });
@@ -98,7 +105,7 @@ it("keeps an exhausted quota red when a failed refresh removes its forecast", ()
   );
   expect(container.textContent).toBe("Session100% used");
   const fill = container.firstElementChild!.children[1].firstElementChild!;
-  expect(getComputedStyle(fill).backgroundColor).toBe("rgb(185, 28, 28)");
+  expect(getComputedStyle(fill).backgroundColor).toBe(cssColor(lightTheme.colors.statusDanger));
 });
 
 const narrowReadingMs = Date.now();
@@ -121,8 +128,8 @@ const onTrackWindow: UsageWindow = {
 const tightWindow: UsageWindow = { ...onTrackWindow, usedPct: 77 };
 
 it.each([
-  ["green", onTrackWindow, "rgb(21, 128, 61)"],
-  ["amber", tightWindow, "rgb(217, 119, 6)"],
+  ["green", onTrackWindow, lightTheme.colors.statusSuccess],
+  ["amber", tightWindow, lightTheme.colors.statusWarning],
 ] as const)("shows only the reset details for an on-track %s bar", (_, usageWindow, color) => {
   act(() =>
     root.render(
@@ -143,7 +150,7 @@ it.each([
   const [label, track, datapoints] = row.children;
   expect(label.textContent).toBe(`Session${usageWindow.usedPct}% used`);
   expect(datapoints.textContent).toMatch(/^resets in [^·]+\s· [^·]+$/);
-  expect(getComputedStyle(track.firstElementChild!).backgroundColor).toBe(color);
+  expect(getComputedStyle(track.firstElementChild!).backgroundColor).toBe(cssColor(color));
 });
 
 it("shows the forecast as one more datapoint after the reset countdown, in the same line", async () => {

@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { lightTheme } from "@/styles/theme";
 import { StatusBadge } from "./status-badge";
 
 interface MountedBadge {
@@ -37,6 +38,13 @@ function parseColor(value: string): { rgb: string; alpha: number } {
   return { rgb: channels.slice(0, 3).join(","), alpha: channels[3] ?? 1 };
 }
 
+// The status palette is generated from one rule, so the expectation reads the token instead of
+// restating a hex that a palette regeneration replaces.
+function cssRgb(hex: string): string {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  return `rgb(${channels.join(", ")})`;
+}
+
 describe("StatusBadge", () => {
   it("uses the neutral badge shell for the muted variant", () => {
     const style = getComputedStyle(mountBadge("muted"));
@@ -62,10 +70,10 @@ describe("StatusBadge", () => {
   );
 
   it.each([
-    ["success", "rgb(21, 128, 61)"],
-    ["warning", "rgb(217, 119, 6)"],
-    ["error", "rgb(185, 28, 28)"],
-    ["muted", "rgb(102, 102, 102)"],
+    ["success", lightTheme.colors.statusSuccess],
+    ["warning", lightTheme.colors.statusWarning],
+    ["error", lightTheme.colors.statusDanger],
+    ["muted", lightTheme.colors.foregroundMuted],
   ] as const)("uses the semantic %s signal for its text", (variant, expectedColor) => {
     const badge = mountBadge(variant);
     const text = badge.lastElementChild;
@@ -73,6 +81,6 @@ describe("StatusBadge", () => {
       throw new Error("StatusBadge did not render its label");
     }
 
-    expect(getComputedStyle(text).color).toBe(expectedColor);
+    expect(getComputedStyle(text).color).toBe(cssRgb(expectedColor));
   });
 });
