@@ -264,7 +264,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   workingIndicatorTimestamp: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.3,
+    fontSize: STREAM_METADATA_FONT_SIZE,
   },
 }));
