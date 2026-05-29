@@ -813,6 +813,7 @@ function ChatAgentContent({
     routeKey: string;
     reason: "initial-entry" | "resume";
   } | null>(null);
+
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
@@ -1393,7 +1394,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </View>
   );
   const contentContainer = <View style={styles.contentContainer}>{streamContent}</View>;
-
   return (
     <RewindComposerRestoreProvider
       text={agentInputDraft.text}
@@ -1482,8 +1482,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasAppliedAuthoritativeHistory: boolean;
   hasActiveComposer: boolean;
   hasVisibleAgentTracks: boolean;
-  toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  toast: ReturnType<typeof useToastHost>["api"];
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);

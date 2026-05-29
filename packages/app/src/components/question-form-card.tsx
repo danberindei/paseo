@@ -1,5 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { View, Text, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -15,16 +15,30 @@ import {
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
+  resolveActiveQuestionState,
   resolveDismissLabel,
   shouldSubmitEmptyOnDismiss,
   type QuestionFormQuestion,
   type QuestionOption,
 } from "./question-form-card-core";
+import { focusWithRetries, isActiveElementTextInputWithContent } from "@/utils/web-focus";
+import { createFocusedPermissionRequestKeydownHandler } from "./permission-request-shortcuts";
 
 interface QuestionFormCardProps {
   permission: PendingPermission;
   onRespond: (response: AgentPermissionResponse) => void;
   isResponding: boolean;
+  isShortcutTarget: boolean;
+  registerShortcutTarget: (
+    key: string,
+    actions: {
+      accept: () => void;
+      deny: () => void;
+      focus: () => void;
+      isResponding: () => boolean;
+    },
+  ) => () => void;
+  onStartResponding: (key: string) => void;
 }
 
 const IS_WEB = isWeb;
@@ -314,7 +328,14 @@ function QuestionOtherInput({
   );
 }
 
-export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
+export function QuestionFormCard({
+  permission,
+  onRespond,
+  isResponding,
+  isShortcutTarget,
+  registerShortcutTarget,
+  onStartResponding,
+}: QuestionFormCardProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -322,6 +343,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     () => parseQuestionFormQuestions(permission.request.input),
     [permission.request.input],
   );
+  const containerRef = useRef<View | null>(null);
 
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
@@ -371,18 +393,17 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   }, []);
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
-  const resolvedActiveQuestionIndex = questions
-    ? Math.min(activeQuestionIndex, questions.length - 1)
-    : 0;
-  const activeQuestion = questions?.[resolvedActiveQuestionIndex];
-  const activeQuestionAnswered = activeQuestion
-    ? isQuestionAnswered(activeQuestion, resolvedActiveQuestionIndex, selections, otherTexts)
-    : false;
-  const isLastQuestion = questions ? resolvedActiveQuestionIndex === questions.length - 1 : true;
+  const {
+    index: resolvedActiveQuestionIndex,
+    question: activeQuestion,
+    answered: activeQuestionAnswered,
+    isLast: isLastQuestion,
+  } = resolveActiveQuestionState({ questions, activeQuestionIndex, selections, otherTexts });
 
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
     setRespondingAction("submit");
+    onStartResponding(permission.key);
     onRespond({
       behavior: "allow",
       updatedInput: {
@@ -397,12 +418,15 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     selections,
     otherTexts,
     onRespond,
+    onStartResponding,
+    permission.key,
     permission.request.input,
   ]);
 
   const handleDeny = useCallback(() => {
     if (!questions) return;
     setRespondingAction("dismiss");
+    onStartResponding(permission.key);
     if (shouldSubmitEmptyOnDismiss(questions)) {
       onRespond({
         behavior: "allow",
@@ -417,7 +441,104 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
       behavior: "deny",
       message: "Dismissed by user",
     });
-  }, [questions, onRespond, otherTexts, permission.request.input, selections]);
+  }, [
+    questions,
+    onRespond,
+    onStartResponding,
+    otherTexts,
+    permission.key,
+    permission.request.input,
+    selections,
+  ]);
+
+  const firstQuestionOptionCount =
+    questions && questions.length > 0 ? questions[0].options.length : 0;
+  const firstQuestionSelectedIndex = useMemo(() => {
+    const current = selections[0];
+    return current && current.size > 0 ? Math.min(...current) : -1;
+  }, [selections]);
+
+  const handleNavigateOption = useCallback((index: number) => {
+    setSelections((prev) => ({ ...prev, [0]: new Set([index]) }));
+    setOtherTexts((prev) => {
+      if (!prev[0]) return prev;
+      const next = { ...prev };
+      delete next[0];
+      return next;
+    });
+  }, []);
+
+  const focusCard = useCallback(() => {
+    const element = containerRef.current as unknown as HTMLElement | null;
+    element?.focus();
+  }, []);
+
+  useEffect(() => {
+    return registerShortcutTarget(permission.key, {
+      accept: handleSubmit,
+      deny: handleDeny,
+      focus: focusCard,
+      isResponding: () => isResponding || respondingAction !== null,
+    });
+  }, [
+    focusCard,
+    handleSubmit,
+    handleDeny,
+    isResponding,
+    permission.key,
+    registerShortcutTarget,
+    respondingAction,
+  ]);
+
+  const handleKeyDown = useMemo(
+    () =>
+      createFocusedPermissionRequestKeydownHandler({
+        isResponding: () => isResponding || respondingAction !== null,
+        onAccept: handleSubmit,
+        onDeny: handleDeny,
+        arrowNavigation: {
+          itemCount: () => firstQuestionOptionCount,
+          currentIndex: () => firstQuestionSelectedIndex,
+          onNavigate: handleNavigateOption,
+        },
+      }),
+    [
+      firstQuestionOptionCount,
+      firstQuestionSelectedIndex,
+      handleDeny,
+      handleNavigateOption,
+      handleSubmit,
+      isResponding,
+      respondingAction,
+    ],
+  );
+
+  useEffect(() => {
+    if (!IS_WEB || !isShortcutTarget) {
+      return;
+    }
+
+    const element = containerRef.current as unknown as HTMLElement | null;
+    if (!element || typeof element.focus !== "function") {
+      return;
+    }
+
+    if (isActiveElementTextInputWithContent()) {
+      return;
+    }
+
+    return focusWithRetries({
+      focus: () => {
+        if (isActiveElementTextInputWithContent()) return;
+        element.focus();
+      },
+      isFocused: () => {
+        if (isActiveElementTextInputWithContent()) return true;
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        return active instanceof HTMLElement && element.contains(active);
+      },
+    });
+  }, [isShortcutTarget]);
 
   const handleSelectQuestion = useCallback((index: number) => {
     setActiveQuestionIndex(index);
@@ -472,10 +593,10 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
       styles.container,
       {
         backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.border,
+        borderColor: isShortcutTarget ? theme.colors.borderAccent : theme.colors.border,
       },
     ],
-    [theme.colors.surface1, theme.colors.border],
+    [theme.colors.surface1, theme.colors.border, theme.colors.borderAccent, isShortcutTarget],
   );
   const questionTextStyle = useMemo(
     () => [styles.questionText, { color: theme.colors.foreground }],
@@ -515,8 +636,21 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   const otherText = otherTexts[resolvedActiveQuestionIndex] ?? "";
   const showTextInput = activeQuestion ? questionShowsTextInput(activeQuestion) : false;
 
+  let webTabIndex: number | undefined;
+  if (IS_WEB) {
+    webTabIndex = isShortcutTarget ? 0 : -1;
+  }
+
   return (
-    <View style={containerStyle} testID="question-form-card">
+    <View
+      ref={containerRef}
+      style={containerStyle}
+      // @ts-ignore - tabIndex is web-only
+      tabIndex={webTabIndex}
+      // @ts-ignore - onKeyDown is web-only
+      onKeyDown={handleKeyDown}
+      testID="question-form-card"
+    >
       <QuestionNav
         questions={questions}
         activeIndex={resolvedActiveQuestionIndex}

@@ -144,3 +144,27 @@ export function resolveDismissLabel(
 ): string {
   return questions.find((question) => question.dismissLabel)?.dismissLabel ?? fallbackLabel;
 }
+
+export interface ActiveQuestionState {
+  index: number;
+  question: QuestionFormQuestion | undefined;
+  answered: boolean;
+  isLast: boolean;
+}
+
+export function resolveActiveQuestionState(input: {
+  questions: QuestionFormQuestion[] | null;
+  activeQuestionIndex: number;
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+}): ActiveQuestionState {
+  const { questions, activeQuestionIndex, selections, otherTexts } = input;
+  const index = questions ? Math.min(activeQuestionIndex, questions.length - 1) : 0;
+  const question = questions?.[index];
+  return {
+    index,
+    question,
+    answered: question ? isQuestionAnswered(question, index, selections, otherTexts) : false,
+    isLast: questions ? index === questions.length - 1 : true,
+  };
+}

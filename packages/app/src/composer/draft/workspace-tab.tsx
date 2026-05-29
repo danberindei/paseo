@@ -654,6 +654,7 @@ export function WorkspaceDraftAgentTab({
               turnPresentation={turnPresentation}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
+              onRequestFocusInput={handleDropdownCloseFocus}
             />
           </View>
         ) : (
