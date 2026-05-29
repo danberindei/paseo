@@ -1302,6 +1302,81 @@ interface WorktreeSourcePlan {
   };
 }
 
+async function resolveChangeRequestWorktreeSourcePlan({
+  cwd,
+  source,
+}: {
+  cwd: string;
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>;
+}): Promise<WorktreeSourcePlan> {
+  const localBranchCandidate = source.localBranchName ?? source.headRef;
+  await validateGitBranchName(cwd, localBranchCandidate);
+  const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
+  const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
+  const changeRequestNumber =
+    source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+  const fallbackCheckoutRefs = source.checkoutRefs ?? [
+    { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+  ];
+  // refs/pull/N/head only exists on the base repository, so when origin points at
+  // a fork the head branch has to come from the head repository URL.
+  const checkoutRefs: WorktreeCheckoutRef[] = source.pushRemoteUrl
+    ? [
+        { remoteName: source.pushRemoteUrl, remoteRef: `refs/heads/${source.headRef}` },
+        ...fallbackCheckoutRefs,
+      ]
+    : fallbackCheckoutRefs;
+  await fetchWorktreeCheckoutRefs({
+    cwd,
+    localBranchName,
+    checkoutRefs,
+  });
+  const shouldTrackOriginHead = source.trackOriginHead === true;
+  const trackingRemote = shouldTrackOriginHead
+    ? await tryFetchWorktreeTrackingRemote({
+        cwd,
+        remoteName: "origin",
+        headRef: source.headRef,
+      })
+    : undefined;
+  const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
+  if (source.pushRemoteUrl) {
+    const remoteName = `paseo-pr-${changeRequestNumber}`;
+    remotePlan.pushRemote = {
+      name: remoteName,
+      url: source.pushRemoteUrl,
+      headRef: source.headRef,
+      track: true,
+    };
+  } else if (shouldTrackOriginHead && localBranchName !== source.headRef) {
+    const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
+    if (originUrl) {
+      remotePlan.pushRemote = {
+        name: `paseo-pr-${changeRequestNumber}`,
+        url: originUrl,
+        headRef: source.headRef,
+        track: false,
+      };
+    }
+  }
+  if (trackingRemote) {
+    remotePlan.trackingRemote = trackingRemote;
+  }
+
+  return {
+    branchName: localBranchName,
+    metadataBaseRefName: normalizedBaseRefName,
+    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+      headRef: source.headRef,
+      ...(source.headRepositoryOwner ? { headRepositoryOwner: source.headRepositoryOwner } : {}),
+      changeRequestNumber,
+      localBranchName,
+    }),
+    addArguments: [localBranchName],
+    ...remotePlan,
+  };
+}
+
 async function resolveWorktreeSourcePlan({
   cwd,
   source,
@@ -1366,74 +1441,7 @@ async function resolveWorktreeSourcePlan({
     }
     case "checkout-change-request":
     case "checkout-github-pr": {
-      const localBranchCandidate = source.localBranchName ?? source.headRef;
-      await validateGitBranchName(cwd, localBranchCandidate);
-      const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
-      const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
-      const changeRequestNumber =
-        source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
-      const fallbackCheckoutRefs = source.checkoutRefs ?? [
-        { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-      ];
-      // refs/pull/N/head only exists on the base repository, so when origin points at
-      // a fork the head branch has to come from the head repository URL.
-      const checkoutRefs: WorktreeCheckoutRef[] = source.pushRemoteUrl
-        ? [
-            { remoteName: source.pushRemoteUrl, remoteRef: `refs/heads/${source.headRef}` },
-            ...fallbackCheckoutRefs,
-          ]
-        : fallbackCheckoutRefs;
-      await fetchWorktreeCheckoutRefs({
-        cwd,
-        localBranchName,
-        checkoutRefs,
-      });
-      const shouldTrackOriginHead = source.trackOriginHead === true;
-      const trackingRemote = shouldTrackOriginHead
-        ? await tryFetchWorktreeTrackingRemote({
-            cwd,
-            remoteName: "origin",
-            headRef: source.headRef,
-          })
-        : undefined;
-      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
-      if (source.pushRemoteUrl) {
-        const remoteName = `paseo-pr-${changeRequestNumber}`;
-        remotePlan.pushRemote = {
-          name: remoteName,
-          url: source.pushRemoteUrl,
-          headRef: source.headRef,
-          track: true,
-        };
-      } else if (shouldTrackOriginHead && localBranchName !== source.headRef) {
-        const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
-        if (originUrl) {
-          remotePlan.pushRemote = {
-            name: `paseo-pr-${changeRequestNumber}`,
-            url: originUrl,
-            headRef: source.headRef,
-            track: false,
-          };
-        }
-      }
-      if (trackingRemote) {
-        remotePlan.trackingRemote = trackingRemote;
-      }
-
-      return {
-        branchName: localBranchName,
-        metadataBaseRefName: normalizedBaseRefName,
-        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
-          headRef: source.headRef,
-          ...(source.headRepositoryOwner
-            ? { headRepositoryOwner: source.headRepositoryOwner }
-            : {}),
-          changeRequestNumber,
-          localBranchName,
-        }),
-        addArguments: [localBranchName],
-        ...remotePlan,
-      };
+      return resolveChangeRequestWorktreeSourcePlan({ cwd, source });
     }
   }
 }
@@ -1642,16 +1650,45 @@ async function resolveBaseBranchForWorktree(
     }
   }
 
-  const candidates = [`refs/heads/${requested}`, `refs/remotes/origin/${requested}`, requested];
-  for (const candidate of candidates) {
-    try {
-      await runGitCommand(["rev-parse", "--verify", candidate], { cwd });
-      return candidate;
-    } catch {
-      // Try the next unambiguous local, remote, or legacy ref candidate.
-    }
+  const originRef = `refs/remotes/origin/${normalized}`;
+  const localRef = `refs/heads/${normalized}`;
+  const originExists = await refExists(cwd, originRef);
+  const localExists = await localBranchExists(cwd, normalized);
+
+  if (originExists && localExists) {
+    // Prefer origin only when the local branch is behind or equal to it, so
+    // branching off the default branch still picks up freshly pushed commits
+    // even when the local copy is stale. When the local branch is ahead of or
+    // diverged from origin (e.g. a feature branch with unpushed commits), use
+    // the local branch so we never silently drop local work.
+    const localContainedInOrigin = await isAncestor(cwd, normalized, originRef);
+    return localContainedInOrigin ? originRef : localRef;
+  }
+  if (originExists) {
+    return originRef;
+  }
+  if (localExists) {
+    return localRef;
   }
   throw new Error(`Base branch not found: ${normalized}`);
+}
+
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runGitCommand(["rev-parse", "--verify", "--quiet", ref], { cwd });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isAncestor(cwd: string, maybeAncestor: string, ref: string): Promise<boolean> {
+  try {
+    await runGitCommand(["merge-base", "--is-ancestor", maybeAncestor, ref], { cwd });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {

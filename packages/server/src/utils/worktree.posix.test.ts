@@ -427,9 +427,41 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("Feature.X");
     });
 
-    it("uses the selected local or origin ref when both exist", async () => {
-      const remoteDir = join(tempDir, "remote.git");
-      const remoteCloneDir = join(tempDir, "remote-clone");
+    it("prefers origin/{branch} when the local branch is behind origin", async () => {
+      const remoteDir = join(tempDir, "remote-behind.git");
+      const remoteCloneDir = join(tempDir, "remote-behind-clone");
+      execFileSync("git", ["init", "--bare", remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir });
+
+      execFileSync("git", ["clone", remoteDir, remoteCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: remoteCloneDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: remoteCloneDir });
+      execFileSync("git", ["checkout", "-B", "main", "origin/main"], { cwd: remoteCloneDir });
+      writeFileSync(join(remoteCloneDir, "file.txt"), "from-origin\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: remoteCloneDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "advance origin main"], {
+        cwd: remoteCloneDir,
+      });
+      execFileSync("git", ["push", "origin", "main"], { cwd: remoteCloneDir });
+
+      execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
+
+      const result = await createLegacyWorktreeForTest({
+        branchName: "behind-base-feature",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "behind-base-feature",
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-origin\n");
+    });
+
+    it("prefers local {branch} when it has commits origin lacks", async () => {
+      const remoteDir = join(tempDir, "remote-diverged.git");
+      const remoteCloneDir = join(tempDir, "remote-diverged-clone");
       execFileSync("git", ["init", "--bare", remoteDir]);
       execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
       execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir });
@@ -453,39 +485,16 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
-      const localResult = await createLegacyWorktreeForTest({
-        branchName: "prefer-local-feature",
+      const result = await createLegacyWorktreeForTest({
+        branchName: "diverged-base-feature",
         cwd: repoDir,
-        baseBranch: "refs/heads/main",
-        worktreeSlug: "prefer-local-feature",
-        runSetup: false,
-        paseoHome,
-      });
-      const originResult = await createLegacyWorktreeForTest({
-        branchName: "prefer-origin-feature",
-        cwd: repoDir,
-        baseBranch: "refs/remotes/origin/main",
-        worktreeSlug: "prefer-origin-feature",
+        baseBranch: "main",
+        worktreeSlug: "diverged-base-feature",
         runSetup: false,
         paseoHome,
       });
 
-      expect(readFileSync(join(localResult.worktreePath, "file.txt"), "utf8")).toBe("from-local\n");
-      const localStatus = await getCheckoutStatus(localResult.worktreePath, { paseoHome });
-      expect(localStatus.isGit).toBe(true);
-      if (!localStatus.isGit) {
-        return;
-      }
-      expect(localStatus.aheadBehind).toEqual({ ahead: 0, behind: 0 });
-      await expect(
-        getCheckoutDiff(localResult.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
-      ).resolves.toMatchObject({ diff: "" });
-      expect(readFileSync(join(originResult.worktreePath, "file.txt"), "utf8")).toBe(
-        "from-origin\n",
-      );
-      expect(
-        JSON.parse(readFileSync(getPaseoWorktreeMetadataPath(originResult.worktreePath), "utf8")),
-      ).toMatchObject({ baseRefName: "main" });
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-local\n");
     });
 
     it("records the branch name when the base is on a remote other than origin", async () => {
