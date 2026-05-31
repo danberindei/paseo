@@ -69,7 +69,9 @@ function resolveDevWorkerEntry(): string {
 }
 
 function resolveWorkerExecArgv(workerEntry: string, devMode: boolean): string[] {
-  const execArgv = workerEntry.endsWith(".ts") ? ["--import", "tsx"] : [];
+  const execArgv = workerEntry.endsWith(".ts")
+    ? ["--import", "tsx", "--expose-gc"]
+    : ["--expose-gc"];
   if (!devMode) {
     return execArgv;
   }
@@ -157,6 +159,7 @@ async function main(): Promise<void> {
       ? (resolvedWorkerEntry) => ({
           command: process.execPath,
           args: [
+            ...workerExecArgv,
             packagedNodeEntrypointRunner,
             "node-script",
             resolvedWorkerEntry,
