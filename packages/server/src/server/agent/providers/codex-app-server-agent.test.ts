@@ -1649,6 +1649,115 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("round-trips server-initiated permission profile approvals through the real app-server transport", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    appServer.assertNoErrors();
+
+    const requestedPermissions = {
+      network: { enabled: true },
+      fileSystem: {
+        read: ["/workspace/project"],
+        write: ["/workspace/project/generated"],
+      },
+    };
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestPermissionsApproval({
+      itemId: "permissions-approval-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      startedAtMs: 123,
+      cwd: "/workspace/project",
+      reason: "Use the injected MCP server",
+      permissions: requestedPermissions,
+    });
+
+    const permissionEvent = await permissionRequested;
+    expect(permissionEvent.request).toMatchObject({
+      id: "permission-permissions-approval-1",
+      provider: "codex",
+      name: "CodexPermissions",
+      kind: "tool",
+      title: "Grant permissions",
+      description: "Use the injected MCP server",
+      input: {
+        cwd: "/workspace/project",
+        permissions: requestedPermissions,
+      },
+      metadata: {
+        itemId: "permissions-approval-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        startedAtMs: 123,
+      },
+    });
+
+    await session.respondToPermission(permissionEvent.request.id, {
+      behavior: "allow",
+      selectedActionId: "approve_session",
+    });
+
+    await expect(
+      appServer.waitForPermissionsApprovalDecision("permissions-approval-1"),
+    ).resolves.toEqual({
+      permissions: requestedPermissions,
+      scope: "session",
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("denying server-initiated permission profile approvals grants no permissions", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    appServer.assertNoErrors();
+
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestPermissionsApproval({
+      itemId: "permissions-approval-denied",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      startedAtMs: 123,
+      cwd: "/workspace/project",
+      reason: null,
+      permissions: { network: { enabled: true }, fileSystem: null },
+    });
+
+    const permissionEvent = await permissionRequested;
+    await session.respondToPermission(permissionEvent.request.id, { behavior: "deny" });
+
+    await expect(
+      appServer.waitForPermissionsApprovalDecision("permissions-approval-denied"),
+    ).resolves.toEqual({
+      permissions: {},
+      scope: "turn",
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds the conversation to a freshly emitted Codex user message id", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(

@@ -114,6 +114,16 @@ export interface FakeCodexAppServer {
   }): void;
   waitForMcpElicitationDecision(): Promise<unknown>;
   resolvesMcpElicitation(): void;
+  requestPermissionsApproval(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    startedAtMs: number;
+    cwd: string;
+    reason: string | null;
+    permissions: Record<string, unknown>;
+  }): void;
+  waitForPermissionsApprovalDecision(itemId: string): Promise<unknown>;
 }
 
 export function createCodexAppServerChildProcess(): CodexAppServerChildProcess {
@@ -604,6 +614,31 @@ export function createFakeCodexAppServer(
         throw new Error("No pending fake Codex app-server MCP elicitation");
       }
       writeNotification("serverRequest/resolved", { requestId: mcpElicitationRequestId });
+    },
+    requestPermissionsApproval(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/permissions/requestApproval",
+          params,
+        })}\n`,
+      );
+    },
+    async waitForPermissionsApprovalDecision(itemId) {
+      const requestId = approvalRequestIds.get(itemId);
+      if (requestId === undefined) {
+        throw new Error(`No pending fake Codex app-server permissions approval for ${itemId}`);
+      }
+      const message = await waitForMessage(
+        (candidate) =>
+          candidate.id === requestId && !("method" in candidate) && "result" in candidate,
+        "permissions approval response",
+      );
+      return message.result;
     },
   };
 }
