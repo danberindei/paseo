@@ -172,6 +172,46 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
   return message.includes(`no archived rollout found for thread id ${threadId}`);
 }
 
+function grantRequestedCodexPermissions(
+  permissions: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!permissions) {
+    return {};
+  }
+  const granted: Record<string, unknown> = {};
+  if (permissions.network != null) {
+    granted.network = permissions.network;
+  }
+  if (permissions.fileSystem != null) {
+    granted.fileSystem = permissions.fileSystem;
+  }
+  return granted;
+}
+
+function summarizeCodexPermissions(permissions: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const network = isRecord(permissions.network) ? permissions.network : null;
+  if (network?.enabled === true) {
+    lines.push("Network access");
+  }
+
+  const fileSystem = isRecord(permissions.fileSystem) ? permissions.fileSystem : null;
+  const read = Array.isArray(fileSystem?.read)
+    ? fileSystem.read.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const write = Array.isArray(fileSystem?.write)
+    ? fileSystem.write.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  if (read.length > 0) {
+    lines.push(`Read: ${read.join(", ")}`);
+  }
+  if (write.length > 0) {
+    lines.push(`Write: ${write.join(", ")}`);
+  }
+
+  return lines.length > 0 ? lines.join("\n") : "Additional permissions";
+}
+
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 // `turn/interrupt` ends a turn but leaves the shell commands it started running.
@@ -3856,9 +3896,10 @@ function resolveCodexParentSubagentId(
 
 interface CodexPendingPermissionHandler {
   resolve: (value: unknown) => void;
-  kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
+  kind: "command" | "file" | "question" | "mcp_elicitation" | "plan" | "permissions";
   questions?: CodexQuestionPrompt[];
   plan?: { text: string; turnId: string | undefined };
+  requestedPermissions?: Record<string, unknown>;
   proposedExecpolicyAmendment?: string[];
   proposedNetworkPolicyAmendments?: NetworkPolicyAmendment[];
 }
@@ -4493,6 +4534,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
     this.client.setRequestHandler("item/fileChange/requestApproval", (params) =>
       this.handleFileChangeApprovalRequest(params),
+    );
+    this.client.setRequestHandler("item/permissions/requestApproval", (params) =>
+      this.handlePermissionsApprovalRequest(params),
     );
     this.client.setRequestHandler("item/tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
@@ -5428,15 +5472,56 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
 
+    if (this.handleSupplementalPermissionResponse({ pending, response })) {
+      return;
+    }
+    this.handleQuestionPermissionResponse({ requestId, response, pending, pendingRequest });
+  }
+
+  private handleSupplementalPermissionResponse(params: {
+    pending: {
+      resolve: (value: unknown) => void;
+      kind: "command" | "file" | "question" | "mcp_elicitation" | "plan" | "permissions";
+      requestedPermissions?: Record<string, unknown>;
+    };
+    response: AgentPermissionResponse;
+  }): boolean {
+    const { pending, response } = params;
     if (pending.kind === "mcp_elicitation") {
       pending.resolve({
         action: resolvePermissionDecision(response),
         content: response.behavior === "allow" ? {} : null,
         _meta: null,
       });
-      return;
+      return true;
     }
 
+    if (pending.kind !== "permissions") {
+      return false;
+    }
+
+    const grantedPermissions =
+      response.behavior === "allow"
+        ? grantRequestedCodexPermissions(pending.requestedPermissions)
+        : {};
+    pending.resolve({
+      permissions: grantedPermissions,
+      scope: response.selectedActionId === "approve_session" ? "session" : "turn",
+    });
+    return true;
+  }
+
+  private handleQuestionPermissionResponse(params: {
+    requestId: string;
+    response: AgentPermissionResponse;
+    pending: {
+      resolve: (value: unknown) => void;
+      kind: "command" | "file" | "question" | "mcp_elicitation" | "plan" | "permissions";
+      questions?: CodexQuestionPrompt[];
+    };
+    pendingRequest: AgentPermissionRequest | null;
+  }): void {
+    const { requestId, response, pending, pendingRequest } = params;
     const questions = pending.questions ?? [];
     const itemId =
       typeof pendingRequest?.metadata?.itemId === "string"
@@ -5978,6 +6063,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.startupAbort.abort(this.createClosedError());
     this.background.stop();
     this.clearPendingPermissions();
+    for (const pending of this.pendingPermissionHandlers.values()) {
+      if (pending.kind === "permissions") {
+        pending.resolve({ permissions: {}, scope: "turn" });
+      } else {
+        pending.resolve({ decision: "cancel" });
+      }
+    }
+    this.pendingPermissionHandlers.clear();
+    this.pendingPermissions.clear();
+    this.resolvedPermissionRequests.clear();
     this.pendingToolCallDetails.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.settleStreamRetry({ status: "canceled" });
@@ -8228,6 +8323,66 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
     return new Promise((resolve) => {
       this.pendingPermissionHandlers.set(requestId, { resolve, kind: "file" });
+    });
+  }
+
+  private handlePermissionsApprovalRequest(params: unknown): Promise<unknown> {
+    const parsed = z
+      .object({
+        itemId: z.string(),
+        threadId: z.string(),
+        turnId: z.string(),
+        startedAtMs: z.number().optional(),
+        cwd: z.string(),
+        reason: z.string().nullable().optional(),
+        permissions: z.record(z.string(), z.unknown()),
+      })
+      .parse(params);
+    const requestId = `permission-${parsed.itemId}`;
+    const summary = summarizeCodexPermissions(parsed.permissions);
+    const actions: AgentPermissionAction[] = [
+      { id: "approve", label: "Approve", behavior: "allow", variant: "primary" },
+      {
+        id: "approve_session",
+        label: "Approve for session",
+        behavior: "allow",
+        variant: "secondary",
+      },
+      { id: "deny", label: "Deny", behavior: "deny", variant: "danger" },
+    ];
+    const request: AgentPermissionRequest = {
+      id: requestId,
+      provider: CODEX_PROVIDER,
+      name: "CodexPermissions",
+      kind: "tool",
+      title: "Grant permissions",
+      description: parsed.reason ?? undefined,
+      input: {
+        cwd: parsed.cwd,
+        permissions: parsed.permissions,
+      },
+      detail: {
+        type: "plain_text",
+        label: "Requested permissions",
+        text: summary,
+        icon: "wrench",
+      },
+      actions,
+      metadata: {
+        itemId: parsed.itemId,
+        threadId: parsed.threadId,
+        turnId: parsed.turnId,
+        startedAtMs: parsed.startedAtMs ?? null,
+      },
+    };
+    this.pendingPermissions.set(requestId, request);
+    this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
+    return new Promise((resolve) => {
+      this.pendingPermissionHandlers.set(requestId, {
+        resolve,
+        kind: "permissions",
+        requestedPermissions: parsed.permissions,
+      });
     });
   }
 
