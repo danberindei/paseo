@@ -264,11 +264,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     viewedTimelineSyncRef.current?.setActive(isAppVisible);
   }, [isAppVisible]);
 
+  const handleAppResumed = useCallback(() => {
+    const agentId = useSessionStore.getState().sessions[serverId]?.focusedAgentId;
+    if (agentId) {
+      void dismissOsNotificationsForAgent(agentId);
+    }
+  }, [serverId]);
+
   // Client activity tracking (heartbeat, push token registration)
   useClientActivity({
     client,
     focusedAgentId,
     focusedTerminalId,
+    onAppResumed: handleAppResumed,
   });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
 

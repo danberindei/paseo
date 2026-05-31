@@ -47,6 +47,7 @@ async function loadModuleForPlatform(
 ) {
   vi.resetModules();
   vi.doMock("react-native", () => ({ Platform: { OS: platform } }));
+  vi.doMock("expo-notifications", () => ({}));
   vi.doMock("@/desktop/host", () => ({
     getDesktopHost: () => options?.desktopHost ?? null,
   }));
@@ -145,8 +146,8 @@ describe("sendOsNotification", () => {
     expect(created).toHaveLength(1);
 
     const clicked = created[0];
-    expect(clicked.clickListeners).toHaveLength(1);
-    clicked.clickListeners[0]?.({} as Event);
+    expect(clicked.clickListeners).toHaveLength(2);
+    clicked.clickListeners.forEach((listener) => listener({} as Event));
 
     expect(dispatchEvent).toHaveBeenCalledTimes(1);
     const event = dispatchEvent.mock.calls[0]?.[0] as {
@@ -205,8 +206,8 @@ describe("sendOsNotification", () => {
     });
 
     const clicked = created[0];
-    expect(clicked.clickListeners).toHaveLength(1);
-    clicked.clickListeners[0]?.({} as Event);
+    expect(clicked.clickListeners).toHaveLength(2);
+    clicked.clickListeners.forEach((listener) => listener({} as Event));
 
     expect(assign).not.toHaveBeenCalled();
   });

@@ -1,3 +1,4 @@
+import * as Notifications from "expo-notifications";
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
 import { parseNotificationOpenTarget, WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
@@ -15,10 +16,12 @@ export interface WebNotificationClickDetail {
 
 interface WebNotificationInstance {
   addEventListener: (type: "click", listener: (event: Event) => void) => void;
+  close?: () => void;
 }
 
 let permissionRequest: Promise<boolean> | null = null;
 let notificationIconUrl: string | null | undefined;
+const webNotificationsByAgentId = new Map<string, WebNotificationInstance>();
 
 function getDesktopNotificationSender():
   | ((payload: {
@@ -141,6 +144,34 @@ function attachWebClickHandler(
   });
 }
 
+export async function dismissOsNotificationsForAgent(agentId: string): Promise<void> {
+  if (isNative) {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    const matching = presented.filter(
+      (n) =>
+        typeof n.request.content.data === "object" &&
+        n.request.content.data !== null &&
+        (n.request.content.data as Record<string, unknown>).agentId === agentId,
+    );
+    await Promise.all(
+      matching.map((n) => Notifications.dismissNotificationAsync(n.request.identifier)),
+    );
+    return;
+  }
+
+  const desktopHost = getDesktopHost();
+  if (desktopHost?.notification?.dismissNotification) {
+    await desktopHost.notification.dismissNotification(agentId);
+    return;
+  }
+
+  const notification = webNotificationsByAgentId.get(agentId);
+  if (notification) {
+    notification.close?.();
+    webNotificationsByAgentId.delete(agentId);
+  }
+}
+
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<boolean> {
   // Mobile/native notifications should be remote push only.
   if (isNative) {
@@ -161,6 +192,17 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
         data: payload.data,
         icon: getWebNotificationIconUrl(),
       }) as WebNotificationInstance;
+      const agentId =
+        typeof payload.data?.agentId === "string" && payload.data.agentId.length > 0
+          ? payload.data.agentId
+          : null;
+      if (agentId) {
+        webNotificationsByAgentId.get(agentId)?.close?.();
+        webNotificationsByAgentId.set(agentId, notification);
+        notification.addEventListener("click", () => {
+          webNotificationsByAgentId.delete(agentId);
+        });
+      }
       if (hasNotificationClickTarget(payload.data)) {
         attachWebClickHandler(notification, payload.data);
       }
@@ -169,8 +211,4 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
   }
 
   return false;
-}
-
-export async function dismissOsNotificationsForAgent(_agentId: string): Promise<void> {
-  // Platform notification APIs don't currently support per-agent dismissal.
 }

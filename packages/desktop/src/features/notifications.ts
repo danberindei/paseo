@@ -2,6 +2,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import { deleteAgentNotificationIfCurrent } from "./agent-notification-registry.js";
 
 interface NotificationInput {
   title?: unknown;
@@ -14,6 +15,7 @@ interface NotificationClickPayload {
 }
 
 const activeNotifications = new Set<Notification>();
+const notificationsByAgentId = new Map<string, Notification>();
 
 function toTrimmedString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -109,6 +111,12 @@ export function registerNotificationHandlers(context: NotificationHandlerContext
     });
 
     activeNotifications.add(notification);
+    const agentId =
+      typeof data?.agentId === "string" && data.agentId.length > 0 ? data.agentId : null;
+    if (agentId) {
+      notificationsByAgentId.get(agentId)?.close();
+      notificationsByAgentId.set(agentId, notification);
+    }
 
     notification.on("click", () => {
       const spaceId =
@@ -133,13 +141,25 @@ export function registerNotificationHandlers(context: NotificationHandlerContext
         }
       }
       activeNotifications.delete(notification);
+      if (agentId) deleteAgentNotificationIfCurrent(notificationsByAgentId, agentId, notification);
     });
 
     notification.on("close", () => {
       activeNotifications.delete(notification);
+      if (agentId) deleteAgentNotificationIfCurrent(notificationsByAgentId, agentId, notification);
     });
 
     notification.show();
     return true;
+  });
+
+  ipcMain.handle("paseo:notification:dismiss", (_event, agentId: unknown) => {
+    if (typeof agentId !== "string" || agentId.length === 0) {
+      return;
+    }
+    const notification = notificationsByAgentId.get(agentId);
+    if (notification) {
+      notification.close();
+    }
   });
 }
