@@ -336,6 +336,17 @@ async function main() {
     throw err;
   }
 
+  const gc = (global as { gc?: () => void }).gc;
+  if (typeof gc === "function") {
+    const gcInterval = setInterval(
+      () => {
+        gc();
+      },
+      5 * 60 * 1000,
+    );
+    gcInterval.unref();
+  }
+
   process.on("SIGTERM", () => beginShutdown("SIGTERM"));
   process.on("SIGINT", () => beginShutdown("SIGINT"));
   process.on("SIGHUP", () => beginShutdown("SIGHUP"));

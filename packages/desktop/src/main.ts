@@ -330,6 +330,10 @@ if (process.platform === "linux" && process.env.APPIMAGE) {
   app.commandLine.appendSwitch("no-sandbox");
 }
 
+// Makes gc() callable from the renderer for memory diagnostics.
+// Must run before app.whenReady().
+app.commandLine.appendSwitch("js-flags", "--expose-gc");
+
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
