@@ -14,6 +14,7 @@ interface NotificationClickPayload {
 }
 
 const activeNotifications = new Set<Notification>();
+const notificationsByAgentId = new Map<string, Notification>();
 
 function toTrimmedString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -109,9 +110,14 @@ export function registerNotificationHandlers(context: NotificationHandlerContext
     });
 
     activeNotifications.add(notification);
+    const agentId =
+      typeof data?.agentId === "string" && data.agentId.length > 0 ? data.agentId : null;
+    if (agentId) {
+      notificationsByAgentId.get(agentId)?.close();
+      notificationsByAgentId.set(agentId, notification);
+    }
 
     notification.on("click", () => {
-      const allWindows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
       const spaceId =
         typeof data?.spaceId === "string" && data.spaceId.length > 0 ? data.spaceId : null;
       const registry = context.getWindowRegistry();
@@ -120,7 +126,7 @@ export function registerNotificationHandlers(context: NotificationHandlerContext
         spaceWin ??
         context.getLastFocusedWindow() ??
         BrowserWindow.fromWebContents(event.sender) ??
-        allWindows[0] ??
+        BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
         null;
       if (focusWin && !focusWin.isDestroyed()) {
         focusWin.show();
@@ -129,20 +135,30 @@ export function registerNotificationHandlers(context: NotificationHandlerContext
         }
         focusWin.focus();
       }
-      if (data && Object.keys(data).length > 0) {
+      if (focusWin && !focusWin.isDestroyed() && data && Object.keys(data).length > 0) {
         const payload: NotificationClickPayload = { data };
-        for (const win of allWindows) {
-          win.webContents.send("paseo:event:notification-click", payload);
-        }
+        focusWin.webContents.send("paseo:event:notification-click", payload);
       }
       activeNotifications.delete(notification);
+      if (agentId) notificationsByAgentId.delete(agentId);
     });
 
     notification.on("close", () => {
       activeNotifications.delete(notification);
+      if (agentId) notificationsByAgentId.delete(agentId);
     });
 
     notification.show();
     return true;
+  });
+
+  ipcMain.handle("paseo:notification:dismiss", (_event, agentId: unknown) => {
+    if (typeof agentId !== "string" || agentId.length === 0) {
+      return;
+    }
+    const notification = notificationsByAgentId.get(agentId);
+    if (notification) {
+      notification.close();
+    }
   });
 }
