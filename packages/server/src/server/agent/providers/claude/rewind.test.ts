@@ -9,6 +9,25 @@ import {
 import { FakeClaudeSdk } from "./test-rewind-claude-sdk.js";
 
 describe("Claude rewind", () => {
+  test("passes configDir to forkSession for custom provider config dirs", async () => {
+    const claude = new FakeClaudeSdk();
+    let sessionId = "original-session";
+
+    await revertClaudeConversation({
+      sdk: claude,
+      sessionId,
+      messageId: "user-message-1",
+      configDir: "/custom/.claude",
+      setSessionId: (nextSessionId) => {
+        sessionId = nextSessionId;
+      },
+    });
+
+    expect(claude.recordedForks).toEqual([
+      { upToMessageId: "user-message-1", configDir: "/custom/.claude" },
+    ]);
+  });
+
   test("forks the conversation up to the user message", async () => {
     const claude = new FakeClaudeSdk();
     let sessionId = "original-session";
@@ -22,7 +41,9 @@ describe("Claude rewind", () => {
       },
     });
 
-    expect(claude.recordedForks).toEqual([{ upToMessageId: "user-message-1" }]);
+    expect(claude.recordedForks).toEqual([
+      { upToMessageId: "user-message-1", configDir: undefined },
+    ]);
     expect(sessionId).toBe("forked-session-1");
   });
 
@@ -40,7 +61,9 @@ describe("Claude rewind", () => {
       },
     });
 
-    expect(claude.recordedForks).toEqual([{ upToMessageId: "claude-jsonl-message-1" }]);
+    expect(claude.recordedForks).toEqual([
+      { upToMessageId: "claude-jsonl-message-1", configDir: undefined },
+    ]);
     expect(sessionId).toBe("forked-session-1");
   });
 
@@ -83,7 +106,9 @@ describe("Claude rewind", () => {
     });
 
     expect(claude.recordedFileRewinds).toEqual([{ userMessageId: "user-message-1" }]);
-    expect(claude.recordedForks).toEqual([{ upToMessageId: "user-message-1" }]);
+    expect(claude.recordedForks).toEqual([
+      { upToMessageId: "user-message-1", configDir: undefined },
+    ]);
     expect(sessionId).toBe("forked-before-rehydrate");
   });
 });

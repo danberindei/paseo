@@ -3,7 +3,7 @@ import { forkSession as claudeForkSession, type Query } from "@anthropic-ai/clau
 export interface ClaudeRewindSdk {
   forkSession(
     sessionId: string,
-    options: { upToMessageId: string },
+    options: { upToMessageId: string; configDir?: string },
   ): Promise<{ sessionId: string }>;
 }
 
@@ -17,6 +17,7 @@ export async function revertClaudeConversation(input: {
   messageId: string;
   resolveMessageId?: (messageId: string) => string | Promise<string>;
   setSessionId: (sessionId: string) => void;
+  configDir?: string;
 }): Promise<void> {
   if (!input.sessionId) {
     throw new Error("Claude session is not ready for rewind");
@@ -24,6 +25,7 @@ export async function revertClaudeConversation(input: {
   const messageId = (await input.resolveMessageId?.(input.messageId)) ?? input.messageId;
   const fork = await input.sdk.forkSession(input.sessionId, {
     upToMessageId: messageId,
+    configDir: input.configDir,
   });
   input.setSessionId(fork.sessionId);
 }
@@ -47,6 +49,7 @@ export async function revertClaudeConversationAndFiles(input: {
   messageId: string;
   resolveMessageId?: (messageId: string) => string | Promise<string>;
   setSessionId: (sessionId: string) => void;
+  configDir?: string;
 }): Promise<void> {
   await revertClaudeFiles({
     query: input.query,

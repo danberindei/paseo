@@ -2768,6 +2768,7 @@ class ClaudeAgentSession implements AgentSession {
       setSessionId: (sessionId) => {
         this.rebindConversationSession(sessionId);
       },
+      configDir: this.runtimeSettings?.env?.["CLAUDE_CONFIG_DIR"],
     });
   }
 

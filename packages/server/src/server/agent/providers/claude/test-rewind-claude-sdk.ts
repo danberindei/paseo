@@ -1,7 +1,7 @@
 import type { ClaudeRewindSdk } from "./rewind.js";
 
 export class FakeClaudeSdk implements ClaudeRewindSdk {
-  readonly recordedForks: Array<{ upToMessageId: string }> = [];
+  readonly recordedForks: Array<{ upToMessageId: string; configDir?: string }> = [];
   readonly recordedFileRewinds: Array<{ userMessageId: string }> = [];
 
   private nextSessionId = "forked-session-1";
@@ -12,9 +12,9 @@ export class FakeClaudeSdk implements ClaudeRewindSdk {
 
   async forkSession(
     _sessionId: string,
-    options: { upToMessageId: string },
+    options: { upToMessageId: string; configDir?: string },
   ): Promise<{ sessionId: string }> {
-    this.recordedForks.push({ upToMessageId: options.upToMessageId });
+    this.recordedForks.push({ upToMessageId: options.upToMessageId, configDir: options.configDir });
     return { sessionId: this.nextSessionId };
   }
 
