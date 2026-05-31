@@ -65,6 +65,7 @@ interface QuestionOptionRowProps {
   multiSelect: boolean;
   isResponding: boolean;
   onToggle: (qIndex: number, optIndex: number, multiSelect: boolean) => void;
+  onRef?: (qIndex: number, optIndex: number, el: View | null) => void;
 }
 
 function QuestionOptionRow({
@@ -75,7 +76,16 @@ function QuestionOptionRow({
   multiSelect,
   isResponding,
   onToggle,
+  onRef,
 }: QuestionOptionRowProps) {
+  const localRef = useRef<View | null>(null);
+  const refCallback = useCallback(
+    (el: View | null) => {
+      localRef.current = el;
+      onRef?.(qIndex, optIndex, el);
+    },
+    [onRef, qIndex, optIndex],
+  );
   const { theme } = useUnistyles();
 
   const handlePress = useCallback(() => {
@@ -123,6 +133,7 @@ function QuestionOptionRow({
 
   return (
     <Pressable
+      ref={refCallback}
       style={pressableStyle}
       onPress={handlePress}
       disabled={isResponding}
@@ -344,8 +355,32 @@ export function QuestionFormCard({
     [permission.request.input],
   );
   const containerRef = useRef<View | null>(null);
+  const optionRefsMap = useRef<Map<string, View>>(new Map());
 
-  const [selections, setSelections] = useState<Record<number, Set<number>>>({});
+  const setOptionRef = useCallback((qIndex: number, optIndex: number, el: View | null) => {
+    const key = `${qIndex}-${optIndex}`;
+    if (el) {
+      optionRefsMap.current.set(key, el);
+    } else {
+      optionRefsMap.current.delete(key);
+    }
+  }, []);
+
+  const focusOption = useCallback((qIndex: number, optIndex: number) => {
+    const el = optionRefsMap.current.get(`${qIndex}-${optIndex}`) as unknown as HTMLElement | null;
+    el?.focus();
+  }, []);
+
+  const [selections, setSelections] = useState<Record<number, Set<number>>>(() => {
+    if (!questions) return {};
+    const initial: Record<number, Set<number>> = {};
+    for (let i = 0; i < questions.length; i++) {
+      if (questions[i].options.length > 0) {
+        initial[i] = new Set([0]);
+      }
+    }
+    return initial;
+  });
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
   const [respondingAction, setRespondingAction] = useState<"submit" | "dismiss" | null>(null);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
@@ -458,20 +493,30 @@ export function QuestionFormCard({
     return current && current.size > 0 ? Math.min(...current) : -1;
   }, [selections]);
 
-  const handleNavigateOption = useCallback((index: number) => {
-    setSelections((prev) => ({ ...prev, [0]: new Set([index]) }));
-    setOtherTexts((prev) => {
-      if (!prev[0]) return prev;
-      const next = { ...prev };
-      delete next[0];
-      return next;
-    });
-  }, []);
+  const handleNavigateOption = useCallback(
+    (index: number) => {
+      setSelections((prev) => ({ ...prev, [0]: new Set([index]) }));
+      setOtherTexts((prev) => {
+        if (!prev[0]) return prev;
+        const next = { ...prev };
+        delete next[0];
+        return next;
+      });
+      focusOption(0, index);
+    },
+    [focusOption],
+  );
 
   const focusCard = useCallback(() => {
-    const element = containerRef.current as unknown as HTMLElement | null;
-    element?.focus();
-  }, []);
+    const selected = firstQuestionSelectedIndex >= 0 ? firstQuestionSelectedIndex : 0;
+    const el = optionRefsMap.current.get(`0-${selected}`) as unknown as HTMLElement | null;
+    if (el) {
+      el.focus();
+    } else {
+      const element = containerRef.current as unknown as HTMLElement | null;
+      element?.focus();
+    }
+  }, [firstQuestionSelectedIndex]);
 
   useEffect(() => {
     return registerShortcutTarget(permission.key, {
@@ -530,7 +575,15 @@ export function QuestionFormCard({
     return focusWithRetries({
       focus: () => {
         if (isActiveElementTextInputWithContent()) return;
-        element.focus();
+        const selectedIndex = selections[0]?.size ? Math.min(...selections[0]) : 0;
+        const optEl = optionRefsMap.current.get(
+          `0-${selectedIndex}`,
+        ) as unknown as HTMLElement | null;
+        if (optEl) {
+          optEl.focus();
+        } else {
+          element.focus();
+        }
       },
       isFocused: () => {
         if (isActiveElementTextInputWithContent()) return true;
@@ -538,7 +591,7 @@ export function QuestionFormCard({
         return active instanceof HTMLElement && element.contains(active);
       },
     });
-  }, [isShortcutTarget]);
+  }, [isShortcutTarget, selections]);
 
   const handleSelectQuestion = useCallback((index: number) => {
     setActiveQuestionIndex(index);
@@ -678,6 +731,7 @@ export function QuestionFormCard({
                   multiSelect={activeQuestion.multiSelect}
                   isResponding={isResponding}
                   onToggle={toggleOption}
+                  onRef={setOptionRef}
                 />
               ))}
             </View>
