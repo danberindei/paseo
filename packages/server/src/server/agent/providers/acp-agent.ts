@@ -598,6 +598,7 @@ export interface ACPProviderModeWriterContext {
   selection: ACPModeSelection;
   configOptions: SessionConfigOption[];
   logger: Logger;
+  runModeCommand: (commandText: string) => Promise<void>;
 }
 
 export interface ACPProviderModeWriteResult {
@@ -1455,6 +1456,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
   private currentMode: string | null = null;
+  private providerModeId: string | null = null;
   private availableModes: AgentMode[];
   private currentModel: string | null = null;
   private availableModels: AvailableACPModel[] | null = null;
@@ -1800,6 +1802,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       : { handled: false };
     if (providerResult.handled) {
       this.currentMode = providerResult.currentModeId ?? modeId;
+      this.providerModeId = providerResult.currentModeId ?? modeId;
       if (providerResult.configOptions) {
         this.configOptions = this.transformConfigOptions(providerResult.configOptions);
       }
@@ -1851,6 +1854,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (selection.hasAvailableModes) {
       await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
       this.currentMode = modeId;
+      this.providerModeId = null;
       this.pushEvent({
         type: "mode_changed",
         provider: this.provider,
@@ -1877,6 +1881,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modeId,
       label: "mode",
     });
+    this.providerModeId = null;
     this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
     this.pushEvent({
       type: "mode_changed",
@@ -1901,7 +1906,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       selection,
       configOptions: this.configOptions,
       logger: this.logger,
+      runModeCommand: (commandText) => this.runModeSlashCommand(commandText),
     };
+  }
+
+  private async runModeSlashCommand(commandText: string): Promise<void> {
+    if (!this.connection || !this.sessionId) {
+      throw new Error("ACP session not initialized");
+    }
+    if (this.activeForegroundTurnId) {
+      throw new Error("Cannot change mode while a turn is in progress");
+    }
+    const messageId = randomUUID();
+    await this.connection.prompt({
+      sessionId: this.sessionId,
+      messageId,
+      prompt: [{ type: "text", text: commandText }],
+    });
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -2262,8 +2283,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    const autopilotModeId = "https://agentclientprotocol.com/protocol/session-modes#autopilot";
     const canAutoAccept =
-      isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options);
+      this.currentMode === autopilotModeId ||
+      (isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options));
     if (canAutoAccept) {
       const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
       if (allowOption) {
@@ -2621,7 +2644,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
     this.availableModes = modeInfo.modes;
-    this.currentMode = modeInfo.currentModeId ?? this.currentMode;
+    this.currentMode = this.providerModeId ?? modeInfo.currentModeId ?? this.currentMode;
 
     this.availableModels = transformed.models?.availableModels ?? null;
     this.currentModel =
@@ -2855,7 +2878,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
-    this.currentMode = this.transformModeId(update.currentModeId);
+    this.currentMode = this.providerModeId ?? this.transformModeId(update.currentModeId);
   }
 
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
@@ -2866,7 +2889,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
 
     this.availableModes = modeInfo.modes;
-    this.currentMode = nextMode ?? this.currentMode;
+    this.currentMode = this.providerModeId ?? nextMode ?? this.currentMode;
     this.currentModel = nextModel ?? this.currentModel;
     this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
 

@@ -121,6 +121,11 @@ interface ACPConfiguredOverrideInternals {
       value: string;
     }) => Promise<unknown>;
     unstable_setSessionModel?: (input: { sessionId: string; modelId: string }) => Promise<void>;
+    prompt?: (input: {
+      sessionId: string;
+      messageId: string;
+      prompt: Array<{ type: string; text: string }>;
+    }) => Promise<unknown>;
   };
   configOptions: SessionConfigOption[];
   availableModes: Array<{ id: string; label: string; description?: string }>;
@@ -402,18 +407,21 @@ function prepareConfiguredOverrideSession(
   setSessionMode: ReturnType<typeof vi.fn>;
   unstableSetSessionModel: ReturnType<typeof vi.fn>;
   setSessionConfigOption: ReturnType<typeof vi.fn>;
+  prompt: ReturnType<typeof vi.fn>;
 } {
   const setSessionMode = vi.fn(async () => undefined);
   const unstableSetSessionModel = vi.fn(async () => undefined);
   const setSessionConfigOption = vi.fn(async () => ({
     configOptions: options.configOptions ?? [],
   }));
+  const prompt = vi.fn(async () => ({ stopReason: "end_turn" }));
   const internals = asInternals<ACPConfiguredOverrideInternals>(session);
   internals.sessionId = "session-1";
   internals.connection = {
     setSessionMode,
     setSessionConfigOption,
     unstable_setSessionModel: unstableSetSessionModel,
+    prompt,
     ...options.connection,
   };
   internals.availableModes = options.availableModes ?? [];
