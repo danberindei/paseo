@@ -22,7 +22,7 @@ import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-dr
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { useWorkspace, useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
@@ -327,7 +327,7 @@ function resolveImportPillPress(
   }
   return onOpenImportSheet ?? null;
 }
-
+// eslint-disable-next-line complexity
 export function WorkspaceDraftAgentTab({
   serverId,
   workspaceId,
@@ -343,6 +343,7 @@ export function WorkspaceDraftAgentTab({
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const workspace = useWorkspace(serverId, workspaceId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
     id: w.id,
@@ -366,6 +367,7 @@ export function WorkspaceDraftAgentTab({
     () => resolveOnlineServerIds({ isConnected, serverId }),
     [isConnected, serverId],
   );
+  const projectKey = workspace?.projectId ?? null;
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
@@ -383,12 +385,14 @@ export function WorkspaceDraftAgentTab({
       isVisible: true,
       onlineServerIds,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
+      projectKey,
     }),
     [
       draftInitialFeatureValues,
       draftInitialValues,
       draftWorkingDirectory,
       onlineServerIds,
+      projectKey,
       serverId,
     ],
   );
@@ -650,6 +654,9 @@ export function WorkspaceDraftAgentTab({
   const handleDropdownCloseFocus = useCallback(() => {
     focusInputRef.current?.();
   }, []);
+  const handleRequestFocusInput = useCallback(() => {
+    focusInputRef.current?.();
+  }, []);
   const importPillPress = resolveImportPillPress(onOpenImportSheet, isSubmitting);
   const composerAgentControls = useMemo(
     () => ({
@@ -675,7 +682,7 @@ export function WorkspaceDraftAgentTab({
               turnPresentation={turnPresentation}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
-              onRequestFocusInput={handleDropdownCloseFocus}
+              onRequestFocusInput={handleRequestFocusInput}
             />
           </View>
         ) : (

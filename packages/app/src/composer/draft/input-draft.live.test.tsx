@@ -42,12 +42,31 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     setModeFromUser: () => undefined,
     selectedModel: "",
     setModelFromUser: () => undefined,
+    savedModelId: null,
+    savedModeId: null,
+    persistSelectedPreferences: async () => undefined,
     selectedThinkingOptionId: "",
     setThinkingOptionFromUser: () => undefined,
     workingDir: "/repo",
     setWorkingDir: () => undefined,
     setWorkingDirFromUser: () => undefined,
-    providerDefinitions: [{ id: "codex", label: "Codex", modes: [{ id: "auto", label: "Auto" }] }],
+    providerDefinitions: [
+      {
+        id: "codex",
+        label: "Codex",
+        description: "Codex",
+        defaultModeId: "auto",
+        modes: [
+          {
+            id: "auto",
+            label: "Auto",
+            description: "Auto",
+            icon: "ShieldCheck",
+            colorTier: "moderate",
+          },
+        ],
+      },
+    ],
     providerDefinitionMap: new Map(),
     agentDefinition: undefined,
     modeOptions: [{ id: "auto", label: "Auto" }],
@@ -113,6 +132,7 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     setProviderAndModelFromUser: () => undefined,
     workingDirIsEmpty: false,
     persistFormPreferences: async () => undefined,
+    preferences: {},
   }),
 }));
 
@@ -134,6 +154,10 @@ beforeAll(async () => {
         },
       },
     },
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "__DEV__", {
+    value: false,
     configurable: true,
   });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
