@@ -17,6 +17,13 @@ const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
 const MAC_TRAFFIC_LIGHT_POSITION = { x: 16, y: 14 } as const;
 const MAX_TRAFFIC_LIGHT_OFFSET_Y = 10;
 
+interface WindowManagerContext {
+  mode: DesktopWindowChromeMode;
+  getWindowRegistry: () => Map<BrowserWindow, string | null>;
+  createMainWindow: (spaceId: string | null) => Promise<void>;
+  broadcastWindowsChanged: () => void;
+}
+
 export function readBadgeCount(input: unknown): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0) {
     return 0;
@@ -145,7 +152,7 @@ export function applyMacWindowControlsUpdate(input: {
   });
 }
 
-export function registerWindowManager(input: { mode: DesktopWindowChromeMode }): void {
+export function registerWindowManager(input: WindowManagerContext): void {
   ipcMain.handle("paseo:window:minimize", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
   });
@@ -211,6 +218,39 @@ export function registerWindowManager(input: { mode: DesktopWindowChromeMode }):
     if (input.mode === "native-mac") {
       applyMacWindowControlsUpdate({ win, update: nextUpdate });
     }
+  });
+
+  ipcMain.handle("paseo:window:openWithSpace", async (_event, spaceId?: unknown) => {
+    const normalizedSpaceId = typeof spaceId === "string" && spaceId.length > 0 ? spaceId : null;
+    for (const [win, boundSpaceId] of input.getWindowRegistry()) {
+      if (boundSpaceId !== normalizedSpaceId || win.isDestroyed()) {
+        continue;
+      }
+      win.show();
+      if (win.isMinimized()) {
+        win.restore();
+      }
+      win.focus();
+      return;
+    }
+
+    await input.createMainWindow(normalizedSpaceId);
+  });
+
+  ipcMain.handle("paseo:window:getOpenSpaceIds", () =>
+    Array.from(input.getWindowRegistry().values()),
+  );
+
+  ipcMain.handle("paseo:window:isSpaceInUse", (_event, spaceId?: unknown) => {
+    if (typeof spaceId !== "string") {
+      return false;
+    }
+    for (const boundSpaceId of input.getWindowRegistry().values()) {
+      if (boundSpaceId === spaceId) {
+        return true;
+      }
+    }
+    return false;
   });
 }
 

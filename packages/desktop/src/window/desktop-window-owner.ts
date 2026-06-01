@@ -15,6 +15,7 @@ interface DesktopWindowOwnerPort<TAgentTarget> {
   create(input: {
     initialRoute: string | null;
     restoreWindowState: boolean;
+    spaceId?: string | null;
     onCreated(webContentsId: number): void;
     onClosed(webContentsId: number): void;
   }): Promise<OwnedDesktopWindow<TAgentTarget>>;
@@ -28,8 +29,12 @@ export interface DesktopWindowOwner<TAgentTarget> {
   openPrimary(input?: {
     initialRoute?: string | null;
     pendingProjectPath?: string | null;
+    spaceId?: string | null;
   }): Promise<void>;
-  openAdditional(input?: { pendingProjectPath?: string | null }): Promise<void>;
+  openAdditional(input?: {
+    pendingProjectPath?: string | null;
+    spaceId?: string | null;
+  }): Promise<void>;
   openOrFocusAgent(target: TAgentTarget): Promise<void>;
   restoreWhenActivated(): Promise<void>;
   takePendingProject(webContentsId: number): string | null;
@@ -45,10 +50,12 @@ export function createDesktopWindowOwner<TAgentTarget>(
     initialRoute: string | null;
     pendingProjectPath: string | null;
     restoreWindowState: boolean;
+    spaceId: string | null;
   }): Promise<void> => {
     await port.create({
       initialRoute: input.initialRoute,
       restoreWindowState: input.restoreWindowState,
+      spaceId: input.spaceId,
       onCreated: (webContentsId) => pendingProjects.set(webContentsId, input.pendingProjectPath),
       onClosed: (webContentsId) => pendingProjects.delete(webContentsId),
     });
@@ -60,12 +67,14 @@ export function createDesktopWindowOwner<TAgentTarget>(
         initialRoute: input.initialRoute ?? null,
         pendingProjectPath: input.pendingProjectPath ?? null,
         restoreWindowState: true,
+        spaceId: input.spaceId ?? null,
       }),
     openAdditional: (input = {}) =>
       open({
         initialRoute: null,
         pendingProjectPath: input.pendingProjectPath ?? null,
         restoreWindowState: false,
+        spaceId: input.spaceId ?? null,
       }),
     async openOrFocusAgent(target) {
       const windows = port.windows();
