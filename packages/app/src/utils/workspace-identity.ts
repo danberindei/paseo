@@ -31,6 +31,38 @@ export function resolveWorkspaceRouteId(input: {
   return normalizeWorkspaceOpaqueId(input.routeWorkspaceId);
 }
 
+export function resolveWorkspaceIdByExecutionDirectory(input: {
+  workspaces: Iterable<WorkspaceDescriptor> | null | undefined;
+  workspaceDirectory: string | null | undefined;
+}): string | null {
+  const normalizedWorkspaceDirectory = normalizeWorkspacePath(input.workspaceDirectory);
+  if (!normalizedWorkspaceDirectory) {
+    return null;
+  }
+
+  let bestMatchId: string | null = null;
+  let bestMatchLength = -1;
+
+  for (const workspace of input.workspaces ?? []) {
+    const normalizedDir = normalizeWorkspacePath(workspace.workspaceDirectory);
+    if (!normalizedDir) {
+      continue;
+    }
+    if (normalizedWorkspaceDirectory === normalizedDir) {
+      return workspace.id;
+    }
+    if (
+      normalizedWorkspaceDirectory.startsWith(normalizedDir + "/") &&
+      normalizedDir.length > bestMatchLength
+    ) {
+      bestMatchId = workspace.id;
+      bestMatchLength = normalizedDir.length;
+    }
+  }
+
+  return bestMatchId;
+}
+
 export function resolveWorkspaceMapKeyByIdentity(input: {
   workspaces: Map<string, WorkspaceDescriptor> | null | undefined;
   workspaceId: string | null | undefined;
