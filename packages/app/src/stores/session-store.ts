@@ -40,6 +40,7 @@ import type {
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
+import { abbreviateOwnerInDisplayName } from "@/utils/project-display-name";
 import {
   normalizeWorkspaceOpaqueId,
   normalizeWorkspacePath,
@@ -142,7 +143,7 @@ export function normalizeWorkspaceDescriptor(
   return {
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
-    projectDisplayName: payload.projectDisplayName,
+    projectDisplayName: abbreviateOwnerInDisplayName(payload.projectDisplayName),
     projectCustomName: payload.projectCustomName ?? null,
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
     projectRootPath: payload.projectRootPath,
