@@ -4,6 +4,28 @@ import log from "electron-log/main";
 log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
+// electron-log's console transport writes to process.stdout/stderr via console.info
+// etc. When the parent process exits (terminal closed, smoke test parent gone), the
+// write fails with EIO or EPIPE. Electron surfaces unhandled stream errors as an
+// uncaught exception and shows the crash dialog.
+//
+// The try-catch below handles the synchronous path; the error-event handler handles
+// the async path (Node.js stream writes are asynchronous for pipe/socket targets, so
+// the error arrives via 'error' event rather than a thrown exception).
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EIO" && err.code !== "EPIPE") throw err;
+  });
+}
+const _origWriteFn = log.transports.console.writeFn.bind(log.transports.console);
+log.transports.console.writeFn = (obj) => {
+  try {
+    _origWriteFn(obj);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "EIO") throw err;
+  }
+};
+
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
