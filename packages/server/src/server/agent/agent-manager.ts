@@ -2794,9 +2794,19 @@ export class AgentManager {
 
     try {
       const result = await agent.session.respondToPermission(requestId, response);
-      const resolutionEvent =
-        agent.bufferedPermissionResolutions.get(requestId) ??
-        (await this.waitForPermissionResolution(agentId, requestId, resolutionWaiter));
+      let resolutionEvent: Extract<AgentStreamEvent, { type: "permission_resolved" }>;
+      try {
+        resolutionEvent =
+          agent.bufferedPermissionResolutions.get(requestId) ??
+          (await this.waitForPermissionResolution(agentId, requestId, resolutionWaiter));
+      } catch (error) {
+        // On timeout there is no permission_resolved event to dispatch, but the
+        // response was already sent to the session. Run the same state refresh
+        // finalize would, minus the missing event, so clients still observe the
+        // post-response state. Then re-throw so the caller sees the timeout.
+        await this.refreshStateAfterPermission(agent);
+        throw error;
+      }
 
       await this.finalizePermissionResolution(agent, resolutionEvent);
       return result;
@@ -3729,10 +3739,10 @@ export class AgentManager {
     await this.refreshRuntimeInfo(agent, options);
   }
 
-  private async finalizePermissionResolution(
-    agent: ActiveManagedAgent,
-    event: Extract<AgentStreamEvent, { type: "permission_resolved" }>,
-  ): Promise<void> {
+  // Refresh and emit agent state after a permission response settles. Shared by the
+  // resolved path (finalizePermissionResolution) and the timeout path, which has no
+  // permission_resolved event to dispatch but still needs clients to see fresh state.
+  private async refreshStateAfterPermission(agent: ActiveManagedAgent): Promise<void> {
     try {
       await this.refreshSessionState(agent);
     } catch {
@@ -3742,6 +3752,13 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     await this.persistSnapshot(agent);
     this.emitState(agent);
+  }
+
+  private async finalizePermissionResolution(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "permission_resolved" }>,
+  ): Promise<void> {
+    await this.refreshStateAfterPermission(agent);
     this.dispatchStream(agent.id, event);
   }
 
