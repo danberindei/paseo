@@ -112,8 +112,11 @@ describe("syncSkills", () => {
       ),
     ).toBe("roles content");
 
+    // claudeDir/<skill> is a symlink pointing at the real skill directory under
+    // agentsDir; the skill files are reachable through the link.
     const claudeSkillDir = path.join(sandbox.claudeDir, "paseo-committee");
-    expect((await fs.lstat(claudeSkillDir)).isDirectory()).toBe(true);
+    expect((await fs.lstat(claudeSkillDir)).isSymbolicLink()).toBe(true);
+    expect(await fs.readlink(claudeSkillDir)).toBe(path.join(sandbox.agentsDir, "paseo-committee"));
     expect(await fs.readFile(path.join(claudeSkillDir, "SKILL.md"), "utf-8")).toBe(
       "committee content",
     );

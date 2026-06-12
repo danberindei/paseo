@@ -194,24 +194,35 @@ async function ensureClaudeSkillLink(
     return 0;
   }
 
-  // Always rebuild the link rather than diffing it. fs.rm with force: true is
-  // a no-op when nothing is there, and matches existing install behavior.
-  // On Windows, `fs.rm` does not follow junctions, so the agents-side content
-  // is preserved.
-  await fs.rm(linkPath, { recursive: true, force: true });
+  // Only remove an existing symlink; refuse to delete a real file or directory
+  // so we never wipe user content. If the symlink already points at the target,
+  // there is nothing to rebuild and no change to report.
+  try {
+    const existing = await fs.lstat(linkPath);
+    if (!existing.isSymbolicLink()) {
+      throw new Error(`refusing to replace non-symlink at ${linkPath}`);
+    }
+    const currentTarget = await fs.readlink(linkPath).catch(() => null);
+    if (currentTarget === target) {
+      return 0;
+    }
+    await fs.rm(linkPath, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 
   if (platform === "win32") {
     try {
       // Junctions don't require Developer Mode / admin like regular symlinks do.
       await fs.symlink(target, linkPath, "junction");
-      return 0;
+      return 1;
     } catch {
       return await syncDirectoryFiles(target, linkPath);
     }
   }
 
   await fs.symlink(target, linkPath);
-  return 0;
+  return 1;
 }
 
 export async function removeSkill(skillName: string, targets: RemoveSkillTargets): Promise<void> {
@@ -256,7 +267,8 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
 
       processedSkills++;
     } catch (error) {
-      options.onSkillError?.(skillName, error);
+      if (!options.onSkillError) throw error;
+      options.onSkillError(skillName, error);
     }
   }
 
