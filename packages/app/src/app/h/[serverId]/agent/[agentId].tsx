@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useLocalSearchParams, useRouter, type Href } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useFetchQuery } from "@/data/query";
 import { resolveAgentRoute, type AgentRouteLookup } from "@/navigation/agent-route-resolution";
@@ -10,11 +10,16 @@ import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes"
 import { toErrorMessage } from "@/utils/error-messages";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 
+const SCREEN_OPTIONS = { gestureEnabled: false };
+
 export default function HostAgentReadyRoute() {
   return (
-    <HostRouteBootstrapBoundary>
-      <HostAgentReadyRouteContent />
-    </HostRouteBootstrapBoundary>
+    <>
+      <Stack.Screen options={SCREEN_OPTIONS} />
+      <HostRouteBootstrapBoundary>
+        <HostAgentReadyRouteContent />
+      </HostRouteBootstrapBoundary>
+    </>
   );
 }
 
