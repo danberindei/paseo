@@ -694,15 +694,12 @@ async function readProfile(
     if (!response.ok) throw new Error(`Claude profile API returned ${response.status}`);
     const profile = z
       .object({
-        account: z.object({ uuid: z.string().min(1), email: z.string().optional() }),
+        account: z.object({ uuid: z.string().min(1) }),
         organization: z.object({ uuid: z.string().min(1) }),
       })
       .parse(await response.json());
     const account = profile.account;
-    return {
-      key: `${account.uuid}.${profile.organization.uuid}`,
-      ...(account.email ? { label: account.email } : {}),
-    };
+    return { key: `${account.uuid}.${profile.organization.uuid}` };
   })();
   profileCache.set(tokenHash, { at: now(), result: request });
   try {

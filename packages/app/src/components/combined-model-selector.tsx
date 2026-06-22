@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -44,6 +44,7 @@ interface CombinedModelSelectorProps {
   onEditProfile?: (profileId: string) => void;
   renderTrigger?: (input: {
     selectedModelLabel: string;
+    isDanger: boolean;
     onPress: () => void;
     disabled: boolean;
     isOpen: boolean;
@@ -114,6 +115,16 @@ export function CombinedModelSelector({
     serverId,
   });
   const { prepareToOpen, reset } = browser;
+
+  const selectedIsDanger =
+    browser.getModelLabelColor({
+      provider: selectedProvider,
+      modelId: selectedModel,
+    }) === "danger";
+  const triggerTextStyle = useMemo(
+    () => (selectedIsDanger ? [styles.triggerText, styles.dangerLabel] : styles.triggerText),
+    [selectedIsDanger],
+  );
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -250,6 +261,7 @@ export function CombinedModelSelector({
           {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
             renderTrigger({
               selectedModelLabel: browser.triggerLabel,
+              isDanger: selectedIsDanger,
               onPress: handleTriggerPress,
               disabled,
               isOpen,
@@ -284,7 +296,7 @@ export function CombinedModelSelector({
               />
             </View>
           ) : null}
-          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={triggerTextStyle} numberOfLines={1} ellipsizeMode="tail">
             {browser.triggerLabel}
           </Text>
         </ComboboxTrigger>
@@ -350,6 +362,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+  },
+  dangerLabel: {
+    color: theme.colors.statusDanger,
   },
   // A custom trigger, such as a form field, owns its own box: none of the toolbar slot applies.
   customTriggerWrapper: {

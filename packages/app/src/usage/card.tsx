@@ -20,7 +20,7 @@ import type { TFunction } from "i18next";
 import { UsageBalanceBar } from "./balance-bar";
 import type { UsageDisplay } from "./display";
 import { formatAgo, formatProviderUsageLabel, formatUsageAccountName } from "./format";
-import { resolveUsageReport, type UsageRefresh } from "./model";
+import { resolveUsageReport, usageEntryName, type UsageRefresh } from "./model";
 import { useReportRefresh } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
 import type { UsageReport, UsageReportEntry, UsageWindow } from "./types";
@@ -76,6 +76,7 @@ export function UsageCard({
   const usage = entry.report;
   const status = statusText(usage, t);
   const collapsed = arrangement?.on === false;
+  const name = usageEntryName(entry);
   const report = resolveUsageReport(entry, t);
   const { planLabel, successfulAt, retained } = report;
 
@@ -103,14 +104,8 @@ export function UsageCard({
         ) : null}
         <UsageSourceIcon svg={entry.icon ?? null} size={14} />
         <Text style={styles.name} numberOfLines={1}>
-          {entry.sourceLabel}
+          {name}
         </Text>
-        {collapsed && entry.account.label ? (
-          // The body that names the account is gone, and two off cards of one source must differ.
-          <Text style={styles.collapsedAccount} numberOfLines={1}>
-            {entry.account.label}
-          </Text>
-        ) : null}
         {planLabel && !collapsed ? (
           <StatusBadge label={planLabel} variant="muted" size="xs" />
         ) : null}
@@ -123,7 +118,7 @@ export function UsageCard({
         ) : null}
         {refreshable && !collapsed ? (
           <UsageRefreshButton
-            sourceLabel={entry.sourceLabel}
+            name={name}
             successfulAt={successfulAt}
             retained={retained}
             refreshState={refreshState}
@@ -176,8 +171,8 @@ function UsageCardBody({
   refreshState: UsageRefresh;
 }) {
   const { t } = useTranslation();
+  const name = usageEntryName(entry);
   const { windows, balances, details, retained, successfulAt, forecastAt, messages } = report;
-  const footer = entry.account.label ?? null;
   return (
     <>
       {messages.length > 0 ? (
@@ -192,6 +187,7 @@ function UsageCardBody({
             <CardWindowBar
               key={window.id}
               entry={entry}
+              name={name}
               window={window}
               retained={retained}
               forecastAt={forecastAt}
@@ -220,19 +216,14 @@ function UsageCardBody({
         </View>
       ) : null}
 
-      {footer || showsFreshnessInline ? (
+      {showsFreshnessInline ? (
         <View style={styles.footerRow}>
-          <Text style={styles.footer} numberOfLines={1}>
-            {footer}
-          </Text>
-          {showsFreshnessInline ? (
-            <UsageFreshness
-              successfulAt={successfulAt}
-              retained={retained}
-              style={styles.freshness}
-              testID="usage-freshness"
-            />
-          ) : null}
+          <UsageFreshness
+            successfulAt={successfulAt}
+            retained={retained}
+            style={styles.freshness}
+            testID="usage-freshness"
+          />
         </View>
       ) : null}
 
@@ -264,6 +255,7 @@ function UsageCardDragHandle({ name, visible }: { name: string; visible: boolean
 
 function CardWindowBar({
   entry,
+  name,
   window,
   display,
   pinnable,
@@ -273,6 +265,7 @@ function CardWindowBar({
   retained: boolean;
   forecastAt: string | null;
   entry: UsageReportEntry;
+  name: string;
   window: UsageWindow;
   display: UsageDisplay;
   pinnable: boolean;
@@ -293,7 +286,7 @@ function CardWindowBar({
       pinnable={pinnable}
       pinned={display.isPinned(pin)}
       onTogglePin={toggle}
-      pinLabel={`${t("providerUsage.pin")} ${entry.sourceLabel} ${formatProviderUsageLabel(window.id, window.label, t)}`}
+      pinLabel={`${t("providerUsage.pin")} ${name} ${formatProviderUsageLabel(window.id, window.label, t)}`}
       pinTestID={`usage-pin-${entry.sourceId}-${window.id}`}
     />
   );
@@ -301,14 +294,14 @@ function CardWindowBar({
 
 /** Refreshes this one report. Its tooltip says when the report on screen was fetched. */
 function UsageRefreshButton({
-  sourceLabel,
+  name,
   successfulAt,
   retained,
   refreshState,
   onRefresh,
   compact,
 }: {
-  sourceLabel: string;
+  name: string;
   successfulAt: string | null;
   retained: boolean;
   refreshState: UsageRefresh;
@@ -331,7 +324,7 @@ function UsageRefreshButton({
   );
   return (
     <ToolbarButton
-      label={`${t("providerUsage.refresh")} ${sourceLabel}`}
+      label={`${t("providerUsage.refresh")} ${name}`}
       tooltip={freshness}
       tooltipSide="top"
       compact={compact}
@@ -434,11 +427,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
-  collapsedAccount: {
-    flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
   headerSpacer: {
     flex: 1,
   },
@@ -492,12 +480,8 @@ const styles = StyleSheet.create((theme) => ({
   footerRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "flex-end",
     gap: theme.spacing[2],
-  },
-  footer: {
-    flex: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
   },
   freshness: {
     flexShrink: 0,

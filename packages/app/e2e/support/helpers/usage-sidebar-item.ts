@@ -71,7 +71,7 @@ export function claudeAndCodexReports(): UsageReportEntry[] {
   return [
     {
       id: "claude:default",
-      account: { label: "dev@example.com" },
+      account: {},
       fetchedAt,
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -101,7 +101,7 @@ export function claudeAndCodexReports(): UsageReportEntry[] {
     },
     {
       id: "codex:default",
-      account: { label: "dev@example.com" },
+      account: {},
       fetchedAt,
       sourceId: "codex",
       sourceLabel: "Codex",

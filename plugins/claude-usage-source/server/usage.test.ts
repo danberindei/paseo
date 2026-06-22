@@ -668,7 +668,6 @@ it("discovery uses the credential token profile instead of stale Claude config",
       ),
     ).toEqual({
       key: "token-account.token-org",
-      label: "token@example.test",
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -692,13 +691,11 @@ it("Claude credentials without account metadata use a cached OAuth profile ident
     await accountFor(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup),
   ).toEqual({
     key: "account-uuid.org-uuid",
-    label: "test@example.com",
   });
   expect(
     await accountFor(credentialInput(lookup.claudeHome), fetchProfile, Date.now, lookup),
   ).toEqual({
     key: "account-uuid.org-uuid",
-    label: "test@example.com",
   });
   expect(calls).toBe(1);
 });
@@ -732,7 +729,7 @@ it("identifies the same credential route that fetch uses when oauthAccount is ab
       { claudeHome: directory, home: directory },
     );
     expect(profileRequested).toBe(true);
-    expect(account).toEqual({ key: "account-uuid.org-uuid", label: "owner@example.test" });
+    expect(account).toEqual({ key: "account-uuid.org-uuid" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1082,7 +1079,6 @@ it("session discovery reads only its Claude home and excludes foreign sessions",
     expect(accounts).toEqual([
       {
         key: "session-account.org",
-        label: "session@example.test",
         harness: "Claude",
         input: { ...credentialInput(home), accountKey: "session-account.org" },
       },

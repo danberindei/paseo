@@ -204,19 +204,20 @@ async function expectCardsToStreamIn(
   await shot("loading");
 
   first.open();
-  await expect(
-    usageCard(details, "claude:work").getByText("work@example.com", { exact: true }),
-  ).toBeVisible();
+  const claudeCard = usageCard(details, "claude:work");
+  await expect(claudeCard.getByText("Claude", { exact: true })).toBeVisible();
+  await expect(claudeCard.getByText("Session", { exact: true })).toBeVisible();
   await expect(details.getByText("Loading usage...", { exact: true })).toHaveCount(0);
   await expect(usageCard(details, "codex:work")).toHaveCount(0);
   await shot("streaming");
 
   second.open();
-  await expect(
-    usageCard(details, "codex:work").getByText("Session", { exact: true }),
-  ).toBeVisible();
+  const codexCard = usageCard(details, "codex:work");
+  await expect(codexCard.getByText("Codex", { exact: true })).toBeVisible();
+  await expect(codexCard.getByText("Session", { exact: true })).toBeVisible();
   // Only the agent's login, never the host's default one, and no pins.
-  await expect(details.getByText("dev@example.com", { exact: true })).toHaveCount(0);
+  await expect(usageCard(details, "claude:default")).toHaveCount(0);
+  await expect(usageCard(details, "codex:default")).toHaveCount(0);
   await expectUnpinnableRows(details);
   return details;
 }
@@ -247,7 +248,7 @@ async function expectOnlyContextWindowWithoutUsage(
   const details = await openDetails(page);
   await expect(details.getByText("25% used", { exact: true })).toBeVisible();
   await expect(details.getByText("Loading usage...", { exact: true })).toHaveCount(0);
-  await expect(details.getByText("work@example.com", { exact: true })).toHaveCount(0);
+  await expect(usageCard(details, "claude:work")).toHaveCount(0);
   await shot("unsupported");
 }
 
@@ -311,15 +312,15 @@ for (const theme of ["light", "dark"] as const) {
       });
       const card = await hoverContextWindowMeter(page);
       await expect(card.getByText("Loading usage...", { exact: true })).toBeVisible();
-      await expect(card.getByText("work@example.com", { exact: true })).toHaveCount(0);
+      await expect(usageCard(card, "claude:work")).toHaveCount(0);
 
       // The old login's report lands during the new request, before the new login's.
       slowSource.open();
       resumed.open();
       await expect(
-        usageCard(card, "claude:personal").getByText("personal@example.com", { exact: true }),
+        usageCard(card, "claude:personal").getByText("Claude", { exact: true }),
       ).toBeVisible();
-      await expect(card.getByText("work@example.com", { exact: true })).toHaveCount(0);
+      await expect(usageCard(card, "claude:work")).toHaveCount(0);
       finished.open();
     });
 

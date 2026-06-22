@@ -38,6 +38,14 @@ export function usageWindowRowLabel(input: {
   return `${input.pinLabel}, ${summary}`;
 }
 
+/**
+ * The name a report goes by: its account label when it has one, else its source label. One
+ * account logged in through two providers is two entries, each named for its provider.
+ */
+export function usageEntryName(entry: UsageReportEntry): string {
+  return entry.account.label ?? entry.sourceLabel;
+}
+
 /** The outcome of a user-requested usage refresh. */
 export type UsageRefresh = "idle" | "pending" | "failed";
 

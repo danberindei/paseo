@@ -683,6 +683,13 @@ read. See the [public file panel reference](../public-docs/plugins/reference.md#
 the author API, selection, `DocumentFrame`, and the version requirement. The examples live in
 `plugin-examples/pdf-panel` and `plugin-examples/markdown-panel`.
 
+## Contribute model label colors
+
+Keep model-label rules in the contributing plugin.
+The app's model browser and selected-model label share the
+[model label color contract](../public-docs/plugins/reference.md#model-label-colors).
+Subscriptions belong to the installation, so hiding sidebar UI does not stop model-color updates.
+
 ## Contribute buttons
 
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in

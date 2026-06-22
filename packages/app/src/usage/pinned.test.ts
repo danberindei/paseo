@@ -338,8 +338,8 @@ describe("resolvePinnedUsage", () => {
     );
 
     expect(items.map((item) => [item.label, item.percentText])).toEqual([
-      ["Claude (personal) 5-hour 10% used", "10%"],
-      ["Claude (work) 5-hour 90% used", "90%"],
+      ["personal 5-hour 10% used", "10%"],
+      ["work 5-hour 90% used", "90%"],
     ]);
   });
 });

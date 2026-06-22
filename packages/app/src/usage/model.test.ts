@@ -12,6 +12,7 @@ import {
   resolveUsageView,
   settleReports,
   upsertReport,
+  usageEntryName,
   usageWindowRowLabel,
   type UsageHost,
   type UsageQueryState,
@@ -178,6 +179,16 @@ describe("resolveUsageModalHostId", () => {
     expect(
       resolveUsageModalHostId({ pickedServerId: null, activeServerId: null, hosts: [] }),
     ).toBeNull();
+  });
+});
+
+describe("usageEntryName", () => {
+  it("reads the account label when the report has one", () => {
+    expect(usageEntryName({ ...entry({}), account: { label: "Codex Eng" } })).toBe("Codex Eng");
+  });
+
+  it("falls back to the source label when the account has none", () => {
+    expect(usageEntryName(entry({}))).toBe("Fixture source");
   });
 });
 

@@ -15,6 +15,9 @@ const runtime = {
   addComposerPill() {
     return { update() {}, remove() {} };
   },
+  addModelLabelColor() {
+    return () => {};
+  },
 } as unknown as PluginClientRuntime;
 
 function evaluatePluginClientBundle(id: string, source: string) {
@@ -30,6 +33,32 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("releases model label colors when setup fails or cleanup runs", async () => {
+    let active = 0;
+    const modelRuntime = {
+      ...runtime,
+      addModelLabelColor() {
+        active++;
+        return () => {
+          active--;
+        };
+      },
+    };
+    const registerColor = `plugin.addModelLabelColor({ id: "quota", getColor() { return "danger"; }, subscribe() { return function() {}; } });`;
+    expect(() =>
+      runPluginClientBundle(
+        "failed-colors",
+        bundle(`${registerColor} throw new Error("Setup failed")`),
+        modelRuntime,
+      ),
+    ).toThrow("Setup failed");
+    expect(active).toBe(0);
+    const plugin = runPluginClientBundle("colors", bundle(registerColor), modelRuntime);
+    expect(active).toBe(1);
+    await plugin.cleanup();
+    await plugin.cleanup();
+    expect(active).toBe(0);
+  });
   it("releases button registrations when client setup throws", () => {
     let active = 0;
     function addButton() {

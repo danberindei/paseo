@@ -4,6 +4,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useSettings } from "./settings/use-settings";
+import { useLocale } from "./locale";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginClientRuntime from "@getpaseo/plugin/client";
 import * as React from "react";
@@ -116,6 +117,7 @@ export type PluginClientRuntime = Pick<
   | "subscribe"
   | "addComposerPill"
   | "addHeaderButton"
+  | "addModelLabelColor"
 > & { hosts: ReturnType<typeof createPluginHosts> };
 
 // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
@@ -573,6 +575,19 @@ export function runPluginClientBundle(
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addHeaderButton(contribution));
     },
+    addModelLabelColor(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      const release = runtime.addModelLabelColor(contribution);
+      let active = true;
+      const remove = () => {
+        if (!active) return;
+        active = false;
+        removals.delete(remove);
+        release();
+      };
+      removals.add(remove);
+      return remove;
+    },
   };
   const runtimeRequire = (name: string): unknown => {
     // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
@@ -587,6 +602,7 @@ export function runPluginClientBundle(
         ...pluginClientRuntime,
         useSettings: (definition: import("@getpaseo/plugin").SettingsDefinition) =>
           useSettings(definition, id),
+        useLocale,
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
         useHosts: () =>

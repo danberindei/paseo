@@ -91,6 +91,8 @@ describe("toPluginTheme", () => {
         surface0: lightTheme.colors.surface0,
         surface1: lightTheme.colors.surface1,
         surface2: lightTheme.colors.surface2,
+        surfaceSidebar: lightTheme.colors.surfaceSidebar,
+        surfaceSidebarHover: lightTheme.colors.surfaceSidebarHover,
         border: lightTheme.colors.border,
         foreground: lightTheme.colors.foreground,
         foregroundMuted: lightTheme.colors.foregroundMuted,
@@ -99,7 +101,12 @@ describe("toPluginTheme", () => {
         statusSuccess: lightTheme.colors.statusSuccess,
         statusWarning: lightTheme.colors.statusWarning,
         statusDanger: lightTheme.colors.statusDanger,
+        statusMerged: lightTheme.colors.statusMerged,
       },
+      spacing: lightTheme.spacing,
+      borderRadius: { lg: lightTheme.borderRadius.lg, full: lightTheme.borderRadius.full },
+      fontSize: { sm: lightTheme.fontSize.sm },
+      fontWeight: { medium: lightTheme.fontWeight.medium },
     });
   });
 });

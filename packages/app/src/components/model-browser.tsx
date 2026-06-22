@@ -11,6 +11,7 @@ import {
   type GestureResponderEvent,
   type PressableStateCallbackType,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import {
@@ -52,6 +53,8 @@ import {
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
+import type { PluginModelLabelColorContribution } from "@getpaseo/plugin/client";
+import { useModelLabelColor } from "@/plugins/model-labels/use-model-label-color";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -200,6 +203,7 @@ export interface ModelBrowserState {
   selectedProvider: string;
   selectedModel: string;
   profiles: AgentProfilePicker | null;
+  getModelLabelColor: PluginModelLabelColorContribution["getColor"];
   view: ModelBrowserView;
   searchQuery: string;
   isSearchFocused: boolean;
@@ -242,6 +246,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   searchQuery: string;
   isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
+  getModelLabelColor: PluginModelLabelColorContribution["getColor"];
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
   searchAllOnFocus: boolean;
@@ -431,12 +436,15 @@ export function useModelBrowser({
     [providers, view],
   );
 
+  const getModelLabelColor = useModelLabelColor(serverId);
+
   return {
     serverId,
     providers,
     selectedProvider,
     selectedModel,
     profiles,
+    getModelLabelColor,
     view,
     searchQuery,
     isSearchFocused,
@@ -570,6 +578,7 @@ function ModelBrowserRow({
   spacing = "model",
   onPress,
   testID,
+  labelStyle,
 }: {
   label: string;
   description?: string;
@@ -583,6 +592,7 @@ function ModelBrowserRow({
   spacing?: "model" | "provider";
   onPress: () => void;
   testID?: string;
+  labelStyle?: StyleProp<TextStyle>;
 }) {
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -614,7 +624,7 @@ function ModelBrowserRow({
         <View style={contentStyle}>
           <Text
             numberOfLines={1}
-            style={labelMuted ? styles.browserRowLabelMuted : styles.browserRowLabel}
+            style={[labelMuted ? styles.browserRowLabelMuted : styles.browserRowLabel, labelStyle]}
           >
             {label}
           </Text>
@@ -682,6 +692,7 @@ function ModelRow({
   serverId,
   isSelected,
   showProviderLabel = false,
+  isDanger = false,
   onPress,
   profiledRows,
   onCreateProfile,
@@ -692,6 +703,7 @@ function ModelRow({
   serverId: string | null;
   isSelected: boolean;
   showProviderLabel?: boolean;
+  isDanger?: boolean;
   onPress: () => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -813,7 +825,10 @@ function ModelRow({
         <View style={styles.browserRowContent}>
           <View style={styles.browserRowLeading}>{leadingSlot}</View>
           <View style={[styles.browserRowText, description && styles.browserRowTextInline]}>
-            <Text numberOfLines={1} style={styles.browserRowLabel}>
+            <Text
+              numberOfLines={1}
+              style={[styles.browserRowLabel, isDanger ? styles.browserRowLabelDanger : undefined]}
+            >
               {row.modelLabel}
             </Text>
             {description ? (
@@ -848,6 +863,7 @@ function SelectableModelRow({
   serverId,
   isSelected,
   showProviderLabel,
+  isDanger,
   onSelect,
   profiledRows,
   onCreateProfile,
@@ -858,6 +874,7 @@ function SelectableModelRow({
   serverId: string | null;
   isSelected: boolean;
   showProviderLabel?: boolean;
+  isDanger?: boolean;
   onSelect: (provider: string, modelId: string) => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -873,6 +890,7 @@ function SelectableModelRow({
       serverId={serverId}
       isSelected={isSelected}
       showProviderLabel={showProviderLabel}
+      isDanger={isDanger}
       onPress={handlePress}
       profiledRows={profiledRows}
       onCreateProfile={onCreateProfile}
@@ -1157,6 +1175,7 @@ function ModelRowList({
   selectedProvider,
   selectedModel,
   onSelect,
+  getModelLabelColor,
   showProviderLabel = false,
   header,
   scrolling,
@@ -1170,6 +1189,7 @@ function ModelRowList({
   selectedProvider: string;
   selectedModel: string;
   onSelect: (provider: string, modelId: string) => void;
+  getModelLabelColor: PluginModelLabelColorContribution["getColor"];
   showProviderLabel?: boolean;
   header?: React.ReactElement;
   scrolling: "sheet" | "independent";
@@ -1186,6 +1206,9 @@ function ModelRowList({
         serverId={serverId}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
         showProviderLabel={showProviderLabel}
+        isDanger={
+          getModelLabelColor({ provider: item.provider, modelId: item.modelId }) === "danger"
+        }
         onSelect={onSelect}
         profiledRows={profiledLookup.get(`${item.provider}:${item.modelId}`) ?? []}
         onCreateProfile={onCreateProfile}
@@ -1199,6 +1222,7 @@ function ModelRowList({
       onCreateProfile,
       onSelect,
       profiledLookup,
+      getModelLabelColor,
       selectedModel,
       selectedProvider,
       serverId,
@@ -1282,6 +1306,7 @@ function ProviderModelBrowserContent({
   selectedProvider,
   selectedModel,
   normalizedQuery,
+  getModelLabelColor,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1300,6 +1325,7 @@ function ProviderModelBrowserContent({
   selectedProvider: string;
   selectedModel: string;
   normalizedQuery: string;
+  getModelLabelColor: PluginModelLabelColorContribution["getColor"];
   onSelect: (provider: string, modelId: string) => void;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
@@ -1371,6 +1397,7 @@ function ProviderModelBrowserContent({
       selectedProvider={selectedProvider}
       selectedModel={selectedModel}
       onSelect={onSelect}
+      getModelLabelColor={getModelLabelColor}
       header={profileHeader}
       scrolling={scrolling}
       profiledLookup={profiledLookup}
@@ -1390,6 +1417,7 @@ function ModelBrowserContent({
   searchQuery,
   isSearchFocused,
   profiles,
+  getModelLabelColor,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1437,6 +1465,7 @@ function ModelBrowserContent({
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         normalizedQuery={normalizedQuery}
+        getModelLabelColor={getModelLabelColor}
         onSelect={onSelect}
         onApplyProfile={onApplyProfile}
         onEditProfiles={onEditProfiles}
@@ -1470,6 +1499,7 @@ function ModelBrowserContent({
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         onSelect={onSelect}
+        getModelLabelColor={getModelLabelColor}
         showProviderLabel
         scrolling={scrolling}
         profiledLookup={profiledLookup}
@@ -1551,6 +1581,7 @@ export function ModelBrowser({
       searchQuery={state.searchQuery}
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
+      getModelLabelColor={state.getModelLabelColor}
       onSelect={onSelect}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}
@@ -1650,6 +1681,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     flexShrink: 0,
+  },
+  browserRowLabelDanger: {
+    color: theme.colors.statusDanger,
   },
   browserRowLabelMuted: {
     fontSize: theme.fontSize.base,

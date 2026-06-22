@@ -173,6 +173,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     enabled: isConnected && isSupported && setting.enabled,
     dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
+    refetchInterval: 30_000,
   });
   const mutation = useMutation({
     mutationKey: [...usageReportsQueryKey(serverId), "refresh"],

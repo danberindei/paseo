@@ -1,12 +1,7 @@
 import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
-import {
-  formatPct,
-  formatDisplayPct,
-  formatProviderUsageLabel,
-  formatUsageAccountName,
-} from "./format";
-import { displayPercent, resolveUsageSnapshot } from "./model";
+import { formatPct, formatDisplayPct, formatProviderUsageLabel } from "./format";
+import { displayPercent, resolveUsageSnapshot, usageEntryName } from "./model";
 import { effectiveUsagePins, usageReportsOn, type UsagePreferences } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageReportEntry, UsageTone } from "./types";
@@ -100,7 +95,7 @@ export function choosePinnedUsageLayout(input: {
 }
 
 function describe(entry: UsageReportEntry, windowLabel: string): string {
-  return `${formatUsageAccountName(entry)} ${windowLabel}`;
+  return `${usageEntryName(entry)} ${windowLabel}`;
 }
 
 /**

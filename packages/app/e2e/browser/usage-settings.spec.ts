@@ -28,7 +28,7 @@ function report(input: {
 }): UsageReportEntry {
   return {
     id: `${input.sourceId}:account`,
-    account: { label: input.sourceId === "alpha" ? "dev@example.com" : undefined },
+    account: {},
     fetchedAt: "2026-01-01T00:00:00.000Z",
     sourceId: input.sourceId,
     sourceLabel: input.sourceLabel,
@@ -91,7 +91,6 @@ test.describe("usage settings", () => {
 
     const card = page.getByTestId("usage-card");
     await expect(card.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(card.getByText("dev@example.com", { exact: true })).toBeVisible();
     await expect(card.getByText("Beta plan", { exact: true })).toBeVisible();
     await expect(card.getByText("70% used")).toBeVisible();
     await expect(card.getByText("1,234 left", { exact: true })).toBeVisible();

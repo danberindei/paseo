@@ -21,6 +21,7 @@ export type {
   PluginWorkspaceRowBadgeItemProps,
   PluginWorkspaceRowBadgeItemContribution,
   PluginIcon,
+  PluginModelLabelColorContribution,
   PluginPanelLocation,
   PluginOpenPanelOptions,
   PluginWorkspacePanelProps,
@@ -120,6 +121,7 @@ export interface PluginHostSummary {
 }
 /** Live configured hosts. Supplied by the app's client bundle loader. */
 export declare function useHosts(): readonly PluginHostSummary[];
+export declare function useLocale(): string;
 /** Borrow an online host's API under this installation's lifetime. */
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */

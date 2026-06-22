@@ -9,6 +9,8 @@ export interface PluginTheme {
     readonly surface0: string;
     readonly surface1: string;
     readonly surface2: string;
+    readonly surfaceSidebar: string;
+    readonly surfaceSidebarHover: string;
     readonly border: string;
     readonly foreground: string;
     readonly foregroundMuted: string;
@@ -17,7 +19,12 @@ export interface PluginTheme {
     readonly statusSuccess: string;
     readonly statusWarning: string;
     readonly statusDanger: string;
+    readonly statusMerged: string;
   };
+  readonly spacing: Readonly<Record<number, number>>;
+  readonly borderRadius: { readonly lg: number; readonly full: number };
+  readonly fontSize: { readonly sm: number };
+  readonly fontWeight: { readonly medium: "500" };
 }
 
 export type WorkspaceIndicator = "needs_input" | "failed" | "running" | "attention" | "done";

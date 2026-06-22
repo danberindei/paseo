@@ -177,11 +177,7 @@ export function onPersonalLogin(report: UsageReportEntry): UsageReportEntry {
 }
 
 function onLogin(report: UsageReportEntry, login: string): UsageReportEntry {
-  return {
-    ...report,
-    id: `${report.sourceId}:${login}`,
-    account: { label: `${login}@example.com` },
-  };
+  return { ...report, id: `${report.sourceId}:${login}` };
 }
 
 export function expiredLogin(report: UsageReportEntry): UsageReportEntry {

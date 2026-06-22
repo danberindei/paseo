@@ -908,7 +908,7 @@ export default function contribute(client: PluginClientContext) {
 
 | Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `theme`      | Typed `PluginTheme` color and sizing tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                                                                                                                                              |
@@ -1393,6 +1393,19 @@ not import `lucide-react-native` or `react-native-svg`.
 
 An unknown name or an SVG that breaks a rule renders nothing.
 
+## Model label colors
+
+Register `client.addModelLabelColor({ id, getColor, subscribe })` from `index.client.tsx`.
+`getColor({ provider, modelId })` returns `"danger"` to use `statusDanger`, or `null` to keep the
+ordinary label color. The contribution applies to the model browser and selected-model label on
+the plugin's host. A danger result from any contribution wins.
+
+`subscribe(listener)` returns a function that releases the subscription. Call the listener when
+your data changes, so model rows update. Keep data fetching and subscriptions independent of
+sidebar components; users can hide them while continuing to select models.
+The registration returns an idempotent remover, and plugin cleanup releases it automatically.
+Disconnected hosts use ordinary label colors. A failed color callback is logged and skipped.
+
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both
@@ -1505,25 +1518,35 @@ Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. 
 
 Recreate styles when `theme` or `layout.compact` changes.
 
-| Key                             | Required for               | Use it for                          |
-| ------------------------------- | -------------------------- | ----------------------------------- |
-| `theme.colors.foreground`       | Every primary `Text`       | Titles and body copy                |
-| `theme.colors.foregroundMuted`  | Secondary `Text`           | Labels and supporting copy          |
-| `theme.colors.surface0`         | Root view                  | Panel background                    |
-| `theme.colors.surface1`         | Raised surfaces            | Cards and panels                    |
-| `theme.colors.surface2`         | Control surfaces           | Inputs and secondary controls       |
-| `theme.colors.border`           | Surface boundaries         | Borders and dividers                |
-| `theme.colors.accent`           | Primary action fills       | Buttons and selected states         |
-| `theme.colors.accentForeground` | Text on an accent fill     | Button labels                       |
-| `theme.colors.statusSuccess`    | Success feedback           | Success messages and indicators     |
-| `theme.colors.statusWarning`    | Warning feedback           | Warning messages and indicators     |
-| `theme.colors.statusDanger`     | Failure copy               | Error messages and destructive text |
-| `layout.compact`                | Padding and stacking       | `true` on mobile and narrow windows |
-| `layout.platform`               | Platform-specific behavior | `ios`, `android`, or `web`          |
+| Key                                 | Required for               | Use it for                          |
+| ----------------------------------- | -------------------------- | ----------------------------------- |
+| `theme.colors.foreground`           | Every primary `Text`       | Titles and body copy                |
+| `theme.colors.foregroundMuted`      | Secondary `Text`           | Labels and supporting copy          |
+| `theme.colors.surface0`             | Root view                  | Panel background                    |
+| `theme.colors.surface1`             | Raised surfaces            | Cards and panels                    |
+| `theme.colors.surface2`             | Control surfaces           | Inputs and secondary controls       |
+| `theme.colors.border`               | Surface boundaries         | Borders and dividers                |
+| `theme.colors.accent`               | Primary action fills       | Buttons and selected states         |
+| `theme.colors.accentForeground`     | Text on an accent fill     | Button labels                       |
+| `theme.colors.statusSuccess`        | Success feedback           | Success messages and indicators     |
+| `theme.colors.statusWarning`        | Warning feedback           | Warning messages and indicators     |
+| `theme.colors.statusDanger`         | Failure copy               | Error messages and destructive text |
+| `theme.colors.statusMerged`         | Merged or surplus states   | Purple status text                  |
+| `theme.colors.surfaceSidebar`       | Sidebar surfaces           | Sidebar backgrounds                 |
+| `theme.colors.surfaceSidebarHover`  | Sidebar hover states       | Hovered sidebar controls            |
+| `theme.spacing`                     | Spacing                    | Numeric spacing tokens              |
+| `theme.borderRadius.lg` and `.full` | Rounded surfaces           | Cards and circular controls         |
+| `theme.fontSize.sm`                 | Small text                 | Compact status values               |
+| `theme.fontWeight.medium`           | Medium weight              | Compact status values               |
+| `layout.compact`                    | Padding and stacking       | `true` on mobile and narrow windows |
+| `layout.platform`                   | Platform-specific behavior | `ios`, `android`, or `web`          |
 
 Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary copy uses `foreground`. Labels use `foregroundMuted`. Tighten padding when `layout.compact` is true.
 
 Workspace and agent panels receive the same `theme`, `layout`, and optional `navigation` fields.
+
+`useLocale()` from `@getpaseo/plugin/client` returns the app's language and updates when it changes.
+Use it for localized number formatting and your plugin's translations.
 
 ## Contribute a theme
 

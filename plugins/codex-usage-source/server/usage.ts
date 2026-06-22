@@ -277,7 +277,7 @@ function claimString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; label?: string } {
+function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string } {
   const access = jwtClaims(auth.token);
   const id = jwtClaims(auth.idToken);
   const accessAuth = claimObject(access, "https://api.openai.com/auth");
@@ -287,13 +287,7 @@ function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; lab
     claimString(accessAuth?.["chatgpt_account_id"]) ??
     claimString(access?.["chatgpt_account_id"]) ??
     claimString(idAuth?.["chatgpt_account_id"]);
-
-  const label =
-    claimString(claimObject(access, "https://api.openai.com/profile")?.["email"]) ??
-    claimString(access?.["email"]) ??
-    claimString(claimObject(id, "https://api.openai.com/profile")?.["email"]) ??
-    claimString(id?.["email"]);
-  return { key: key ?? hashAccountKey(JSON.stringify(input.route)), ...(label ? { label } : {}) };
+  return { key: key ?? hashAccountKey(JSON.stringify(input.route)) };
 }
 
 function harnessLabel(input: CodexUsageInput): string {

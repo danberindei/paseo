@@ -68,6 +68,7 @@ export interface SelectFieldTriggerProps {
   display?: SelectFieldDisplay | null;
   label?: string;
   isPlaceholder?: boolean;
+  danger?: boolean;
   placeholder: string;
   hovered?: boolean;
   focused?: boolean;
@@ -119,6 +120,7 @@ export function SelectFieldTrigger({
   display,
   label: explicitLabel,
   isPlaceholder: explicitIsPlaceholder,
+  danger = false,
   placeholder,
   hovered = false,
   focused = false,
@@ -150,8 +152,12 @@ export function SelectFieldTrigger({
   const label = explicitLabel ?? display?.label ?? placeholder;
   const isPlaceholder = explicitIsPlaceholder ?? display == null;
   const textStyle = useMemo(
-    () => [isPlaceholder ? styles.placeholderText : styles.triggerText, textSizeStyle],
-    [isPlaceholder, textSizeStyle],
+    () => [
+      isPlaceholder ? styles.placeholderText : styles.triggerText,
+      !isPlaceholder && danger ? styles.triggerTextDanger : undefined,
+      textSizeStyle,
+    ],
+    [danger, isPlaceholder, textSizeStyle],
   );
 
   return (
@@ -373,6 +379,9 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
       color: theme.colors.foreground,
+    },
+    triggerTextDanger: {
+      color: theme.colors.statusDanger,
     },
     placeholderText: {
       flex: 1,

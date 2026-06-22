@@ -188,7 +188,7 @@ test("auth account claim survives token rotation", async () => {
   });
 });
 
-test("discovery reads an email label from auth id_token when access token has no profile", async () => {
+test("discovery ignores the id_token email when the access token has no profile", async () => {
   const home = await mkdtemp(join(tmpdir(), "usage-codex-label-"));
   try {
     process.env["CODEX_HOME"] = home;
@@ -201,7 +201,6 @@ test("discovery reads an email label from auth id_token when access token has no
     );
     expect(await accountFor(authInput(home))).toEqual({
       key: "account-id",
-      label: "id-owner@example.test",
     });
   } finally {
     await rm(home, { recursive: true, force: true });

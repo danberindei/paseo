@@ -666,12 +666,14 @@ function ScheduleTargetFields({
   const renderModelTrigger = useCallback(
     ({
       selectedModelLabel,
+      isDanger,
       disabled,
       isOpen,
       hovered,
       pressed,
     }: {
       selectedModelLabel: string;
+      isDanger: boolean;
       onPress: () => void;
       disabled: boolean;
       isOpen: boolean;
@@ -683,6 +685,7 @@ function ScheduleTargetFields({
         <SelectFieldTrigger
           label={displayLabel}
           isPlaceholder={!state.selectedModel}
+          danger={isDanger}
           placeholder={displayLabel}
           leading={modelTriggerLeading}
           disabled={disabled}

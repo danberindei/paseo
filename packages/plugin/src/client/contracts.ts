@@ -154,6 +154,12 @@ export type PluginIcon<Props extends PluginIconProps = PluginIconProps> =
   | PluginSerializableIcon
   | ComponentType<Props>;
 
+export interface PluginModelLabelColorContribution {
+  id: string;
+  getColor(input: { provider: string; modelId: string }): "danger" | null;
+  subscribe(listener: () => void): () => void;
+}
+
 export type PluginPanelLocation = "workspace" | "explorer";
 
 export interface PluginOpenPanelOptions {
@@ -258,6 +264,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
+  addModelLabelColor(contribution: PluginModelLabelColorContribution): () => void;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;
