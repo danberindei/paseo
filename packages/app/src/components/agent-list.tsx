@@ -205,6 +205,27 @@ function SessionRowTrailingAttention({
   );
 }
 
+function formatStatusLabel(t: TFunction, status: AggregatedAgent["status"]): string {
+  switch (status) {
+    case "initializing":
+      return t("agentList.status.initializing");
+    case "idle":
+      return t("agentList.status.idle");
+    case "running":
+      return t("agentList.status.running");
+    case "error":
+      return t("agentList.status.error");
+    case "closed":
+      return t("agentList.status.closed");
+    default:
+      return status;
+  }
+}
+
+function statusBadgeTone(status: AggregatedAgent["status"]): "neutral" | "danger" {
+  return status === "error" ? "danger" : "neutral";
+}
+
 function SessionRow({
   agent,
   searchMatches,
@@ -232,6 +253,7 @@ function SessionRow({
   const projectName = agent.projectPlacement?.projectName ?? "";
   const branch = agent.projectPlacement?.checkout.currentBranch ?? "";
   const workspaceName = agent.projectPlacement?.workspaceName ?? "";
+  const statusLabel = formatStatusLabel(t, agent.status);
   const ProviderIcon = getProviderIcon(agent.provider);
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
   const rangesFor = useCallback(
@@ -291,6 +313,7 @@ function SessionRow({
             style={sessionTitleStyle}
             numberOfLines={1}
           />
+          <SessionBadge label={statusLabel} tone={statusBadgeTone(agent.status)} />
           <SessionRowBadges
             agent={agent}
             archivedIcon={archivedIcon}
