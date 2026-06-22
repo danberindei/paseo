@@ -19,6 +19,24 @@ export const ApiOptionalStringSchema = z.preprocess(
   z.coerce.string().optional(),
 );
 
+// Resolve the first non-empty value for any of `keys`, preferring the
+// per-provider env (so a custom provider that sets CLAUDE_CONFIG_DIR/ZAI_API_KEY
+// in its config is honored) and falling back to the daemon's process env.
+export function resolveProviderEnv(
+  env: Record<string, string> | undefined,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = env?.[key];
+    if (value) return value;
+  }
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value) return value;
+  }
+  return undefined;
+}
+
 export function fetchProviderApi(
   fetchApi: ProviderApiFetch,
   input: RequestInfo | URL,

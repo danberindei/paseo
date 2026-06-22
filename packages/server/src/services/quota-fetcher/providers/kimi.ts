@@ -4,11 +4,16 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage, ProviderUsageWindow } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
 import {
   ApiNumberSchema,
   ApiOptionalStringSchema,
   fetchProviderApi,
+  resolveProviderEnv,
   toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
@@ -253,17 +258,22 @@ interface KimiQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
   homeDir?: string;
+  context?: ProviderUsageFetcherContext;
 }
 
 export class KimiQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "kimi";
-  readonly displayName = "Kimi";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
   private readonly homeDir?: string;
+  private readonly env: Record<string, string> | undefined;
 
   constructor(options: KimiQuotaProviderOptions) {
+    this.providerId = options.context?.providerId ?? "kimi";
+    this.displayName = options.context?.displayName ?? "Kimi";
+    this.env = options.context?.env;
     this.logger = options.logger.child({ module: "kimi-quota-provider" });
     this.fetchApi = options.fetch ?? fetch;
     this.homeDir = options.homeDir;
@@ -305,7 +315,7 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCredentials(): Promise<KimiCredentials | null> {
-    const environmentToken = process.env["KIMI_TOKEN"] || process.env["KIMI_API_KEY"];
+    const environmentToken = resolveProviderEnv(this.env, ["KIMI_TOKEN", "KIMI_API_KEY"]);
     if (environmentToken) {
       return { access_token: environmentToken };
     }
@@ -323,7 +333,7 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
     const homeDir = this.homeDir ?? homedir();
     return [
       join(
-        process.env["KIMI_CODE_HOME"] || join(homeDir, ".kimi-code"),
+        resolveProviderEnv(this.env, ["KIMI_CODE_HOME"]) || join(homeDir, ".kimi-code"),
         "credentials",
         "kimi-code.json",
       ),

@@ -4,8 +4,17 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage, ProviderUsageDetail } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
-import { ApiOptionalStringSchema, fetchProviderApi, unavailableUsage } from "../usage.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
+import {
+  ApiOptionalStringSchema,
+  fetchProviderApi,
+  resolveProviderEnv,
+  unavailableUsage,
+} from "../usage.js";
 
 const CopilotUsageResponseSchema = z.object({
   copilot_plan: ApiOptionalStringSchema,
@@ -15,6 +24,7 @@ const CopilotUsageResponseSchema = z.object({
 interface CopilotQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  context?: ProviderUsageFetcherContext;
 }
 
 async function readGithubCliToken(): Promise<string | null> {
@@ -38,22 +48,24 @@ async function readGithubCliToken(): Promise<string | null> {
 }
 
 export class CopilotQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "copilot";
-  readonly displayName = "GitHub Copilot";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly env: Record<string, string> | undefined;
 
   constructor(options: CopilotQuotaProviderOptions) {
+    this.providerId = options.context?.providerId ?? "copilot";
+    this.displayName = options.context?.displayName ?? "GitHub Copilot";
+    this.env = options.context?.env;
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
     const token =
-      process.env["COPILOT_TOKEN"] ||
-      process.env["GITHUB_TOKEN"] ||
-      process.env["GITHUB_PAT"] ||
+      resolveProviderEnv(this.env, ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"]) ||
       (await readGithubCliToken());
 
     if (!token) return unavailableUsage(this);

@@ -110,6 +110,7 @@ import {
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./websocket/physical-socket.js";
+import { createProviderUsageFetchers } from "../services/quota-fetcher/manifest.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -735,6 +736,11 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      resolveFetchers: () =>
+        createProviderUsageFetchers({
+          logger: this.logger,
+          targets: this.providerSnapshotManager.getProviderUsageTargets(),
+        }),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);

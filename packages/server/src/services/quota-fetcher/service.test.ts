@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
+import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderUsageFetcher } from "./provider.js";
 import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
@@ -344,6 +345,86 @@ describe("ProviderUsageService", () => {
         },
       ],
     });
+  });
+});
+
+describe("config-aware provider usage fetchers", () => {
+  it("maps a custom Claude profile to the Claude fetcher and reads its own config dir", async () => {
+    const defaultHome = mkdtempSync(join(tmpdir(), "usage-claude-default-"));
+    const engHome = mkdtempSync(join(tmpdir(), "usage-claude-eng-"));
+    writeClaudeCredentials(defaultHome, "at_default", "rt", "team", "default_raven");
+    writeClaudeCredentials(engHome, "at_eng", "rt", "team", "default_claude_max_5x");
+
+    const fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (url.toString() !== "https://api.anthropic.com/api/oauth/usage") {
+        throw new Error(`Unmocked fetch: ${url.toString()}`);
+      }
+      const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      const utilization = authorization === "Bearer at_eng" ? 80 : 10;
+      return jsonResponse(
+        makeClaudeResponse({
+          five_hour: { utilization, resets_at: "2026-06-01T21:00:00Z" },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      const fetchers = createProviderUsageFetchers({
+        logger: createLogger(),
+        fetch: fetchApi,
+        targets: [
+          {
+            providerId: "claude",
+            baseProviderId: "claude",
+            displayName: "Claude",
+            env: { CLAUDE_CONFIG_DIR: defaultHome },
+          },
+          {
+            providerId: "claude-5x",
+            baseProviderId: "claude",
+            displayName: "Claude 5x",
+            env: { CLAUDE_CONFIG_DIR: engHome },
+          },
+          // No fetcher exists for Pi; it must be skipped, not surfaced as an error.
+          { providerId: "pi", baseProviderId: "pi", displayName: "Pi" },
+        ],
+      });
+
+      const service = new ProviderUsageService({
+        logger: createLogger(),
+        now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+        fetchers,
+        cacheTtlMs: 0,
+      });
+
+      const result = await service.listUsage();
+
+      expect(result.providers.map((provider) => provider.providerId)).toEqual([
+        "claude",
+        "claude-5x",
+      ]);
+
+      const claude = findProvider(result, "claude");
+      expect(claude).toMatchObject({
+        displayName: "Claude",
+        planLabel: "Team raven",
+        windows: expect.arrayContaining([
+          expect.objectContaining({ id: "five_hour", usedPct: 10 }),
+        ]),
+      });
+
+      const claude5x = findProvider(result, "claude-5x");
+      expect(claude5x).toMatchObject({
+        displayName: "Claude 5x",
+        planLabel: "Team 5x",
+        windows: expect.arrayContaining([
+          expect.objectContaining({ id: "five_hour", usedPct: 80 }),
+        ]),
+      });
+    } finally {
+      rmSync(defaultHome, { recursive: true, force: true });
+      rmSync(engHome, { recursive: true, force: true });
+    }
   });
 });
 

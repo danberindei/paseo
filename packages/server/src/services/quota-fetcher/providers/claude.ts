@@ -10,10 +10,15 @@ import type {
   ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
 import {
   ApiNumberSchema,
   fetchProviderApi,
+  resolveProviderEnv,
   toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
@@ -86,6 +91,7 @@ interface ClaudeQuotaProviderOptions {
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
   fetch?: ProviderApiFetch;
+  context?: ProviderUsageFetcherContext;
 }
 
 function buildClaudePlan(
@@ -338,8 +344,8 @@ export async function readClaudeKeychainCredentials(
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
@@ -349,8 +355,12 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
 
   constructor(options: ClaudeQuotaProviderOptions) {
     this.logger = options.logger.child({ module: "claude-quota-provider" });
+    this.providerId = options.context?.providerId ?? "claude";
+    this.displayName = options.context?.displayName ?? "Claude";
     this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+      options.claudeHome ||
+      resolveProviderEnv(options.context?.env, ["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"]) ||
+      join(homedir(), ".claude");
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;

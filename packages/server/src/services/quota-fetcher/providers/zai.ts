@@ -1,8 +1,17 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage, ProviderUsageDetail } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
-import { ApiOptionalStringSchema, fetchProviderApi, unavailableUsage } from "../usage.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
+import {
+  ApiOptionalStringSchema,
+  fetchProviderApi,
+  resolveProviderEnv,
+  unavailableUsage,
+} from "../usage.js";
 
 const ZaiUsageResponseSchema = z.object({
   data: z
@@ -20,22 +29,27 @@ const ZaiUsageResponseSchema = z.object({
 interface ZaiQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  context?: ProviderUsageFetcherContext;
 }
 
 export class ZaiQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "zai";
-  readonly displayName = "Z.ai";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly env: Record<string, string> | undefined;
 
   constructor(options: ZaiQuotaProviderOptions) {
+    this.providerId = options.context?.providerId ?? "zai";
+    this.displayName = options.context?.displayName ?? "Z.ai";
+    this.env = options.context?.env;
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
-    const token = process.env["ZAI_API_KEY"] || process.env["GLM_API_KEY"];
+    const token = resolveProviderEnv(this.env, ["ZAI_API_KEY", "GLM_API_KEY"]);
     if (!token) return unavailableUsage(this);
 
     const res = await fetchProviderApi(

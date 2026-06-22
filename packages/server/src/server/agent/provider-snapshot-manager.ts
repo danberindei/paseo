@@ -45,6 +45,7 @@ import {
   type AgentConfigurationValidationInput,
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
+import type { ProviderUsageTarget } from "../../services/quota-fetcher/manifest.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -297,6 +298,36 @@ export class ProviderSnapshotManager {
 
   getProviderLabel(provider: AgentProvider): string {
     return this.providerRegistry[provider]?.label ?? provider;
+  }
+
+  // One usage target per enabled provider, resolved to its built-in base (via
+  // the `extends` chain) and carrying the provider's runtime env so the usage
+  // fetcher reads the same credentials the agent uses. The usage service filters
+  // out bases that have no fetcher (e.g. Pi, generic ACP).
+  getProviderUsageTargets(): ProviderUsageTarget[] {
+    const targets: ProviderUsageTarget[] = [];
+    for (const [provider, definition] of Object.entries(this.providerRegistry)) {
+      if (!definition.enabled) continue;
+      targets.push({
+        providerId: provider,
+        baseProviderId: this.resolveBaseProviderId(provider),
+        displayName: definition.label ?? provider,
+        env: definition.runtimeEnv,
+      });
+    }
+    return targets;
+  }
+
+  private resolveBaseProviderId(provider: AgentProvider): string {
+    let current: string = provider;
+    const seen = new Set<string>();
+    while (!seen.has(current)) {
+      seen.add(current);
+      const parent = this.providerRegistry[current]?.derivedFromProviderId;
+      if (!parent) return current;
+      current = parent;
+    }
+    return current;
   }
 
   getAgentManagerProviderState(): AgentManagerProviderState {

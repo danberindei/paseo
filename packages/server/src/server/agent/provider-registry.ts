@@ -88,6 +88,12 @@ export interface ProviderDefinition extends AgentProviderDefinition {
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
   ) => AgentSessionConfig;
+  /**
+   * Resolved runtime env for this provider (e.g. CLAUDE_CONFIG_DIR for a custom
+   * Claude profile). Used by out-of-band consumers like the usage fetcher to
+   * read credentials from the same location the agent uses.
+   */
+  runtimeEnv?: Record<string, string>;
   createClient: (logger: Logger) => AgentClient;
   resolveCreateConfig: (input: ResolveAgentCreateConfigInput) => ResolveAgentCreateConfigResult;
   isCreateConfigUnattended: (input: AgentCreateConfigUnattendedInput) => boolean;
@@ -631,6 +637,7 @@ function createRegistryEntry(
           : undefined,
       };
     },
+    runtimeEnv: resolved.runtimeSettings?.env,
     createClient: (providerLogger: Logger) =>
       createResolvedProviderClient(providerLogger, provider, resolved),
     resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,

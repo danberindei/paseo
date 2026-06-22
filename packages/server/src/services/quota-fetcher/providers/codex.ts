@@ -8,12 +8,17 @@ import type {
   ProviderUsageBalance,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
 import {
   ApiNumberSchema,
   balanceToneFromRemaining,
   toneFromUsedPct,
   fetchProviderApi,
+  resolveProviderEnv,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -64,6 +69,7 @@ interface CodexQuotaProviderOptions {
   logger: Logger;
   codexHome?: string;
   fetch?: ProviderApiFetch;
+  context?: ProviderUsageFetcherContext;
 }
 
 function codexWindow(
@@ -77,14 +83,21 @@ function codexWindow(
 }
 
 export class CodexQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "codex";
-  readonly displayName = "Codex";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly codexHome: string;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly env: Record<string, string> | undefined;
 
   constructor(options: CodexQuotaProviderOptions) {
-    this.codexHome = options.codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
+    this.providerId = options.context?.providerId ?? "codex";
+    this.displayName = options.context?.displayName ?? "Codex";
+    this.env = options.context?.env;
+    this.codexHome =
+      options.codexHome ||
+      resolveProviderEnv(this.env, ["CODEX_HOME"]) ||
+      join(homedir(), ".codex");
     this.fetchApi = options.fetch ?? fetch;
   }
 
@@ -170,8 +183,9 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCodexAuth(): Promise<CodexAuth | null> {
+    const codexHomeEnv = resolveProviderEnv(this.env, ["CODEX_HOME"]);
     const candidates = [
-      ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
+      ...(codexHomeEnv ? [join(codexHomeEnv, "auth.json")] : []),
       join(homedir(), ".config", "codex", "auth.json"),
       join(this.codexHome, "auth.json"),
     ];

@@ -5,12 +5,17 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage, ProviderUsageBalance } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
 import {
   ApiNullableNumberSchema,
   toneFromUsedPct,
   usedPctOf,
   fetchProviderApi,
+  resolveProviderEnv,
   toIsoStringOrNull,
   unavailableUsage,
 } from "../usage.js";
@@ -66,6 +71,7 @@ interface CursorQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
   homeDir?: string;
+  context?: ProviderUsageFetcherContext;
 }
 
 function parseCursorBillingCycleTimestamp(
@@ -176,14 +182,18 @@ async function readCursorTokenFromAuthJson(
 }
 
 export class CursorQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "cursor";
-  readonly displayName = "Cursor";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
   private readonly homeDir: string;
+  private readonly env: Record<string, string> | undefined;
 
   constructor(options: CursorQuotaProviderOptions) {
+    this.providerId = options.context?.providerId ?? "cursor";
+    this.displayName = options.context?.displayName ?? "Cursor";
+    this.env = options.context?.env;
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
     this.homeDir = options.homeDir ?? homedir();
@@ -191,8 +201,7 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
 
   async fetchUsage(): Promise<ProviderUsage> {
     const token =
-      process.env["CURSOR_ACCESS_TOKEN"] ||
-      process.env["CURSOR_TOKEN"] ||
+      resolveProviderEnv(this.env, ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"]) ||
       (await readCursorTokenFromSqlite(this.homeDir, this.logger)) ||
       (await readCursorTokenFromAuthJson(this.homeDir, this.logger));
 

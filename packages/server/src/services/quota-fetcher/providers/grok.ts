@@ -8,13 +8,18 @@ import type {
   ProviderUsageBalance,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
+import type {
+  ProviderApiFetch,
+  ProviderUsageFetcher,
+  ProviderUsageFetcherContext,
+} from "../provider.js";
 import {
   ApiNumberSchema,
   ApiOptionalStringSchema,
   toneFromUsedPct,
   usedPctOf,
   fetchProviderApi,
+  resolveProviderEnv,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -53,6 +58,7 @@ interface GrokQuotaProviderOptions {
   fetch?: ProviderApiFetch;
   /** Override home directory (tests). Production uses os.homedir(). */
   homeDir?: string;
+  context?: ProviderUsageFetcherContext;
 }
 
 /** Resolve a Grok CLI token from ~/.grok/auth.json (legacy or current nested shape). */
@@ -114,14 +120,18 @@ function grokUsageWindow(
 }
 
 export class GrokQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "grok";
-  readonly displayName = "Grok";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
   private readonly homeDir: string | undefined;
+  private readonly env: Record<string, string> | undefined;
 
   constructor(options: GrokQuotaProviderOptions) {
+    this.providerId = options.context?.providerId ?? "grok";
+    this.displayName = options.context?.displayName ?? "Grok";
+    this.env = options.context?.env;
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
     this.homeDir = options.homeDir;
@@ -129,7 +139,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
   async fetchUsage(): Promise<ProviderUsage> {
     const token =
-      process.env["GROK_API_KEY"] || process.env["GROK_TOKEN"] || (await this.readGrokToken());
+      resolveProviderEnv(this.env, ["GROK_API_KEY", "GROK_TOKEN"]) || (await this.readGrokToken());
 
     if (!token) return unavailableUsage(this);
 
