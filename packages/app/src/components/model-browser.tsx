@@ -11,6 +11,7 @@ import {
   type GestureResponderEvent,
   type PressableStateCallbackType,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { BottomSheetFlatList, BottomSheetScrollView } from "@gorhom/bottom-sheet";
@@ -49,6 +50,8 @@ import {
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
+import { getProviderUsageTone, type WindowTone } from "@/provider-usage/sidebar-quota-display";
+import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -158,6 +161,7 @@ export interface ModelBrowserState {
   selectedProvider: string;
   selectedModel: string;
   profiles: AgentProfilePicker | null;
+  providerTones: Map<string, WindowTone>;
   view: ModelBrowserView;
   searchQuery: string;
   isSearchFocused: boolean;
@@ -199,6 +203,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   searchQuery: string;
   isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
+  providerTones: Map<string, WindowTone>;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
   searchAllOnFocus: boolean;
@@ -388,11 +393,26 @@ export function useModelBrowser({
     [providers, view],
   );
 
+  // Tint each model by its provider's quota tone, matching the usage sidebar.
+  const { view: providerUsageView } = useProviderUsage(serverId);
+  const providerTones = useMemo(() => {
+    const tones = new Map<string, WindowTone>();
+    if (providerUsageView.kind !== "ready") {
+      return tones;
+    }
+    const now = Date.now();
+    for (const usage of providerUsageView.payload.providers) {
+      tones.set(usage.providerId, getProviderUsageTone(usage, now));
+    }
+    return tones;
+  }, [providerUsageView]);
+
   return {
     providers,
     selectedProvider,
     selectedModel,
     profiles,
+    providerTones,
     view,
     searchQuery,
     isSearchFocused,
@@ -512,6 +532,13 @@ function ModelBrowserPressable({
   );
 }
 
+// Tint a model label red only when its provider's quota is in the danger tone
+// (the same statusDanger the usage sidebar uses). Every other tone keeps the
+// default color so the danger case is the only thing that stands out.
+export function isDangerTone(tone: WindowTone | undefined): boolean {
+  return tone === "red";
+}
+
 type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
 
 function ModelBrowserRow({
@@ -526,6 +553,7 @@ function ModelBrowserRow({
   spacing = "model",
   onPress,
   testID,
+  labelStyle,
 }: {
   label: string;
   description?: string;
@@ -539,6 +567,7 @@ function ModelBrowserRow({
   spacing?: "model" | "provider";
   onPress: () => void;
   testID?: string;
+  labelStyle?: StyleProp<TextStyle>;
 }) {
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -570,7 +599,7 @@ function ModelBrowserRow({
         <View style={contentStyle}>
           <Text
             numberOfLines={1}
-            style={labelMuted ? styles.browserRowLabelMuted : styles.browserRowLabel}
+            style={[labelMuted ? styles.browserRowLabelMuted : styles.browserRowLabel, labelStyle]}
           >
             {label}
           </Text>
@@ -654,6 +683,7 @@ function ModelRow({
   row,
   isSelected,
   showProviderLabel = false,
+  isDanger = false,
   onPress,
   profiledRows,
   onCreateProfile,
@@ -663,6 +693,7 @@ function ModelRow({
   row: ProviderSelectionModelRow;
   isSelected: boolean;
   showProviderLabel?: boolean;
+  isDanger?: boolean;
   onPress: () => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -785,7 +816,10 @@ function ModelRow({
         <View style={styles.browserRowContent}>
           <View style={styles.browserRowLeading}>{leadingSlot}</View>
           <View style={[styles.browserRowText, description && styles.browserRowTextInline]}>
-            <Text numberOfLines={1} style={styles.browserRowLabel}>
+            <Text
+              numberOfLines={1}
+              style={[styles.browserRowLabel, isDanger ? styles.browserRowLabelDanger : undefined]}
+            >
               {row.modelLabel}
             </Text>
             {description ? (
@@ -812,6 +846,7 @@ function SelectableModelRow({
   row,
   isSelected,
   showProviderLabel,
+  isDanger,
   onSelect,
   profiledRows,
   onCreateProfile,
@@ -821,6 +856,7 @@ function SelectableModelRow({
   row: ProviderSelectionModelRow;
   isSelected: boolean;
   showProviderLabel?: boolean;
+  isDanger?: boolean;
   onSelect: (provider: string, modelId: string) => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -835,6 +871,7 @@ function SelectableModelRow({
       row={row}
       isSelected={isSelected}
       showProviderLabel={showProviderLabel}
+      isDanger={isDanger}
       onPress={handlePress}
       profiledRows={profiledRows}
       onCreateProfile={onCreateProfile}
@@ -1114,6 +1151,7 @@ function ModelRowList({
   selectedProvider,
   selectedModel,
   onSelect,
+  providerTones,
   showProviderLabel = false,
   header,
   scrolling,
@@ -1126,6 +1164,7 @@ function ModelRowList({
   selectedProvider: string;
   selectedModel: string;
   onSelect: (provider: string, modelId: string) => void;
+  providerTones: Map<string, WindowTone>;
   showProviderLabel?: boolean;
   header?: React.ReactElement;
   scrolling: "sheet" | "independent";
@@ -1141,6 +1180,7 @@ function ModelRowList({
         row={item}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
         showProviderLabel={showProviderLabel}
+        isDanger={isDangerTone(providerTones.get(item.provider))}
         onSelect={onSelect}
         profiledRows={profiledLookup.get(`${item.provider}:${item.modelId}`) ?? []}
         onCreateProfile={onCreateProfile}
@@ -1154,6 +1194,7 @@ function ModelRowList({
       onCreateProfile,
       onSelect,
       profiledLookup,
+      providerTones,
       selectedModel,
       selectedProvider,
       showProviderLabel,
@@ -1235,6 +1276,7 @@ function ProviderModelBrowserContent({
   selectedProvider,
   selectedModel,
   normalizedQuery,
+  providerTones,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1252,6 +1294,7 @@ function ProviderModelBrowserContent({
   selectedProvider: string;
   selectedModel: string;
   normalizedQuery: string;
+  providerTones: Map<string, WindowTone>;
   onSelect: (provider: string, modelId: string) => void;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
@@ -1322,6 +1365,7 @@ function ProviderModelBrowserContent({
       selectedProvider={selectedProvider}
       selectedModel={selectedModel}
       onSelect={onSelect}
+      providerTones={providerTones}
       header={profileHeader}
       scrolling={scrolling}
       profiledLookup={profiledLookup}
@@ -1340,6 +1384,7 @@ function ModelBrowserContent({
   searchQuery,
   isSearchFocused,
   profiles,
+  providerTones,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1386,6 +1431,7 @@ function ModelBrowserContent({
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         normalizedQuery={normalizedQuery}
+        providerTones={providerTones}
         onSelect={onSelect}
         onApplyProfile={onApplyProfile}
         onEditProfiles={onEditProfiles}
@@ -1418,6 +1464,7 @@ function ModelBrowserContent({
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         onSelect={onSelect}
+        providerTones={providerTones}
         showProviderLabel
         scrolling={scrolling}
         profiledLookup={profiledLookup}
@@ -1494,6 +1541,7 @@ export function ModelBrowser({
       searchQuery={state.searchQuery}
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
+      providerTones={state.providerTones}
       onSelect={onSelect}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}
@@ -1591,6 +1639,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     flexShrink: 0,
+  },
+  browserRowLabelDanger: {
+    color: theme.colors.statusDanger,
   },
   browserRowLabelMuted: {
     fontSize: theme.fontSize.base,

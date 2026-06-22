@@ -1134,6 +1134,9 @@ export const ja: TranslationResources = {
       search: "検索",
       schedules: "スケジュール",
     },
+    providerUsage: {
+      toggleLabel: "プランの使用状況を切り替え",
+    },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",
       description:

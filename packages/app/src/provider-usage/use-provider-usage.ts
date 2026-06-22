@@ -7,6 +7,7 @@ import { providerUsageCopy } from "./copy";
 import type { ProviderUsageListPayload, ProviderUsageView } from "./types";
 
 export const PROVIDER_USAGE_STALE_TIME_MS = 5 * 60 * 1000;
+export const PROVIDER_USAGE_REFETCH_INTERVAL_MS = 30 * 1000;
 
 type ProviderUsageClient = Pick<DaemonClient, "listProviderUsage">;
 
@@ -52,6 +53,7 @@ export function useProviderUsage(
     queryFn,
     enabled,
     staleTime: PROVIDER_USAGE_STALE_TIME_MS,
+    refetchInterval: PROVIDER_USAGE_REFETCH_INTERVAL_MS,
     refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,

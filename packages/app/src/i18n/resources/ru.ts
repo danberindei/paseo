@@ -1138,6 +1138,9 @@ export const ru: TranslationResources = {
       search: "Поиск",
       schedules: "Расписания",
     },
+    providerUsage: {
+      toggleLabel: "Переключить использование плана",
+    },
     worktreeSetup: {
       title: "Настроить скрипты worktree",
       description:

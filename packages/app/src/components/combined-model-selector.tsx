@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -7,7 +7,12 @@ import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
-import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
+import {
+  isDangerTone,
+  ModelBrowser,
+  ModelProviderGlyph,
+  useModelBrowser,
+} from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -36,6 +41,7 @@ interface CombinedModelSelectorProps {
   onEditProfile?: (profileId: string) => void;
   renderTrigger?: (input: {
     selectedModelLabel: string;
+    isDanger: boolean;
     onPress: () => void;
     disabled: boolean;
     isOpen: boolean;
@@ -103,6 +109,14 @@ export function CombinedModelSelector({
     serverId,
   });
   const { prepareToOpen, reset } = browser;
+
+  // The collapsed trigger turns red when the selected provider's quota is in
+  // the danger tone, otherwise it stays muted.
+  const selectedIsDanger = isDangerTone(browser.providerTones.get(selectedProvider));
+  const triggerTextStyle = useMemo(
+    () => (selectedIsDanger ? [styles.triggerText, styles.dangerLabel] : styles.triggerText),
+    [selectedIsDanger],
+  );
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -229,6 +243,7 @@ export function CombinedModelSelector({
           {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
             renderTrigger({
               selectedModelLabel: browser.triggerLabel,
+              isDanger: selectedIsDanger,
               onPress: handleTriggerPress,
               disabled,
               isOpen,
@@ -259,7 +274,7 @@ export function CombinedModelSelector({
               />
             </View>
           ) : null}
-          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={triggerTextStyle} numberOfLines={1} ellipsizeMode="tail">
             {browser.triggerLabel}
           </Text>
         </ComboboxTrigger>
@@ -326,6 +341,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+  },
+  dangerLabel: {
+    color: theme.colors.statusDanger,
   },
   customTriggerWrapper: {
     paddingHorizontal: 0,

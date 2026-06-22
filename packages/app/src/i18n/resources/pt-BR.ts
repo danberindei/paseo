@@ -1142,6 +1142,9 @@ export const ptBR: TranslationResources = {
       whatsNew: "Novidades",
       appName: "Paseo",
     },
+    providerUsage: {
+      toggleLabel: "Alternar uso do plano",
+    },
     sections: {
       sessions: "Histórico",
       search: "Buscar",

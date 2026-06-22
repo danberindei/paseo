@@ -1156,6 +1156,9 @@ export const fr: TranslationResources = {
       search: "Rechercher",
       schedules: "Planifications",
     },
+    providerUsage: {
+      toggleLabel: "Basculer l'utilisation du plan",
+    },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
       description:

@@ -1131,6 +1131,9 @@ export const en = {
       search: "Search",
       schedules: "Schedules",
     },
+    providerUsage: {
+      toggleLabel: "Toggle plan usage",
+    },
     worktreeSetup: {
       title: "Set up worktree scripts",
       description:

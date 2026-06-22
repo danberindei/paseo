@@ -1122,6 +1122,9 @@ export const ar: TranslationResources = {
       search: "بحث",
       schedules: "الجداول",
     },
+    providerUsage: {
+      toggleLabel: "تبديل استخدام الخطة",
+    },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
       description:

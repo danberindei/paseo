@@ -1129,6 +1129,9 @@ export const ko: TranslationResources = {
       search: "검색",
       schedules: "일정",
     },
+    providerUsage: {
+      toggleLabel: "Toggle plan usage",
+    },
     worktreeSetup: {
       title: "워크트리 스크립트 설정",
       description:

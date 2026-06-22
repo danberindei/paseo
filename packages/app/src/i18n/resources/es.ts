@@ -1156,6 +1156,9 @@ export const es: TranslationResources = {
       search: "Buscar",
       schedules: "Horarios",
     },
+    providerUsage: {
+      toggleLabel: "Alternar uso del plan",
+    },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
       description:
