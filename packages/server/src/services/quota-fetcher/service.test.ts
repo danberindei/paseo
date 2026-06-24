@@ -215,6 +215,7 @@ describe("ProviderUsageService", () => {
           displayName: "GLM coding plan",
           status: "available",
           planLabel: "GLM coding plan",
+          fetchedAt: "2026-06-19T00:00:00.000Z",
           windows: [
             {
               id: "biweekly",
@@ -341,10 +342,84 @@ describe("ProviderUsageService", () => {
           displayName: "Codex",
           status: "available",
           planLabel: "Pro 20x",
+          fetchedAt: "2026-06-19T00:00:00.000Z",
           windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
         },
       ],
     });
+  });
+
+  it("keeps the last known good usage when a later fetch fails or returns empty", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    const outcomes: Array<() => ProviderUsage> = [
+      () => ({
+        providerId: "claude",
+        displayName: "Claude",
+        status: "available",
+        planLabel: "Team raven",
+        windows: [{ id: "session", label: "Session", usedPct: 19 }],
+      }),
+      () => {
+        throw new Error("Claude auth expired");
+      },
+      () => ({
+        providerId: "claude",
+        displayName: "Claude",
+        status: "available",
+        planLabel: null,
+        windows: [],
+      }),
+    ];
+    let call = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => now,
+      cacheTtlMs: 60_000,
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => outcomes[Math.min(call++, outcomes.length - 1)]!(),
+        },
+      ],
+    });
+
+    const fresh = findProvider(await service.listUsage(), "claude");
+    expect(fresh.status).toBe("available");
+    expect(fresh.windows).toHaveLength(1);
+    expect(fresh.fetchedAt).toBe("2026-06-19T00:00:00.000Z");
+
+    now += 120_000;
+    const afterFailure = findProvider(await service.listUsage({ forceRefresh: true }), "claude");
+    expect(afterFailure.status).toBe("available");
+    expect(afterFailure.windows).toEqual([{ id: "session", label: "Session", usedPct: 19 }]);
+    expect(afterFailure.fetchedAt).toBe("2026-06-19T00:00:00.000Z");
+
+    now += 120_000;
+    const afterEmpty = findProvider(await service.listUsage({ forceRefresh: true }), "claude");
+    expect(afterEmpty.windows).toEqual([{ id: "session", label: "Session", usedPct: 19 }]);
+    expect(afterEmpty.fetchedAt).toBe("2026-06-19T00:00:00.000Z");
+  });
+
+  it("does not fabricate usage for a provider that never returned data", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            throw new Error("Claude auth expired");
+          },
+        },
+      ],
+    });
+
+    const claude = findProvider(await service.listUsage(), "claude");
+    expect(claude.status).toBe("error");
+    expect(claude.windows).toEqual([]);
+    expect(claude.fetchedAt).toBeUndefined();
   });
 });
 
