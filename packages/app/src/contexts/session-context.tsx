@@ -293,6 +293,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const handleAppResumed = useCallback(
     (awayMs: number) => {
+      const session = useSessionStore.getState().sessions[serverId];
+      const agentId = session?.focusedAgentId;
+      if (agentId) {
+        void dismissOsNotificationsForAgent(agentId);
+      }
+
       void revalidateSessionAfterResume({
         awayMs,
         serverId,
