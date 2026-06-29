@@ -20,6 +20,7 @@ const ABSOLUTE_AFTER_MS = 7 * DAY_MS;
  * their thresholds can't drift apart; they differ only in how much room they have to say it.
  *
  * `elapsed` takes an "ago" in prose, `now` and `date` read as absolutes and never do.
+ * Hours and days show one decimal place when the value is between 1 and 10 exclusive.
  *
  * Deliberately never sub-minute. A seconds label is only correct for the second it was rendered,
  * so it either lies or forces a once-a-second re-render of a list that has nothing new to say.
@@ -32,6 +33,11 @@ type Age =
   | { kind: "now"; resolution: "minute" }
   | { kind: "elapsed"; value: string; resolution: Exclude<RelativeTimeResolution, "static"> }
   | { kind: "date"; value: string; resolution: "static" };
+
+/** Shows one decimal past the whole unit, so "1h" doesn't sit unchanged for 59 minutes. */
+function decimalOrWhole(floatValue: number, wholeValue: number): number {
+  return floatValue > 1 && floatValue < 10 ? parseFloat(floatValue.toFixed(1)) : wholeValue;
+}
 
 function describeAge(date: Date, now: Date): Age {
   const elapsedMs = now.getTime() - date.getTime();
@@ -47,10 +53,16 @@ function describeAge(date: Date, now: Date): Age {
     };
   }
   if (elapsedMs < DAY_MS) {
-    return { kind: "elapsed", value: `${Math.floor(elapsedMs / HOUR_MS)}h`, resolution: "hour" };
+    const floatHours = elapsedMs / HOUR_MS;
+    const hours = decimalOrWhole(floatHours, Math.floor(floatHours));
+    // A decimal changes every six minutes, so it needs minute ticks, not the hour tier's thirty.
+    const resolution = floatHours < 10 ? "minute" : "hour";
+    return { kind: "elapsed", value: `${hours}h`, resolution };
   }
   if (elapsedMs < ABSOLUTE_AFTER_MS) {
-    return { kind: "elapsed", value: `${Math.floor(elapsedMs / DAY_MS)}d`, resolution: "day" };
+    const floatDays = elapsedMs / DAY_MS;
+    const days = decimalOrWhole(floatDays, Math.floor(floatDays));
+    return { kind: "elapsed", value: `${days}d`, resolution: "day" };
   }
 
   const month = date.toLocaleDateString("en-US", { month: "short" });
