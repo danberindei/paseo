@@ -3,6 +3,7 @@
  * their thresholds can't drift apart; they differ only in how much room they have to say it.
  *
  * `elapsed` takes an "ago" in prose, `now` and `date` read as absolutes and never do.
+ * Hours and days show one decimal place when the value is between 1 and 10 exclusive.
  */
 type Elapsed =
   | { kind: "now" }
@@ -19,8 +20,16 @@ function describeElapsed(date: Date, now: Date): Elapsed {
   if (diffSec < 10) return { kind: "now" };
   if (diffMin < 1) return { kind: "elapsed", value: `${diffSec}s` };
   if (diffHour < 1) return { kind: "elapsed", value: `${diffMin}m` };
-  if (diffDay < 1) return { kind: "elapsed", value: `${diffHour}h` };
-  if (diffDay < 7) return { kind: "elapsed", value: `${diffDay}d` };
+  if (diffDay < 1) {
+    const floatHours = diffMin / 60;
+    const hours = floatHours > 1 && floatHours < 10 ? parseFloat(floatHours.toFixed(1)) : diffHour;
+    return { kind: "elapsed", value: `${hours}h` };
+  }
+  if (diffDay < 7) {
+    const floatDays = diffHour / 24;
+    const days = floatDays > 1 && floatDays < 10 ? parseFloat(floatDays.toFixed(1)) : diffDay;
+    return { kind: "elapsed", value: `${days}d` };
+  }
 
   // For older dates, show abbreviated month and day
   const month = date.toLocaleDateString("en-US", { month: "short" });
