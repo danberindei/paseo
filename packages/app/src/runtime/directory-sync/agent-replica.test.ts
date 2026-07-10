@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
+import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import {
   selectAgentTimelineState,
   selectAgentTurnPresentation,
   useSessionStore,
 } from "@/stores/session-store";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { useDraftStore } from "@/stores/draft-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
-import { useDraftStore } from "@/stores/draft-store";
-import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { AgentDirectoryReplica } from "./agent-replica";
 
-function payload(title: string): AgentSnapshotPayload {
+function payload(title: string, id = "agent"): AgentSnapshotPayload {
   return {
-    id: "agent",
+    id,
     provider: "codex",
     cwd: "/repo",
     model: null,
@@ -120,7 +120,7 @@ describe("AgentDirectoryReplica", () => {
   it("does not let a late cache read replace newer live turn state", () => {
     const serverId = "agent-replica-late-cache";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
@@ -143,7 +143,7 @@ describe("AgentDirectoryReplica", () => {
   it("accepts the requested agent from the authoritative timeline after a cache miss", () => {
     const serverId = "agent-replica-cache-miss";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
@@ -162,7 +162,7 @@ describe("AgentDirectoryReplica", () => {
   it("persists stream-only turn transitions through the agent owner", () => {
     const serverId = "agent-replica-stream-turn";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const commits: DirectoryReplicaMutation[][] = [];
     const replica = new AgentDirectoryReplica(
       serverId,
@@ -202,7 +202,7 @@ describe("AgentDirectoryReplica", () => {
   it("notifies the queue owner exactly once when a stream turn closes", () => {
     const serverId = "agent-replica-stream-stop";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const stopped: string[] = [];
     const replica = new AgentDirectoryReplica(
       serverId,
@@ -225,7 +225,7 @@ describe("AgentDirectoryReplica", () => {
   it("preserves cancellation state when the same active turn is snapshotted", () => {
     const serverId = "agent-replica-cancellation-snapshot";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
@@ -277,7 +277,7 @@ describe("AgentDirectoryReplica", () => {
   it("uses turn liveness for stopped transitions even when protocol status disagrees", () => {
     const serverId = "agent-replica-mismatched-status";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const stopped: string[] = [];
     const replica = new AgentDirectoryReplica(
       serverId,
@@ -321,7 +321,7 @@ describe("AgentDirectoryReplica", () => {
   it("preserves an unchanged running agent's turn identity during catch-up", () => {
     const serverId = "agent-replica-catch-up";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
@@ -349,10 +349,66 @@ describe("AgentDirectoryReplica", () => {
     store.clearSession(serverId);
   });
 
+  it("keeps composer drafts for agents dropped from a scoped snapshot", () => {
+    const serverId = "agent-replica-scoped-snapshot";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+    replica.commitSnapshot(
+      [entry(payload("agent-a", "agent-a")), entry(payload("agent-b", "agent-b"))],
+      [],
+    );
+
+    const draftKey = buildDraftStoreKey({ serverId, agentId: "agent-b" });
+    useDraftStore
+      .getState()
+      .saveDraftInput({ draftKey, draft: { text: "unsent work", attachments: [] } });
+
+    replica.commitSnapshot([entry(payload("agent-a", "agent-a"))], []);
+
+    expect(replica.snapshot().has("agent-b")).toBe(false);
+    expect(useDraftStore.getState().getDraftInput(draftKey)?.text).toBe("unsent work");
+    useDraftStore.getState().clearDraftInput({ draftKey });
+    store.clearSession(serverId);
+  });
+
+  it("tombstones a composer draft instead of deleting it when an agent is removed", () => {
+    const serverId = "agent-replica-remove-draft";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+    replica.commitSnapshot([entry(payload("agent-a", "agent-a"))], []);
+
+    const draftKey = buildDraftStoreKey({ serverId, agentId: "agent-a" });
+    useDraftStore
+      .getState()
+      .saveDraftInput({ draftKey, draft: { text: "unsent work", attachments: [] } });
+    const savedVersion = useDraftStore.getState().drafts[draftKey]?.version ?? 0;
+
+    replica.remove("agent-a");
+
+    expect(replica.snapshot().has("agent-a")).toBe(false);
+    expect(useDraftStore.getState().drafts[draftKey]).toMatchObject({
+      input: { text: "", attachments: [] },
+      lifecycle: "removed",
+      version: savedVersion + 1,
+    });
+    useDraftStore.getState().clearDraftInput({ draftKey });
+    store.clearSession(serverId);
+  });
+
   it("keeps membership authoritative across remove, stale timeline, and re-add", () => {
     const serverId = "agent-replica";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
@@ -389,7 +445,7 @@ describe("AgentDirectoryReplica", () => {
   it("keeps a timeline-hydrated agent when a sequenced catch-up carries no entries", () => {
     const serverId = "agent-replica-timeline-membership";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
@@ -409,7 +465,7 @@ describe("AgentDirectoryReplica", () => {
   it("keeps unchanged agent fields when an update changes only the status", () => {
     const serverId = "agent-replica-unchanged-fields";
     const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
+    store.initializeSession(serverId, null);
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,

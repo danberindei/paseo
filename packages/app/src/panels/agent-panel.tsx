@@ -1134,6 +1134,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const parentAgentId = useParentAgentId(serverId, agentId);
   // With a composer the parent is a pill above it; without one, the box takes the composer's place.
   const parentPillAgentId = showsComposer ? parentAgentId : null;
+  // This is the single useAgentInputDraft instance for the agent. It feeds both the rewind restore
+  // provider (which must wrap the message stream) and the composer (threaded down through
+  // AgentComposerSection). Do not add a second instance for the same draftKey: instances sharing a
+  // key share the global generation counter in the draft store, and the second one's
+  // beginDraftGeneration invalidates the first's in-flight hydration, dropping the restored draft.
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -1577,6 +1582,7 @@ function DraftComposerSection({
 }
 
 const AgentComposerSection = memo(function AgentComposerSection({
+  agentInputDraft,
   agentId,
   serverId,
   isPaneFocused,
@@ -1584,13 +1590,13 @@ const AgentComposerSection = memo(function AgentComposerSection({
   archivedAt,
   cwd,
   isSubmitLoading,
-  agentInputDraft,
   editingSession,
   onAttentionInputFocus,
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
 }: {
+  agentInputDraft: AgentInputDraft;
   agentId?: string;
   serverId: string;
   isPaneFocused: boolean;
@@ -1598,7 +1604,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
   archivedAt: Date | null;
   cwd: string;
   isSubmitLoading: boolean;
-  agentInputDraft: AgentInputDraft;
   editingSession: ComposerEditingSession;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
@@ -1617,12 +1622,12 @@ const AgentComposerSection = memo(function AgentComposerSection({
 
   return (
     <ActiveAgentComposer
+      agentInputDraft={agentInputDraft}
       agentId={agentId}
       serverId={serverId}
       isPaneFocused={isPaneFocused}
       cwd={cwd}
       isSubmitLoading={isSubmitLoading}
-      agentInputDraft={agentInputDraft}
       editingSession={editingSession}
       onAttentionInputFocus={onAttentionInputFocus}
       onAttentionPromptSend={onAttentionPromptSend}
@@ -1633,24 +1638,24 @@ const AgentComposerSection = memo(function AgentComposerSection({
 });
 
 function ActiveAgentComposer({
+  agentInputDraft,
   agentId,
   serverId,
   isPaneFocused,
   cwd,
   isSubmitLoading,
-  agentInputDraft,
   editingSession,
   onAttentionInputFocus,
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
 }: {
+  agentInputDraft: AgentInputDraft;
   agentId: string;
   serverId: string;
   isPaneFocused: boolean;
   cwd: string;
   isSubmitLoading: boolean;
-  agentInputDraft: AgentInputDraft;
   editingSession: ComposerEditingSession;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;

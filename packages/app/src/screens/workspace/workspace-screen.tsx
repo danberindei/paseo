@@ -145,7 +145,8 @@ import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webview
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
-import { generateDraftId } from "@/stores/draft-keys";
+import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
+import { useDraftStore } from "@/stores/draft-store";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
 import { WorkspaceTabPresentationResolver } from "@/screens/workspace/workspace-tab-presentation";
@@ -1414,9 +1415,27 @@ function WorkspaceScreenContent({
         removeResidentBrowserWebview(browserId);
         void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
       }
+      if (input.target?.kind === "draft") {
+        // The tab is the draft. Closing it discards the text, so tombstone the record
+        // for the finalized TTL to prune instead of restoring it on every launch.
+        useDraftStore.getState().clearDraftInput({
+          draftKey: buildDraftStoreKey({
+            serverId: normalizedServerId,
+            agentId: normalizedTabId,
+            draftId: input.target.draftId,
+          }),
+          lifecycle: "abandoned",
+        });
+      }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
     },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
+    [
+      closeWorkspaceTab,
+      hideWorkspaceAgent,
+      normalizedServerId,
+      persistenceKey,
+      unpinWorkspaceAgent,
+    ],
   );
 
   const focusedPaneTabState = useMemo(

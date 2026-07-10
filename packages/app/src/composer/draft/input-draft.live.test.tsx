@@ -45,15 +45,34 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
   useAgentFormState: () => ({
     selectedServerId: "host-1",
     selectedProvider: "codex",
-    setProviderFromUser: () => undefined,
+    applyProfileFromUser: () => undefined,
     selectedMode: "auto",
     setModeFromUser: () => undefined,
     selectedModel: "",
     setModelFromUser: () => undefined,
+    savedModelId: null,
+    savedModeId: null,
+    persistSelectedPreferences: async () => undefined,
     selectedThinkingOptionId: "",
     setThinkingOptionFromUser: () => undefined,
     workingDir: "/repo",
-    providerDefinitions: [{ id: "codex", label: "Codex", modes: [{ id: "auto", label: "Auto" }] }],
+    providerDefinitions: [
+      {
+        id: "codex",
+        label: "Codex",
+        description: "Codex",
+        defaultModeId: "auto",
+        modes: [
+          {
+            id: "auto",
+            label: "Auto",
+            description: "Auto",
+            icon: "ShieldCheck",
+            colorTier: "moderate",
+          },
+        ],
+      },
+    ],
     providerDefinitionMap: new Map(),
     agentDefinition: undefined,
     modeOptions: [{ id: "auto", label: "Auto" }],
@@ -119,6 +138,7 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     setProviderAndModelFromUser: () => undefined,
     workingDirIsEmpty: false,
     persistFormPreferences: async () => undefined,
+    preferences: {},
   }),
 }));
 

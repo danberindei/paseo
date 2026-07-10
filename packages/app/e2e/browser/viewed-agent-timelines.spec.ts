@@ -13,6 +13,7 @@ import {
   expectInlineWorkingIndicator,
   expectTurnCopyButton,
 } from "../support/helpers/agent-stream";
+import { expectComposerDraft, fillComposerDraft } from "../support/helpers/composer";
 import {
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
@@ -317,6 +318,24 @@ test.describe("Viewed agent timelines", () => {
 
       await selectAgent(page, "First viewed chat");
       await expectAgentConsistentlyIdle(page, "First viewed chat");
+    } finally {
+      await scenario.cleanup();
+    }
+  });
+
+  test("keeps an unsent composer draft when switching to another chat and back", async ({
+    page,
+  }) => {
+    const scenario = await seedViewedTimelineScenario();
+    try {
+      await openAgent(page, scenario, scenario.firstAgentId);
+      await fillComposerDraft(page, "Unsent draft survives switching chats");
+
+      await selectAgent(page, "Second viewed chat");
+      await expectComposerDraft(page, "");
+
+      await selectAgent(page, "First viewed chat");
+      await expectComposerDraft(page, "Unsent draft survives switching chats");
     } finally {
       await scenario.cleanup();
     }

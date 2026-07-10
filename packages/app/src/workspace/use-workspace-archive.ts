@@ -17,12 +17,15 @@ import {
   runWorkspaceArchiveAttempt,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
+import { clearWorkspaceDraftRecords } from "@/workspace/workspace-drafts";
 
 function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
-  if (workspaceKey) {
-    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+  if (!workspaceKey) {
+    return;
   }
+  clearWorkspaceDraftRecords({ serverId: input.serverId, workspaceKey });
+  useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
 }
 
 export interface ArchiveWorkspaceInput {

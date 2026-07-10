@@ -208,9 +208,6 @@ export class AgentStoreProjection {
 
   remove(agentId: string): void {
     this.removeFromDirectory(agentId);
-    useDraftStore.getState().clearDraftInput({
-      draftKey: buildDraftStoreKey({ serverId: this.serverId, agentId }),
-    });
     // Only entity deletion destroys the transcript. A filtered active-list
     // response can arrive after a fresh history response for an archived agent.
     const store = useSessionStore.getState();
@@ -223,6 +220,10 @@ export class AgentStoreProjection {
     store.setAgentStreamTail(this.serverId, removeKey);
     store.clearAgentStreamHead(this.serverId, agentId);
     store.clearResolvedPermissionIdsForAgent(this.serverId, agentId);
+    useDraftStore.getState().clearDraftInput({
+      draftKey: buildDraftStoreKey({ serverId: this.serverId, agentId }),
+      lifecycle: "removed",
+    });
   }
 
   archive(agentId: string, archivedAt: string): Agent | null {
