@@ -37,7 +37,7 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     setSelectedServerId: () => undefined,
     setSelectedServerIdFromUser: () => undefined,
     selectedProvider: "codex",
-    setProviderFromUser: () => undefined,
+    applyProfileFromUser: () => undefined,
     selectedMode: "auto",
     setModeFromUser: () => undefined,
     selectedModel: "",
@@ -553,6 +553,65 @@ describe("useAgentInputDraft live contract", () => {
       text: "",
       attachments: [],
     });
+  });
+
+  it("restores a saved draft after switching draftKey away and back", async () => {
+    // Reproduces the "composer loses my message when I switch to another agent and back" report.
+    // A single hook instance re-targeted to a different draftKey and then back must re-hydrate the
+    // draft it left behind in the store.
+    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
+
+    function getLatest(): ReturnType<typeof useAgentInputDraft> {
+      if (!latest) {
+        throw new Error("Expected hook result");
+      }
+      return latest;
+    }
+
+    function Probe({ draftKey }: { draftKey: string }) {
+      latest = useAgentInputDraft({ draftKey });
+      return null;
+    }
+
+    useDraftStore.getState().saveDraftInput({
+      draftKey: "agent:host-1:agent-a",
+      draft: { text: "unsent message", attachments: [] },
+    });
+
+    const queryClient = new QueryClient();
+    const container = document.getElementById("root");
+    if (!container) {
+      throw new Error("Missing root container");
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Probe draftKey="agent:host-1:agent-a" />
+        </QueryClientProvider>,
+      );
+    });
+    expect(getLatest().text).toBe("unsent message");
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Probe draftKey="agent:host-1:agent-b" />
+        </QueryClientProvider>,
+      );
+    });
+    expect(getLatest().text).toBe("");
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Probe draftKey="agent:host-1:agent-a" />
+        </QueryClientProvider>,
+      );
+    });
+    expect(getLatest().text).toBe("unsent message");
   });
 
   it("clears drafts with sent and abandoned lifecycle tombstones", async () => {
