@@ -761,6 +761,70 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("maps a lone Codex 7d primary window to the weekly window", async () => {
+    writeCodexAuth(codexHome, "at_codex_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse(
+              makeCodexResponse({
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 37,
+                    reset_at: 1_749_072_000,
+                    limit_window_seconds: 604_800,
+                  },
+                  secondary_window: null,
+                },
+                code_review_rate_limit: null,
+              }),
+            ),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const codex = findProvider(result, "codex");
+
+    expect(codex.status).toBe("available");
+    expect(codex.windows).toEqual([expect.objectContaining({ id: "weekly", usedPct: 37 })]);
+    expect(codex.windows.some((window) => window.id === "session")).toBe(false);
+  });
+
+  it("maps a lone Codex 5h primary window to the session window", async () => {
+    writeCodexAuth(codexHome, "at_codex_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse(
+              makeCodexResponse({
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 23,
+                    reset_at: 1_749_072_000,
+                    limit_window_seconds: 18_000,
+                  },
+                  secondary_window: null,
+                },
+                code_review_rate_limit: null,
+              }),
+            ),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const codex = findProvider(result, "codex");
+
+    expect(codex.status).toBe("available");
+    expect(codex.windows).toEqual([expect.objectContaining({ id: "session", usedPct: 23 })]);
+    expect(codex.windows.some((window) => window.id === "weekly")).toBe(false);
+  });
+
   it("treats a Codex HTML usage response as auth failure", async () => {
     writeCodexAuth(codexHome, "at_codex_stale");
     fetchApi = mockFetch(

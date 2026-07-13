@@ -36,6 +36,7 @@ const CodexAuthSchema = z.object({
 const CodexWindowSchema = z.object({
   used_percent: ApiNumberSchema.optional(),
   reset_at: ApiNumberSchema.optional(),
+  limit_window_seconds: ApiNumberSchema.optional(),
 });
 
 const CodexUsageResponseSchema = z.object({
@@ -82,6 +83,45 @@ function codexWindow(
   };
 }
 
+interface CodexWindowKind {
+  id: string;
+  label: string;
+  seconds: number;
+}
+
+// OpenAI reports each rate-limit window's span in limit_window_seconds. We map
+// the span to a stable window id/label the app knows how to render ("session"
+// -> 5h, "weekly" -> 7d) instead of assuming the primary slot is always 5h and
+// the secondary always 7d. This keeps the mapping correct no matter which slot
+// a window arrives in, or when only one window is present (OpenAI dropped the
+// 5h window, so the lone primary window now carries the 7d limit).
+const CODEX_WINDOW_KINDS: CodexWindowKind[] = [
+  { id: "session", label: "Session", seconds: 5 * 60 * 60 },
+  { id: "weekly", label: "Weekly", seconds: 7 * 24 * 60 * 60 },
+];
+
+// Build a rendered window from a raw Codex window, choosing its kind by the
+// reported span. When the span is missing (or unrecognized) we fall back to the
+// slot's historical kind so older/unknown responses still map sensibly.
+function codexRateLimitWindow(
+  window: CodexWindow | null | undefined,
+  fallback: CodexWindowKind,
+): ProviderUsageWindow | null {
+  const normalized = codexWindow(window);
+  if (!normalized) return null;
+  const seconds = window?.limit_window_seconds;
+  const kind =
+    (seconds != null ? CODEX_WINDOW_KINDS.find((k) => k.seconds === seconds) : undefined) ??
+    fallback;
+  return windowFromUsedPct({
+    id: kind.id,
+    label: kind.label,
+    utilizationPct: normalized.usedPct,
+    resetsAt: normalized.resetsAt,
+    tone: toneFromUsedPct(normalized.usedPct),
+  });
+}
+
 export class CodexQuotaProvider implements ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
@@ -89,11 +129,13 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   private readonly codexHome: string;
   private readonly fetchApi: ProviderApiFetch;
   private readonly env: Record<string, string> | undefined;
+  private readonly logger: Logger;
 
   constructor(options: CodexQuotaProviderOptions) {
     this.providerId = options.context?.providerId ?? "codex";
     this.displayName = options.context?.displayName ?? "Codex";
     this.env = options.context?.env;
+    this.logger = options.logger.child({ module: "codex-quota-provider" });
     this.codexHome =
       options.codexHome ||
       resolveProviderEnv(this.env, ["CODEX_HOME"]) ||
@@ -120,33 +162,34 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   private toUsage(resp: CodexUsageResponse): ProviderUsage {
-    const session = codexWindow(resp.rate_limit?.primary_window);
-    const weekly = codexWindow(resp.rate_limit?.secondary_window);
-    const codeReview = codexWindow(resp.code_review_rate_limit?.primary_window);
+    // Log the raw rate-limit shape so we can observe which windows OpenAI
+    // actually returns (e.g. whether the 5h primary window is present).
+    this.logger.debug(
+      {
+        providerId: this.providerId,
+        primaryWindow: resp.rate_limit?.primary_window ?? null,
+        secondaryWindow: resp.rate_limit?.secondary_window ?? null,
+        codeReviewWindow: resp.code_review_rate_limit?.primary_window ?? null,
+      },
+      "Codex usage windows",
+    );
+    const [sessionKind, weeklyKind] = CODEX_WINDOW_KINDS;
+    // Classify each window by its reported span, falling back to the slot's
+    // historical kind. Deduplicate by id so two windows can never collide on
+    // the same rendered slot (e.g. if both reported the same span).
     const windows: ProviderUsageWindow[] = [];
+    const seenIds = new Set<string>();
+    for (const built of [
+      codexRateLimitWindow(resp.rate_limit?.primary_window, sessionKind),
+      codexRateLimitWindow(resp.rate_limit?.secondary_window, weeklyKind),
+    ]) {
+      if (built && !seenIds.has(built.id)) {
+        seenIds.add(built.id);
+        windows.push(built);
+      }
+    }
 
-    if (session) {
-      windows.push(
-        windowFromUsedPct({
-          id: "session",
-          label: "Session",
-          utilizationPct: session.usedPct,
-          resetsAt: session.resetsAt,
-          tone: toneFromUsedPct(session.usedPct),
-        }),
-      );
-    }
-    if (weekly) {
-      windows.push(
-        windowFromUsedPct({
-          id: "weekly",
-          label: "Weekly",
-          utilizationPct: weekly.usedPct,
-          resetsAt: weekly.resetsAt,
-          tone: toneFromUsedPct(weekly.usedPct),
-        }),
-      );
-    }
+    const codeReview = codexWindow(resp.code_review_rate_limit?.primary_window);
     if (codeReview) {
       windows.push(
         windowFromUsedPct({
