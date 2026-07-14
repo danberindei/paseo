@@ -59,6 +59,9 @@ describe("buildACPClientCapabilities", () => {
         writeTextFile: false,
       },
       terminal: true,
+      elicitation: {
+        form: {},
+      },
     });
   });
 
@@ -79,6 +82,9 @@ describe("buildACPClientCapabilities", () => {
         writeTextFile: false,
       },
       terminal: false,
+      elicitation: {
+        form: {},
+      },
       _meta: { source: "provider" },
     });
   });

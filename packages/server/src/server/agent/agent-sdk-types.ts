@@ -502,6 +502,7 @@ export interface AgentPermissionRequest {
   name: string;
   kind: AgentPermissionRequestKind;
   title?: string;
+  displayName?: string;
   description?: string;
   input?: AgentMetadata;
   detail?: ToolCallDetail;
@@ -680,6 +681,12 @@ export interface AgentSession {
   getCurrentMode(): Promise<string | null>;
   setMode(modeId: string): Promise<void | AgentProviderNotice>;
   getPendingPermissions(): AgentPermissionRequest[];
+  /**
+   * Implementations must emit a matching `permission_resolved` stream event
+   * once the upstream agent/provider has actually accepted the response.
+   * The daemon treats that event, not the method return, as the authoritative
+   * resolution boundary for pending permission state.
+   */
   respondToPermission(
     requestId: string,
     response: AgentPermissionResponse,

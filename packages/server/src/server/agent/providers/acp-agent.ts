@@ -55,6 +55,8 @@ import {
   type UsageUpdate,
   type WaitForTerminalExitRequest,
   type WriteTextFileRequest,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type Stream as ACPStream,
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
@@ -253,6 +255,9 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
     writeTextFile: false,
   },
   terminal: true,
+  elicitation: {
+    form: {},
+  },
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
@@ -504,13 +509,20 @@ export interface ACPToolSnapshot {
   rawOutput?: unknown;
 }
 
-interface PendingPermission {
-  request: AgentPermissionRequest;
-  options: PermissionOption[];
-  resolve: (response: RequestPermissionResponse) => void;
-  reject: (error: Error) => void;
-  turnId: string | null;
-}
+type PendingPermission =
+  | {
+      kind: "permission";
+      request: AgentPermissionRequest;
+      options: PermissionOption[];
+      resolve: (response: RequestPermissionResponse) => void;
+      turnId: string | null;
+    }
+  | {
+      kind: "elicitation";
+      request: AgentPermissionRequest;
+      resolve: (response: CreateElicitationResponse) => void;
+      turnId: string | null;
+    };
 
 interface PendingUserMessage {
   text: string;
@@ -1214,6 +1226,9 @@ export class ACPAgentClient implements AgentClient {
     return {
       async requestPermission(): Promise<RequestPermissionResponse> {
         return { outcome: { outcome: "cancelled" } };
+      },
+      async unstable_createElicitation(): Promise<CreateElicitationResponse> {
+        return { action: "cancel" };
       },
       async sessionUpdate(): Promise<void> {},
       async readTextFile(params: ReadTextFileRequest) {
@@ -2118,24 +2133,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
-    const selectedOption = selectPermissionOption(pending.options, response);
-    if (response.selectedActionId !== undefined && !selectedOption) {
-      throw new Error(
-        `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+    if (pending.kind === "elicitation") {
+      this.pendingPermissions.delete(requestId);
+      if (response.behavior === "deny") {
+        pending.resolve({ action: "decline" });
+      } else {
+        const content = mapQuestionAnswersToElicitationContent(pending.request, response);
+        pending.resolve({ action: "accept", ...(content ? { content } : {}) });
+      }
+    } else {
+      const selectedOption = selectPermissionOption(pending.options, response);
+      if (response.selectedActionId !== undefined && !selectedOption) {
+        throw new Error(
+          `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+        );
+      }
+      this.pendingPermissions.delete(requestId);
+      pending.resolve(
+        selectedOption
+          ? {
+              outcome: {
+                outcome: "selected",
+                optionId: selectedOption.optionId,
+              },
+            }
+          : { outcome: { outcome: "cancelled" } },
       );
     }
-
-    this.pendingPermissions.delete(requestId);
-    pending.resolve(
-      selectedOption
-        ? {
-            outcome: {
-              outcome: "selected",
-              optionId: selectedOption.optionId,
-            },
-          }
-        : { outcome: { outcome: "cancelled" } },
-    );
 
     this.pushEvent({
       type: "permission_resolved",
@@ -2171,7 +2195,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
+      if (pending.kind === "elicitation") {
+        pending.resolve({ action: "cancel" });
+      } else {
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
     }
     this.pendingPermissions.clear();
 
@@ -2190,7 +2218,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.settleCommandsReady();
 
     for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
+      if (pending.kind === "elicitation") {
+        pending.resolve({ action: "cancel" });
+      } else {
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
     }
     this.pendingPermissions.clear();
 
@@ -2255,12 +2287,44 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     const request = mapPermissionRequest(this.provider, requestId, params, toolSnapshot);
 
-    const promise = new Promise<RequestPermissionResponse>((resolve, reject) => {
+    const promise = new Promise<RequestPermissionResponse>((resolve) => {
       this.pendingPermissions.set(requestId, {
+        kind: "permission",
         request,
         options: params.options,
         resolve,
-        reject,
+        turnId: this.activeForegroundTurnId,
+      });
+    });
+
+    this.pushEvent({
+      type: "permission_requested",
+      provider: this.provider,
+      request,
+      turnId: this.activeForegroundTurnId ?? undefined,
+    });
+    return promise;
+  }
+
+  async unstable_createElicitation(
+    params: CreateElicitationRequest,
+  ): Promise<CreateElicitationResponse> {
+    const requestId = randomUUID();
+    const questions = mapElicitationToQuestions(params);
+    const request: AgentPermissionRequest = {
+      id: requestId,
+      provider: this.provider,
+      name: "elicitation",
+      kind: "question",
+      title: params.message,
+      input: { questions },
+    };
+
+    const promise = new Promise<CreateElicitationResponse>((resolve) => {
+      this.pendingPermissions.set(requestId, {
+        kind: "elicitation",
+        request,
+        resolve,
         turnId: this.activeForegroundTurnId,
       });
     });
@@ -3580,6 +3644,107 @@ function isACPChooserRequest(options: PermissionOption[]): boolean {
     allowKinds.add(option.kind);
   }
   return false;
+}
+
+interface QuestionItem {
+  question: string;
+  header: string;
+  options: { label: string; description?: string }[];
+  multiSelect: boolean;
+}
+
+// oxlint-disable-next-line complexity
+function mapElicitationToQuestions(params: CreateElicitationRequest): QuestionItem[] {
+  if (params.mode !== "form" || !params.requestedSchema?.properties) {
+    return [
+      {
+        question: params.message,
+        header: "answer",
+        options: [],
+        multiSelect: false,
+      },
+    ];
+  }
+
+  const properties = params.requestedSchema.properties;
+  const questions: QuestionItem[] = [];
+
+  for (const [key, prop] of Object.entries(properties)) {
+    const description = "description" in prop ? (prop.description ?? undefined) : undefined;
+    const question = description ?? key;
+
+    if (prop.type === "string") {
+      const options: { label: string; description?: string }[] = [];
+      if (prop.oneOf) {
+        for (const entry of prop.oneOf) {
+          options.push({ label: entry.title });
+        }
+      } else if (prop.enum) {
+        for (const value of prop.enum) {
+          options.push({ label: value });
+        }
+      }
+      questions.push({ question, header: key, options, multiSelect: false });
+    } else if (prop.type === "boolean") {
+      questions.push({
+        question,
+        header: key,
+        options: [{ label: "Yes" }, { label: "No" }],
+        multiSelect: false,
+      });
+    } else if (prop.type === "array" && prop.items) {
+      const options: { label: string; description?: string }[] = [];
+      if ("anyOf" in prop.items) {
+        for (const entry of prop.items.anyOf) {
+          options.push({ label: entry.title });
+        }
+      } else if ("enum" in prop.items) {
+        for (const value of prop.items.enum) {
+          options.push({ label: value });
+        }
+      }
+      questions.push({ question, header: key, options, multiSelect: true });
+    } else {
+      questions.push({ question, header: key, options: [], multiSelect: false });
+    }
+  }
+
+  return questions.length > 0
+    ? questions
+    : [{ question: params.message, header: "answer", options: [], multiSelect: false }];
+}
+
+function mapQuestionAnswersToElicitationContent(
+  _request: AgentPermissionRequest,
+  response: AgentPermissionResponse,
+): Record<string, string | number | boolean | string[]> | undefined {
+  if (response.behavior !== "allow") {
+    return undefined;
+  }
+
+  const answers = response.updatedInput?.answers;
+  if (!answers || typeof answers !== "object") {
+    return undefined;
+  }
+
+  const content: Record<string, string | number | boolean | string[]> = {};
+  for (const [key, value] of Object.entries(answers as Record<string, unknown>)) {
+    if (typeof value === "string") {
+      if (value === "Yes") {
+        content[key] = true;
+      } else if (value === "No") {
+        content[key] = false;
+      } else {
+        content[key] = value;
+      }
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      content[key] = value;
+    } else if (Array.isArray(value)) {
+      content[key] = value.filter((v): v is string => typeof v === "string");
+    }
+  }
+
+  return Object.keys(content).length > 0 ? content : undefined;
 }
 
 function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {
