@@ -64,10 +64,10 @@ function getMeterColors(
   theme: ReturnType<typeof useUnistyles>["theme"],
 ): { progress: string; track: string } {
   const track = theme.colors.surface3;
-  if (percentage > 90) {
+  if (percentage >= 75) {
     return { progress: theme.colors.destructive, track };
   }
-  if (percentage >= 70) {
+  if (percentage >= 50) {
     return { progress: theme.colors.palette.amber[500], track };
   }
   return { progress: theme.colors.foregroundMuted, track };
