@@ -1838,10 +1838,11 @@ export const useSessionStore = create<SessionStore>()(
           const nextForAgent = new Set(existing);
           let changed = false;
           for (const id of requestIds) {
-            if (!nextForAgent.has(id)) {
-              nextForAgent.add(id);
+            if (nextForAgent.delete(id)) {
               changed = true;
             }
+            nextForAgent.add(id);
+            changed = true;
           }
           if (!changed) {
             return prev;

@@ -761,12 +761,11 @@ describe("resolvedPermissionIds", () => {
     expect(Array.from(tombstones ?? [])).toEqual(["req-1", "req-2"]);
   });
 
-  it("is a no-op when all ids are already tombstoned", () => {
+  it("is a no-op when request ids are empty", () => {
     initializeTestSession();
-    const store = useSessionStore.getState();
-    store.addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
+    useSessionStore.getState().addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
     const before = useSessionStore.getState().sessions["test-server"]?.resolvedPermissionIds;
-    store.addResolvedPermissionIds("test-server", "agent-1", ["req-1"]);
+    useSessionStore.getState().addResolvedPermissionIds("test-server", "agent-1", []);
     const after = useSessionStore.getState().sessions["test-server"]?.resolvedPermissionIds;
     expect(after).toBe(before);
   });
@@ -803,5 +802,22 @@ describe("resolvedPermissionIds", () => {
     expect(tombstones?.has("req-4")).toBe(false);
     expect(tombstones?.has("req-5")).toBe(true);
     expect(tombstones?.has("req-104")).toBe(true);
+  });
+
+  it("refreshes existing ids so recently resolved requests are not evicted first", () => {
+    initializeTestSession();
+    const ids = Array.from({ length: 100 }, (_, i) => `req-${i}`);
+    const store = useSessionStore.getState();
+    store.addResolvedPermissionIds("test-server", "agent-1", ids);
+    store.addResolvedPermissionIds("test-server", "agent-1", ["req-0", "req-100"]);
+
+    const tombstones = useSessionStore
+      .getState()
+      .sessions["test-server"]?.resolvedPermissionIds.get("agent-1");
+
+    expect(tombstones?.size).toBe(100);
+    expect(tombstones?.has("req-0")).toBe(true);
+    expect(tombstones?.has("req-1")).toBe(false);
+    expect(tombstones?.has("req-100")).toBe(true);
   });
 });
