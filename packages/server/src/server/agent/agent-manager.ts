@@ -353,6 +353,22 @@ interface HandleStreamEventOptions {
   fromHistory?: boolean;
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let deferredResolve!: (value: T) => void;
+  let deferredReject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    deferredResolve = res;
+    deferredReject = rej;
+  });
+  return { promise, resolve: deferredResolve, reject: deferredReject };
+}
+
 interface ManagedAgentBase {
   id: string;
   provider: AgentProvider;
@@ -373,6 +389,10 @@ interface ManagedAgentBase {
   features?: AgentFeature[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
+  permissionResolutionWaiters: Map<
+    string,
+    Deferred<Extract<AgentStreamEvent, { type: "permission_resolved" }>>
+  >;
   bufferedPermissionResolutions: Map<
     string,
     Extract<AgentStreamEvent, { type: "permission_resolved" }>
@@ -1748,6 +1768,7 @@ export class AgentManager {
         features: record.features,
         currentModeId: record.lastModeId ?? null,
         pendingPermissions: new Map(),
+        permissionResolutionWaiters: new Map(),
         bufferedPermissionResolutions: new Map(),
         inFlightPermissionResponses: new Set(),
         pendingReplacement: false,
@@ -2762,32 +2783,53 @@ export class AgentManager {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
+    if (agent.inFlightPermissionResponses.has(requestId)) {
+      throw new Error(`Permission response already in flight for request '${requestId}'`);
+    }
+
+    const resolutionWaiter =
+      createDeferred<Extract<AgentStreamEvent, { type: "permission_resolved" }>>();
+    agent.permissionResolutionWaiters.set(requestId, resolutionWaiter);
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
       const result = await agent.session.respondToPermission(requestId, response);
-      agent.pendingPermissions.delete(requestId);
+      const resolutionEvent =
+        agent.bufferedPermissionResolutions.get(requestId) ??
+        (await this.waitForPermissionResolution(agentId, requestId, resolutionWaiter));
 
-      try {
-        await this.refreshSessionState(agent);
-      } catch {
-        // Ignore refresh errors - state sync after permission approval is best effort.
-      }
-
-      this.touchUpdatedAt(agent);
-      await this.persistSnapshot(agent);
-      this.emitState(agent);
-
-      const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
-      if (bufferedResolution) {
-        agent.bufferedPermissionResolutions.delete(requestId);
-        this.dispatchStream(agent.id, bufferedResolution, { timestamp: new Date().toISOString() });
-      }
-
+      await this.finalizePermissionResolution(agent, resolutionEvent);
       return result;
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
+      agent.permissionResolutionWaiters.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
+    }
+  }
+
+  private async waitForPermissionResolution(
+    agentId: string,
+    requestId: string,
+    waiter: Deferred<Extract<AgentStreamEvent, { type: "permission_resolved" }>>,
+  ): Promise<Extract<AgentStreamEvent, { type: "permission_resolved" }>> {
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        waiter.promise,
+        new Promise<Extract<AgentStreamEvent, { type: "permission_resolved" }>>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              new Error(
+                `Timed out waiting for permission_resolved for agent ${agentId} request ${requestId}`,
+              ),
+            );
+          }, 15_000);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -3403,6 +3445,7 @@ export class AgentManager {
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
+      permissionResolutionWaiters: new Map(),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
@@ -3684,6 +3727,22 @@ export class AgentManager {
 
     this.syncFeaturesFromSession(agent);
     await this.refreshRuntimeInfo(agent, options);
+  }
+
+  private async finalizePermissionResolution(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "permission_resolved" }>,
+  ): Promise<void> {
+    try {
+      await this.refreshSessionState(agent);
+    } catch {
+      // Ignore refresh errors - state sync after permission approval is best effort.
+    }
+
+    this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent);
+    this.emitState(agent);
+    this.dispatchStream(agent.id, event);
   }
 
   private async refreshRuntimeInfo(
@@ -4336,6 +4395,7 @@ export class AgentManager {
     agent.pendingPermissions.delete(event.requestId);
     if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
       agent.bufferedPermissionResolutions.set(event.requestId, event);
+      agent.permissionResolutionWaiters.get(event.requestId)?.resolve(event);
       flags.shouldDispatchEvent = false;
       return;
     }

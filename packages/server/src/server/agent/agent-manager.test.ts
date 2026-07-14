@@ -8451,13 +8451,17 @@ test("respondToPermission updates currentModeId after plan approval", async () =
       return { sessionId: this.id, finalText: "", timeline: [] };
     }
 
+    pushEvent(event: AgentStreamEvent): void {
+      for (const cb of this.subs) {
+        cb(event);
+      }
+    }
+
     async startTurn(): Promise<{ turnId: string }> {
       const turnId = `plan-turn-${++this.turnCounter}`;
       setTimeout(() => {
-        for (const cb of this.subs) {
-          cb({ type: "turn_started", provider: this.provider, turnId });
-          cb({ type: "turn_completed", provider: this.provider, turnId });
-        }
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
       }, 0);
       return { turnId };
     }
@@ -8500,6 +8504,12 @@ test("respondToPermission updates currentModeId after plan approval", async () =
       if (response.behavior === "allow") {
         sessionMode = "acceptEdits";
       }
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId: "perm-123",
+        resolution: { behavior: response.behavior as "allow" | "deny" },
+      });
     }
 
     describePersistence() {
@@ -8625,6 +8635,12 @@ test("respondToPermission refreshes features and runtime info after provider-man
         createFeature({ id: "fast_mode", label: "Fast", value: true }),
         createFeature({ id: "plan_mode", label: "Plan", value: false }),
       ];
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId: "perm-plan-1",
+        resolution: { behavior: "allow" },
+      });
     }
   }
 
@@ -8790,6 +8806,81 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   const resolvedIndex = seen.findIndex((entry) => entry === "resolved:perm-order-1");
   expect(refreshedStateIndex).toBeGreaterThanOrEqual(0);
   expect(resolvedIndex).toBeGreaterThan(refreshedStateIndex);
+});
+
+test("respondToPermission waits for permission_resolved before resolving", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-permission-wait-"));
+
+  class DelayedPermissionSession extends TestAgentSession {
+    private pending = [
+      {
+        id: "perm-wait-1",
+        provider: "codex" as const,
+        name: "CodexCommandApproval",
+        kind: "tool" as const,
+        input: { command: "echo hi" },
+      },
+    ];
+
+    override getPendingPermissions() {
+      return this.pending;
+    }
+
+    override async respondToPermission(): Promise<void> {
+      this.pending = [];
+    }
+
+    emitResolution(): void {
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId: "perm-wait-1",
+        resolution: { behavior: "allow" },
+      });
+    }
+  }
+
+  let session: DelayedPermissionSession | null = null;
+  class DelayedPermissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new DelayedPermissionSession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new DelayedPermissionClient(),
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  let settled = false;
+  const responsePromise = manager.respondToPermission(snapshot.id, "perm-wait-1", {
+    behavior: "allow",
+  });
+  void responsePromise.then(() => {
+    settled = true;
+    return undefined;
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  session?.emitResolution();
+  await responsePromise;
+  expect(settled).toBe(true);
 });
 
 test("close during in-flight stream does not clear persistence sessionId", async () => {
