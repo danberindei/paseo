@@ -11598,6 +11598,12 @@ test("respondToPermission updates currentModeId after plan approval", async () =
       return { sessionId: this.id, finalText: "", timeline: [] };
     }
 
+    pushEvent(event: AgentStreamEvent): void {
+      for (const cb of this.subs) {
+        cb(event);
+      }
+    }
+
     async startTurn(): Promise<{ turnId: string }> {
       const turnId = `plan-turn-${++this.turnCounter}`;
       setTimeout(() => {
@@ -11647,6 +11653,12 @@ test("respondToPermission updates currentModeId after plan approval", async () =
       if (response.behavior === "allow") {
         sessionMode = "acceptEdits";
       }
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId: "perm-123",
+        resolution: { behavior: response.behavior as "allow" | "deny" },
+      });
     }
 
     describePersistence() {
@@ -11787,6 +11799,12 @@ test("respondToPermission applies provider option changes and refreshes runtime 
         provider: this.provider,
         patch: { plan_mode: false },
       });
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId: "perm-plan-1",
+        resolution: { behavior: "allow" },
+      });
     }
   }
 
@@ -11925,6 +11943,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   );
 
   const seen: string[] = [];
+  const resolutionTimestamps: (string | undefined)[] = [];
   manager.subscribe((event) => {
     if ("agentId" in event && event.agentId !== snapshot.id) {
       return;
@@ -11937,6 +11956,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
     }
     if (event.type === "agent_stream" && event.event.type === "permission_resolved") {
       seen.push(`resolved:${event.event.requestId}`);
+      resolutionTimestamps.push(event.timestamp);
     }
   });
 
@@ -11948,6 +11968,313 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   const resolvedIndex = seen.findIndex((entry) => entry === "resolved:perm-order-1");
   expect(refreshedStateIndex).toBeGreaterThanOrEqual(0);
   expect(resolvedIndex).toBeGreaterThan(refreshedStateIndex);
+  expect(resolutionTimestamps).toEqual([expect.any(String)]);
+});
+
+test("respondToPermission waits for permission_resolved before resolving", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-permission-wait-"));
+
+  class DelayedPermissionSession extends TestAgentSession {
+    private pending = [
+      {
+        id: "perm-wait-1",
+        provider: "codex" as const,
+        name: "CodexCommandApproval",
+        kind: "tool" as const,
+        input: { command: "echo hi" },
+      },
+    ];
+
+    override getPendingPermissions() {
+      return this.pending;
+    }
+
+    override async respondToPermission(): Promise<void> {
+      this.pending = [];
+    }
+
+    emitResolution(): void {
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId: "perm-wait-1",
+        resolution: { behavior: "allow" },
+      });
+    }
+  }
+
+  let session: DelayedPermissionSession | null = null;
+  class DelayedPermissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new DelayedPermissionSession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new DelayedPermissionClient(),
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  let settled = false;
+  const responsePromise = manager.respondToPermission(snapshot.id, "perm-wait-1", {
+    behavior: "allow",
+  });
+  void responsePromise.then(() => {
+    settled = true;
+    return undefined;
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  session?.emitResolution();
+  await responsePromise;
+  expect(settled).toBe(true);
+});
+
+class TimeoutRefreshPermissionSession extends TestAgentSession {
+  private pending = [
+    {
+      id: "perm-timeout-1",
+      provider: "codex" as const,
+      name: "CodexCommandApproval",
+      kind: "tool" as const,
+      input: { command: "echo hi" },
+    },
+  ];
+  private readonly refreshGate = deferred<void>();
+  private heldRefresh = false;
+
+  override getPendingPermissions() {
+    return this.pending;
+  }
+
+  override async respondToPermission(): Promise<void> {
+    this.pending = [];
+  }
+
+  override async getAvailableModes() {
+    if (this.heldRefresh) {
+      await this.refreshGate.promise;
+    }
+    return [];
+  }
+
+  holdRefresh(): void {
+    this.heldRefresh = true;
+  }
+
+  releaseRefresh(): void {
+    this.refreshGate.resolve();
+  }
+
+  emitResolution(): void {
+    this.pushEvent({
+      type: "permission_resolved",
+      provider: this.provider,
+      requestId: "perm-timeout-1",
+      resolution: { behavior: "allow" },
+    });
+  }
+}
+
+class TimeoutRefreshPermissionClient extends TestAgentClient {
+  session: TimeoutRefreshPermissionSession | null = null;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new TimeoutRefreshPermissionSession(config);
+    return this.session;
+  }
+}
+
+async function createTimeoutRefreshPermissionAgent(registry?: AgentStorage) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-permission-timeout-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+
+  const client = new TimeoutRefreshPermissionClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const session = client.session;
+  if (!session) {
+    throw new Error("Agent creation did not create a session");
+  }
+  return { manager, session, snapshot };
+}
+
+function collectPermissionTimeoutEvents(manager: AgentManager, agentId: string): string[] {
+  const seen: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agentId) {
+        seen.push(`state:${event.agent.pendingPermissions.size}`);
+        return;
+      }
+      if (
+        event.type === "agent_stream" &&
+        event.event.type === "permission_resolved" &&
+        event.event.requestId === "perm-timeout-1"
+      ) {
+        seen.push("resolved");
+      }
+    },
+    // No replay: every state event in this list was emitted after the subscription,
+    // so an ordering assertion cannot be satisfied by the initial snapshot.
+    { agentId, replayState: false },
+  );
+  return seen;
+}
+
+test("respondToPermission dispatches a permission_resolved that arrives during the post-timeout refresh", async () => {
+  const { manager, session, snapshot } = await createTimeoutRefreshPermissionAgent();
+  const seen = collectPermissionTimeoutEvents(manager, snapshot.id);
+
+  session.holdRefresh();
+  // Only setTimeout is faked, so the 15s wait expires without a real delay while
+  // storage, provider promises and Date stay real.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const settled = manager
+      .respondToPermission(snapshot.id, "perm-timeout-1", { behavior: "allow" })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    // The wait expired and the post-timeout refresh is parked, so these events
+    // arrive while the response is still in flight and delivery is suppressed.
+    session.emitResolution();
+    session.emitResolution();
+    expect(seen).toEqual([]);
+
+    session.releaseRefresh();
+    const error = await settled;
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/Timed out waiting for permission_resolved/);
+    expect(seen.filter((entry) => entry === "resolved")).toHaveLength(1);
+    // The state preceding the resolution is the refreshed one, with the pending
+    // permission already cleared, so it cannot be the pre-response snapshot.
+    expect(seen.indexOf("state:0")).toBeGreaterThanOrEqual(0);
+    expect(seen.indexOf("state:0")).toBeLessThan(seen.indexOf("resolved"));
+    expect(seen).not.toContain("state:1");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("respondToPermission dispatches a late permission_resolved when the post-timeout refresh cannot persist", async () => {
+  class FailingPersistStorage extends AgentStorage {
+    failApply = false;
+    failures = 0;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (this.failApply) {
+        this.failures += 1;
+        throw new Error("snapshot write failed");
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  const storageDir = mkdtempSync(join(tmpdir(), "agent-manager-permission-timeout-storage-"));
+  onTestFinished(() => rmSync(storageDir, { recursive: true, force: true }));
+  const storage = new FailingPersistStorage(storageDir, logger);
+  const { manager, session, snapshot } = await createTimeoutRefreshPermissionAgent(storage);
+  // Let creation-time background writes settle before failures are injected.
+  await storage.flush();
+  storage.failApply = true;
+  const warnSpy = vi.spyOn(logger, "warn");
+  const seen = collectPermissionTimeoutEvents(manager, snapshot.id);
+
+  session.holdRefresh();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const settled = manager
+      .respondToPermission(snapshot.id, "perm-timeout-1", { behavior: "allow" })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    session.emitResolution();
+    session.emitResolution();
+    expect(seen).toEqual([]);
+
+    session.releaseRefresh();
+    const error = await settled;
+
+    expect(seen.filter((entry) => entry === "resolved")).toHaveLength(1);
+    // The persistence failure is logged, not substituted for the timeout error.
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/Timed out waiting for permission_resolved/);
+    expect(storage.failures).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error), agentId: snapshot.id }),
+      "Failed to refresh state after permission response timeout",
+    );
+  } finally {
+    vi.useRealTimers();
+    warnSpy.mockRestore();
+  }
+});
+
+test("respondToPermission times out without a permission_resolved after the post-timeout refresh", async () => {
+  const { manager, session, snapshot } = await createTimeoutRefreshPermissionAgent();
+  const seen = collectPermissionTimeoutEvents(manager, snapshot.id);
+
+  session.holdRefresh();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const settled = manager
+      .respondToPermission(snapshot.id, "perm-timeout-1", { behavior: "allow" })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    session.releaseRefresh();
+    const error = await settled;
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/Timed out waiting for permission_resolved/);
+    expect(seen.filter((entry) => entry === "resolved")).toHaveLength(0);
+    expect(seen).toContain("state:0");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("close during in-flight stream does not clear persistence sessionId", async () => {
