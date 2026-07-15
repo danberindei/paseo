@@ -372,6 +372,21 @@ if (electronFlags) {
   log.info("[electron-flags]", electronFlags);
 }
 
+// Opt-in Chrome DevTools Protocol endpoint for the renderer. Lets heap snapshots
+// and CPU profiles be captured externally over CDP (streamed to disk, cancellable)
+// instead of via in-window DevTools, which can hang the process while it builds a
+// multi-GB object graph in-process. Bound to 127.0.0.1 so a launch never exposes
+// the debugger on other interfaces. Desktop dev sets this through scripts/dev.sh
+// (via PASEO_ELECTRON_FLAGS); the packaged app has no shell wrapper, so read the
+// env var directly here. The hasSwitch guard avoids a duplicate switch when both
+// paths supply the port. Must run before app.whenReady().
+const remoteDebuggingPort = process.env.PASEO_ELECTRON_REMOTE_DEBUGGING_PORT?.trim();
+if (remoteDebuggingPort && !app.commandLine.hasSwitch("remote-debugging-port")) {
+  app.commandLine.appendSwitch("remote-debugging-port", remoteDebuggingPort);
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  log.info("[remote-debugging] CDP endpoint enabled on 127.0.0.1:", remoteDebuggingPort);
+}
+
 let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   argv: process.argv,
   isDefaultApp: process.defaultApp,

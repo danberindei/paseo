@@ -149,6 +149,21 @@ The verifier reads the same `EXPO_PORT` and
 explicit remote-debugging port for verifier runs, and set both when testing an
 isolated instance on non-default ports.
 
+The packaged/production desktop app ships with no debug port. To capture a heap
+snapshot or CPU profile from a production build, launch it with
+`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` set; `main.ts` opens the CDP endpoint on
+`127.0.0.1` at that port (loopback only, so it is never exposed on other
+interfaces). The port must be present at the original launch: relaunching the
+binary hits the single-instance lock and the flag never reaches the running
+instance, so a window that is already bloated cannot be given a port after the
+fact. Once the endpoint is open, capture a snapshot externally over CDP and
+stream it to disk rather than through in-window DevTools, which can hang the
+process while it builds a multi-GB object graph in-process.
+
+```bash
+PASEO_ELECTRON_REMOTE_DEBUGGING_PORT=9223 /path/to/Paseo
+```
+
 When running a dedicated Electron QA instance against a non-default Expo port, set
 `EXPO_DEV_URL` explicitly. Desktop main defaults to `http://localhost:8081`, so
 `PASEO_PORT=57928` alone starts Metro on 57928 but Electron still loads 8081.
