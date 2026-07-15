@@ -18,8 +18,8 @@ export async function setSupportedProviderSettings(url: string): Promise<void> {
           enabled: true,
           additionalModels: [
             {
-              id: "gpt-5.2",
-              label: "GPT-5.2",
+              id: "gpt-5.6",
+              label: "GPT-5.6",
               isDefault: true,
             },
           ],
