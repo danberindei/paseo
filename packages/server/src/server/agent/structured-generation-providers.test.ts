@@ -64,8 +64,8 @@ describe("resolveStructuredGenerationProviders", () => {
         models: [
           {
             provider: "work-codex",
-            id: "gpt-5.4-mini-2026",
-            label: "GPT 5.4 Mini",
+            id: "gpt-5.6-luna-2026",
+            label: "GPT-5.6 Luna",
             isDefault: true,
             thinkingOptions: [
               { id: "low", label: "Low" },
@@ -98,7 +98,7 @@ describe("resolveStructuredGenerationProviders", () => {
 
     expect(providers).toEqual([
       { provider: "work-claude", model: "claude-haiku-2026" },
-      { provider: "work-codex", model: "gpt-5.4-mini-2026", thinkingOptionId: "low" },
+      { provider: "work-codex", model: "gpt-5.6-luna-2026", thinkingOptionId: "low" },
       { provider: "router", model: "minimax-m3-free" },
       { provider: "router", model: "nemotron-3-super-free" },
       { provider: "focused-provider", model: "focused-model", thinkingOptionId: "high" },

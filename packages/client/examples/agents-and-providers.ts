@@ -14,7 +14,7 @@ export async function createCodexAgent(url: string, cwd: string): Promise<string
 
     const agent = await client.agents.create({
       config: {
-        provider: "codex/gpt-5.5",
+        provider: "codex/gpt-5.6",
         modeId: "full-access",
       },
       cwd,

@@ -338,8 +338,8 @@ async function seedBrowserForDaemon(page: Page, input: { serverId: string; port:
         provider: "codex",
         providerPreferences: {
           codex: {
-            model: "gpt-5.4-mini",
-            thinkingByModel: { "gpt-5.4-mini": "low" },
+            model: "gpt-5.6-luna",
+            thinkingByModel: { "gpt-5.6-luna": "low" },
           },
         },
       } satisfies FormPreferences,

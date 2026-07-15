@@ -216,7 +216,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     voice: {
       enabled: true,
       defaultModeId: "auto",
-      defaultModel: "gpt-5.4-mini",
+      defaultModel: "gpt-5.6-luna",
     },
   },
   {

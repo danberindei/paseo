@@ -58,10 +58,10 @@ async function seedCodexDefaultPermissionPreferences(page: Page): Promise<void> 
           provider: "codex",
           providerPreferences: {
             codex: {
-              model: "gpt-5.4-mini",
+              model: "gpt-5.6-luna",
               mode: "auto",
               thinkingByModel: {
-                "gpt-5.4-mini": "low",
+                "gpt-5.6-luna": "low",
               },
             },
             mock: {
@@ -202,7 +202,7 @@ test.describe("New workspace Codex mode preferences", () => {
         workspaceId: seeded.workspaceId,
         title: "Codex live mode preference e2e",
         modeId: "auto",
-        model: "gpt-5.4-mini",
+        model: "gpt-5.6-luna",
       });
 
       await openAgentRoute(page, {
