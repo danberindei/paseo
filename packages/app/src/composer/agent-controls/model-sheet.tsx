@@ -9,13 +9,14 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { Bot } from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { TailEllipsisText } from "@/components/ui/tail-ellipsis-text";
-import { useProviderIcon } from "@/components/provider-icons";
+import { makeProviderPanelIcon } from "@/components/provider-icon";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
@@ -191,8 +192,11 @@ export function CompactModelSheet({
     profiles,
     serverId,
   });
-  const ModelIcon = useProviderIcon(selectedProvider, serverId);
-  const hasSelectedProvider = selectedProvider.trim().length > 0;
+  const hasProvider = selectedProvider.trim().length > 0;
+  const ModelIcon = useMemo(
+    () => (hasProvider ? makeProviderPanelIcon(selectedProvider, serverId) : Bot),
+    [hasProvider, selectedProvider, serverId],
+  );
   const rootHeader = useMemo(
     () => ({
       ...rootBrowser.header,
@@ -317,11 +321,11 @@ export function CompactModelSheet({
   return (
     <>
       <ModelSheetTrigger
-        ModelIcon={hasSelectedProvider ? ModelIcon : null}
+        ModelIcon={hasProvider ? ModelIcon : null}
         modelLabel={shortModelLabel(rootBrowser.triggerLabel)}
         thinkingLabel={thinkingLabel}
         glyphs={glyphs}
-        iconOnly={!showLabels && hasSelectedProvider}
+        iconOnly={!showLabels && hasProvider}
         isOpen={isOpen}
         searchFocused={rootBrowser.isSearchFocused || modelBrowser.isSearchFocused}
         disabled={disabled}
@@ -420,7 +424,7 @@ export function CompactModelSheet({
  */
 interface ModelSheetTriggerProps {
   /** The selected provider's glyph, or null before a provider is selected. */
-  ModelIcon: ReturnType<typeof useProviderIcon> | null;
+  ModelIcon: ReturnType<typeof makeProviderPanelIcon> | null;
   modelLabel: string;
   thinkingLabel: string | null;
   glyphs: ToolbarGlyphs;

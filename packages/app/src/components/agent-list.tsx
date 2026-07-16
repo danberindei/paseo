@@ -18,7 +18,7 @@ import { useTimeAgo } from "@/hooks/use-time-ago";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { ChevronRight } from "lucide-react-native";
-import { useProviderIcon } from "@/components/provider-icons";
+import { ProviderIcon } from "@/components/provider-icon";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
@@ -205,7 +205,6 @@ function SessionRow({
   const branch = agent.projectPlacement?.checkout.currentBranch ?? "";
   const workspaceName = agent.projectPlacement?.workspaceName ?? "";
   const statusLabel = formatStatusLabel(t, agent.status);
-  const ProviderIcon = useProviderIcon(agent.provider, agent.serverId);
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
   const ranges = useMemo(
     () => ({
@@ -237,7 +236,12 @@ function SessionRow({
   const agentTitle = (
     <View style={styles.agentTitleRow}>
       <View style={styles.providerIconWrap}>
-        <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        <ProviderIcon
+          provider={agent.provider}
+          serverId={agent.serverId}
+          size={theme.iconSize.sm}
+          color={theme.colors.foregroundMuted}
+        />
       </View>
       <HighlightedText
         text={agent.title || t("agentList.fallbackTitle")}

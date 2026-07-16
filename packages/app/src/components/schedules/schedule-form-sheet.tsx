@@ -23,7 +23,7 @@ import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { createControlGeometry, type ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
-import { useProviderIcon } from "@/components/provider-icons";
+import { ModelProviderGlyph } from "@/components/model-browser";
 import { CadenceEditor } from "@/components/schedules/cadence-editor";
 import {
   SelectField,
@@ -660,8 +660,8 @@ function ScheduleTargetFields({
     [],
   );
   const modelTriggerLeading = useMemo(
-    () => <ProviderGlyph provider={state.selectedProvider} serverId={state.selectedServerId} />,
-    [state.selectedProvider, state.selectedServerId],
+    () => <ProviderGlyph provider={state.selectedProvider} serverId={mutationServerId} />,
+    [mutationServerId, state.selectedProvider],
   );
   const renderModelTrigger = useCallback(
     ({
@@ -1030,11 +1030,10 @@ function ProviderGlyph({
   provider: string | null;
   serverId: string | null;
 }): ReactElement | null {
-  const Icon = useProviderIcon(provider ?? "", serverId);
   if (!provider) {
     return null;
   }
-  return <Icon size={16} color={styles.providerIcon.color} />;
+  return <ModelProviderGlyph provider={provider} serverId={serverId} size={16} />;
 }
 
 const styles = StyleSheet.create((theme) => {

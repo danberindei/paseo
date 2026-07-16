@@ -40,7 +40,7 @@ import { SheetHeaderIconButton, type SheetHeader } from "@/components/adaptive-m
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useProviderIcon } from "@/components/provider-icons";
+import { ProviderIcon } from "@/components/provider-icon";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -263,15 +263,23 @@ export function ModelProviderGlyph({
   tone = "muted",
 }: {
   provider: string;
+  /** Required for the derived-profile badge. Pass `null` to skip the badge. */
   serverId: string | null;
   size: number;
   strokeWidth?: number;
   tone?: ProviderGlyphTone;
 }) {
-  const Icon = useProviderIcon(provider, serverId);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
-  return <Icon size={size} strokeWidth={strokeWidth} color={color} />;
+  return (
+    <ProviderIcon
+      provider={provider}
+      serverId={serverId}
+      size={size}
+      strokeWidth={strokeWidth}
+      color={color}
+    />
+  );
 }
 
 function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {

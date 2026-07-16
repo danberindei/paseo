@@ -15,7 +15,7 @@ import { OmpIcon } from "@/components/icons/omp-icon";
 import { PiIcon } from "@/components/icons/pi-icon";
 import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
-import { resolveProviderIconName } from "@/components/provider-icon-name";
+import { type ProviderIconName, resolveProviderIconName } from "@/components/provider-icon-name";
 
 export interface ProviderIconProps {
   size: number;
@@ -86,18 +86,22 @@ function getSnapshotProviderIcon(provider: string, svg: string): ProviderIconCom
   return component;
 }
 
-function resolveProviderIcon(provider: string, svg?: string): ProviderIconComponent {
-  const name = resolveProviderIconName(provider, svg);
+export function providerIconFromName(name: ProviderIconName): ProviderIconComponent {
   if (name.kind === "builtin") {
     return BUILTIN_PROVIDER_ICONS[name.id];
   }
   if (name.kind === "catalog") {
     return getCatalogProviderIcon(name.id);
   }
+  return Bot;
+}
+
+function resolveProviderIcon(provider: string, svg?: string): ProviderIconComponent {
+  const name = resolveProviderIconName(provider, svg);
   if (name.kind === "svg") {
     return getSnapshotProviderIcon(provider, name.svg);
   }
-  return Bot;
+  return providerIconFromName(name);
 }
 
 export function useProviderIcon(provider: string, serverId?: string | null): ProviderIconComponent {

@@ -1,3 +1,4 @@
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { Dialog } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
@@ -33,15 +34,18 @@ const PLUGIN_PROVIDER = {
 interface ProviderRemovalDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
-  getDaemonConfig(): Promise<{ config: { pluginsEnabled?: boolean } }>;
+  getDaemonConfig(): Promise<{
+    config: { providers?: Record<string, { enabled?: boolean }>; pluginsEnabled?: boolean };
+  }>;
   patchDaemonConfig(config: {
+    providers?: Record<string, { enabled?: boolean }>;
     removeProviders?: string[];
     pluginsEnabled?: boolean;
   }): Promise<unknown>;
   installDirectoryPlugin(path: string): Promise<unknown>;
   removePlugin(pluginId: string): Promise<void>;
   getProvidersSnapshot(): Promise<{
-    entries: Array<{ provider: string; source?: "builtin" | "custom" }>;
+    entries: ProviderSnapshotEntry[];
   }>;
 }
 
@@ -59,6 +63,16 @@ async function expectProviderSource(
       return snapshot.entries.find((entry) => entry.provider === CUSTOM_PROVIDER.id)?.source;
     })
     .toBe(source);
+}
+
+async function expectProviderEnabled(
+  client: ProviderRemovalDaemonClient,
+  provider: string,
+  enabled: boolean,
+): Promise<void> {
+  await expect
+    .poll(async () => (await client.getDaemonConfig()).config.providers?.[provider]?.enabled)
+    .toBe(enabled);
 }
 
 async function clickRemoveProviderAndAcceptWarning(page: Page): Promise<Dialog> {
@@ -103,6 +117,46 @@ async function expectMissingNoticeNeverShown(page: Page): Promise<void> {
 const CONFIG_RESPONSE = "set_daemon_config_response";
 
 test.describe("provider removal", () => {
+  test("a disabled provider row opens its settings from the row surface", async ({ page }) => {
+    const client = await connectDaemonClient<ProviderRemovalDaemonClient>({
+      clientIdPrefix: "provider-row-settings-e2e",
+    });
+    const config = await client.getDaemonConfig();
+    const previousEnabled = config.config.providers?.codex?.enabled;
+
+    try {
+      await client.patchDaemonConfig({ providers: { codex: { enabled: false } } });
+      await expectProviderEnabled(client, "codex", false);
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openSettingsHost(page, getServerId());
+      await openSettingsHostSection(page, getServerId(), "providers");
+
+      const row = page.getByRole("button", { name: "Codex provider details" });
+      await expect(row).toBeVisible();
+      await expect(page.getByTestId("provider-row-codex")).toContainText("Disabled");
+      const snapshot = await client.getProvidersSnapshot();
+      const expectedLabels = snapshot.entries.map(
+        (entry) => `${entry.label ?? entry.provider} provider details`,
+      );
+      const rows = page.getByRole("button", { name: / provider details$/ });
+      await expect(rows).toHaveCount(expectedLabels.length);
+      for (const [index, label] of expectedLabels.entries()) {
+        await expect(rows.nth(index)).toHaveAttribute("aria-label", label);
+      }
+      await row.click();
+      await expect(page.getByTestId("provider-detail-page")).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Diagnostic report", exact: true }),
+      ).toBeVisible();
+    } finally {
+      await client
+        .patchDaemonConfig({ providers: { codex: { enabled: previousEnabled ?? true } } })
+        .catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
+  });
+
   test("removes a custom provider from Settings", async ({ page }) => {
     test.setTimeout(120_000);
     const client = await connectDaemonClient<ProviderRemovalDaemonClient>({

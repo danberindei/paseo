@@ -2,10 +2,12 @@ import { ACP_PROVIDER_ICON_SVGS } from "../../src/assets/acp-provider-icons";
 import { expect, test, type Page } from "../support/fixtures";
 import type { Locator, TestInfo } from "@playwright/test";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { getServerId } from "../support/helpers/server-id";
 import {
   findAcpCatalogProvider,
   openAddProvider,
+  openProviderDetail,
   openSettingsHost,
   openSettingsHostSection,
 } from "../support/helpers/settings";
@@ -66,4 +68,35 @@ test("catalog rows keep the provider list's icon rail on a phone", async ({ page
   const listGap = await gapAfterIcon(page.getByTestId("provider-row-claude"), "Claude");
   const catalogGap = await gapAfterIcon(page.getByTestId("provider-catalog-row-kiro"), "Kiro CLI");
   expect(catalogGap).toBe(listGap);
+});
+
+test("derived providers show the base icon badge in the list and detail", async ({ page }) => {
+  const client = await connectDaemonClient<{
+    connect(): Promise<void>;
+    patchDaemonConfig(config: {
+      providers?: Record<string, { extends: string; label: string }>;
+      removeProviders?: string[];
+    }): Promise<unknown>;
+    close(): Promise<void>;
+  }>({ clientIdPrefix: "derived-provider-icon-e2e" });
+  const provider = "derived-icon-test";
+  try {
+    await client.patchDaemonConfig({
+      providers: { [provider]: { extends: "claude", label: "Derived icon test" } },
+    });
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHost(page, getServerId());
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await expect(
+      page.getByTestId(`provider-row-${provider}`).getByTestId(`provider-icon-badge-${provider}`),
+    ).toBeVisible();
+    await openProviderDetail(page, "Derived icon test");
+    await expect(
+      page.getByTestId("provider-detail-page").getByTestId(`provider-icon-badge-${provider}`),
+    ).toBeVisible();
+  } finally {
+    await client.patchDaemonConfig({ removeProviders: [provider] });
+    await client.close();
+  }
 });

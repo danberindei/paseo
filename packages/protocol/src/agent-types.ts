@@ -134,6 +134,9 @@ export interface ProviderSnapshotEntry {
   description?: string;
   iconSvg?: string;
   defaultModeId?: string | null;
+  // For an `extends`-based custom provider, the id of the base provider it
+  // extends. `null` for built-ins and generic ACP providers.
+  derivedFromProviderId?: string | null;
 }
 
 export interface AgentFeatureToggle {

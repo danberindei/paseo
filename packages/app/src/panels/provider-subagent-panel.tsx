@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
 import { AgentStreamView } from "@/agent-stream/view";
-import { useProviderIcon } from "@/components/provider-icons";
+import { makeProviderPanelIcon } from "@/components/provider-icon";
 import {
   resolveComposerTrackControlClearance,
   resolveComposerTrackTailClearance,
@@ -96,17 +96,20 @@ function useProviderSubagentDescriptor(
     (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
-  // The task names the tab; the subagent type is supporting detail beside the provider.
+  const label = descriptor?.title?.trim() || descriptor?.description?.trim() || "Subagent";
   const subagentType = descriptor?.title?.trim();
-  const label = descriptor?.description?.trim() || subagentType || "Subagent";
   const providerLabel = `${formatProviderLabel(provider)} subagent`;
+  const icon = useMemo(
+    () => makeProviderPanelIcon(provider, context.serverId),
+    [provider, context.serverId],
+  );
   return {
     label,
     subtitle:
       subagentType && subagentType !== label ? `${subagentType} · ${providerLabel}` : providerLabel,
     tooltip: label,
     titleState: descriptor ? "ready" : "loading",
-    icon: useProviderIcon(provider, context.serverId),
+    icon,
     statusBucket: descriptor
       ? deriveSubagentStatusBucket(providerSubagentLifecycleStatus(descriptor.status))
       : null,

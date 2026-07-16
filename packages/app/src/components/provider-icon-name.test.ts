@@ -5,7 +5,7 @@ import {
   TERMINAL_PROFILE_ICON_NAMES,
 } from "@getpaseo/protocol/provider-icon-names";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
-import { resolveProviderIconName } from "./provider-icon-name";
+import { resolveProviderBaseIconId, resolveProviderIconName } from "./provider-icon-name";
 
 describe("resolveProviderIconName", () => {
   it("returns the built-in identifier for known provider ids", () => {
@@ -32,6 +32,26 @@ describe("resolveProviderIconName", () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
 
     expect(resolveProviderIconName("snapshot-provider", svg)).toEqual({ kind: "svg", svg });
+  });
+});
+
+describe("resolveProviderBaseIconId", () => {
+  it("resolves a base provider id to its built-in icon", () => {
+    expect(resolveProviderBaseIconId("claude")).toEqual({ kind: "builtin", id: "claude" });
+    expect(resolveProviderBaseIconId("codex")).toEqual({ kind: "builtin", id: "codex" });
+  });
+
+  it("resolves a base provider id to its catalog icon", () => {
+    expect(resolveProviderBaseIconId("traecli")).toEqual({ kind: "catalog", id: "traecli" });
+  });
+
+  it("falls back to the bot icon when no base is provided", () => {
+    expect(resolveProviderBaseIconId(null)).toEqual({ kind: "bot" });
+    expect(resolveProviderBaseIconId(undefined)).toEqual({ kind: "bot" });
+  });
+
+  it("falls back to the bot icon when the base id is unknown", () => {
+    expect(resolveProviderBaseIconId("made-up-base")).toEqual({ kind: "bot" });
   });
 });
 

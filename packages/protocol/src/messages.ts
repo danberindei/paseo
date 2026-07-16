@@ -430,6 +430,10 @@ export const ProviderSnapshotEntrySchema = z.object({
   description: z.string().optional(),
   iconSvg: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
+  // For an `extends`-based custom provider, the id of the base provider it
+  // extends (e.g. "claude" for a "claude-eng" profile). `null` for built-ins
+  // and generic ACP providers.
+  derivedFromProviderId: z.string().nullable().optional(),
 });
 
 export const CompactProviderSnapshotModelSchema = AgentModelDefinitionSchema.omit({
