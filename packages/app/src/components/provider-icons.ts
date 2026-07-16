@@ -9,7 +9,7 @@ import { OpenCodeIcon } from "@/components/icons/opencode-icon";
 import { OmpIcon } from "@/components/icons/omp-icon";
 import { PiIcon } from "@/components/icons/pi-icon";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
-import { resolveProviderIconName } from "@/components/provider-icon-name";
+import { type ProviderIconName, resolveProviderIconName } from "@/components/provider-icon-name";
 
 export interface ProviderIconProps {
   size: number;
@@ -61,8 +61,7 @@ function getCatalogProviderIcon(provider: string): ProviderIconComponent {
   return icon;
 }
 
-export function getProviderIcon(provider: string): ProviderIconComponent {
-  const name = resolveProviderIconName(provider);
+export function providerIconFromName(name: ProviderIconName): ProviderIconComponent {
   if (name.kind === "builtin") {
     return BUILTIN_PROVIDER_ICONS[name.id];
   }
@@ -70,4 +69,8 @@ export function getProviderIcon(provider: string): ProviderIconComponent {
     return getCatalogProviderIcon(name.id);
   }
   return Bot;
+}
+
+export function getProviderIcon(provider: string): ProviderIconComponent {
+  return providerIconFromName(resolveProviderIconName(provider));
 }

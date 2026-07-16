@@ -237,6 +237,11 @@ vi.mock("@/components/provider-icons", () => ({
     React.createElement("span", { "data-icon": `provider-${provider}` }),
 }));
 
+vi.mock("@/components/provider-icon", () => ({
+  ProviderIcon: ({ provider, serverId }: { provider: string; serverId: string | null }) =>
+    React.createElement("span", { "data-icon": `provider-${provider}`, "data-server": serverId }),
+}));
+
 vi.mock("@/stores/provider-settings-store", () => ({
   useProviderSettingsStore: (selector: (state: unknown) => unknown) =>
     selector({ open: openProviderSettingsMock }),

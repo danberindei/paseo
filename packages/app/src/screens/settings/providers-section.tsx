@@ -22,7 +22,7 @@ import {
   type AcpProviderCatalogItem,
 } from "@/hooks/use-acp-provider-catalog";
 import { ProviderCatalogList } from "@/components/provider-catalog-list";
-import { getProviderIcon } from "@/components/provider-icons";
+import { ProviderIcon } from "@/components/provider-icon";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -84,6 +84,7 @@ interface ProviderRowProps {
   isRemoving: boolean;
   canRemove: boolean;
   isFirst: boolean;
+  serverId: string;
   onPress: (providerId: string) => void;
   onToggleEnabled: (providerId: string, enabled: boolean) => void;
   onRemove: (providerId: string, providerLabel: string) => void;
@@ -174,6 +175,7 @@ function ProviderRow({
   isRemoving,
   canRemove,
   isFirst,
+  serverId,
   onPress,
   onToggleEnabled,
   onRemove,
@@ -181,7 +183,6 @@ function ProviderRow({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
-  const ProviderIcon = getProviderIcon(def.id);
   const providerError =
     enabled &&
     entry.status === "error" &&
@@ -226,7 +227,12 @@ function ProviderRow({
               size={theme.iconSize.sm}
               color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
             />
-            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foreground} />
+            <ProviderIcon
+              provider={def.id}
+              serverId={serverId}
+              size={theme.iconSize.md}
+              color={theme.colors.foreground}
+            />
             <View style={styles.textColumn}>
               <View style={styles.titleRow}>
                 <Text style={settingsStyles.rowTitle} numberOfLines={1}>
@@ -443,6 +449,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   isRemoving={removingProviderId === def.id}
                   canRemove={supportsProviderRemoval && entry.source === "custom"}
                   isFirst={index === 0}
+                  serverId={serverId}
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}
                   onRemove={handleRemoveProvider}

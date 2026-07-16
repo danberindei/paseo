@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { getProviderIcon } from "@/components/provider-icons";
+import { ProviderIcon } from "@/components/provider-icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { Theme } from "@/styles/theme";
 import { ProviderUsageBalanceBar } from "./balance-bar";
@@ -9,18 +9,9 @@ import { formatAgo } from "./format";
 import type { ProviderUsage } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
 
-interface ProviderUsageIconProps {
-  iconKey: string;
-  size: number;
-  color?: string;
-}
-
-function ProviderUsageIcon({ iconKey, size, color = "" }: ProviderUsageIconProps) {
-  const Icon = getProviderIcon(iconKey);
-  return <Icon size={size} color={color} />;
-}
-
-const ThemedProviderUsageIcon = withUnistyles(ProviderUsageIcon);
+// `withUnistyles` keeps the icon color theme-reactive (per docs/unistyles.md);
+// `color` is supplied via `uniProps`, the rest of the props are passed through.
+const ThemedProviderIcon = withUnistyles(ProviderIcon);
 
 const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -39,9 +30,11 @@ function footerText(usage: ProviderUsage): string | null {
 
 export function ProviderUsageCard({
   usage,
+  serverId,
   compact = false,
 }: {
   usage: ProviderUsage;
+  serverId: string | null;
   compact?: boolean;
 }) {
   const status = statusText(usage);
@@ -65,7 +58,12 @@ export function ProviderUsageCard({
   return (
     <View style={containerStyle}>
       <View style={styles.header}>
-        <ThemedProviderUsageIcon iconKey={usage.providerId} size={14} uniProps={mutedIconColor} />
+        <ThemedProviderIcon
+          provider={usage.providerId}
+          serverId={serverId}
+          size={14}
+          uniProps={mutedIconColor}
+        />
         <Text style={styles.name} numberOfLines={1}>
           {usage.displayName}
         </Text>

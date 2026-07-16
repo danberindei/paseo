@@ -12,9 +12,11 @@ import type { ProviderUsageView } from "./types";
 
 export function ProviderUsageSettingsSection({
   view,
+  serverId,
   onRefresh,
 }: {
   view: ProviderUsageView;
+  serverId: string | null;
   onRefresh: () => void;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
@@ -41,16 +43,18 @@ export function ProviderUsageSettingsSection({
       testID="provider-usage-card"
       trailing={refreshButton}
     >
-      <ProviderUsageBody view={view} onRefresh={onRefresh} />
+      <ProviderUsageBody view={view} serverId={serverId} onRefresh={onRefresh} />
     </SettingsSection>
   );
 }
 
 function ProviderUsageBody({
   view,
+  serverId,
   onRefresh,
 }: {
   view: ProviderUsageView;
+  serverId: string | null;
   onRefresh: () => void;
 }) {
   if (view.kind === "loading") {
@@ -79,7 +83,7 @@ function ProviderUsageBody({
     );
   }
 
-  return <ProviderUsageList providers={view.payload.providers} />;
+  return <ProviderUsageList providers={view.payload.providers} serverId={serverId} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

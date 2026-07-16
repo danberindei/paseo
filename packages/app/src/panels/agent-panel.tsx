@@ -33,7 +33,7 @@ import {
 } from "@/composer/pill-styles";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
-import { getProviderIcon } from "@/components/provider-icons";
+import { makeProviderPanelIcon } from "@/components/provider-icon";
 import {
   ToastViewport,
   useToastHost,
@@ -371,7 +371,10 @@ function useAgentPanelDescriptor(
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
-  const icon = getProviderIcon(provider);
+  const icon = useMemo(
+    () => makeProviderPanelIcon(provider, context.serverId),
+    [provider, context.serverId],
+  );
 
   return {
     label: label ?? "",

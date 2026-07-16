@@ -114,6 +114,11 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+  // COMPAT(providerDerivedFrom): added in v0.1.X, drop when floor >= v0.1.X.
+  // For an `extends`-based custom provider, the id of the base provider it
+  // extends. `null` for built-ins and generic ACP providers; absent on
+  // pre-v0.1.X daemons.
+  derivedFromProviderId?: string | null;
 }
 
 export interface AgentFeatureToggle {

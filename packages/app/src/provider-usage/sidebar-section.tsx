@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { getProviderIcon } from "@/components/provider-icons";
+import { ProviderIcon } from "@/components/provider-icon";
 import type { Theme } from "@/styles/theme";
 import {
   balanceValueText,
@@ -51,6 +51,10 @@ const ThemedChevronUp = withUnistyles(ChevronUp);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
+
+// `withUnistyles` keeps the icon color theme-reactive (per docs/unistyles.md);
+// `color` is supplied via `uniProps`, the rest of the props are passed through.
+const ThemedProviderIcon = withUnistyles(ProviderIcon);
 
 function QuotaWindow({
   window,
@@ -126,15 +130,15 @@ function SectionToggle({ isExpanded, onToggle }: { isExpanded: boolean; onToggle
 
 function QuotaProviderRow({
   usage,
+  serverId,
   isExpanded,
   now,
 }: {
   usage: ProviderUsage;
+  serverId: string | null;
   isExpanded: boolean;
   now: number;
 }) {
-  const ProviderIcon = getProviderIcon(usage.providerId);
-  const ThemedProviderIcon = useMemo(() => withUnistyles(ProviderIcon), [ProviderIcon]);
   const sortedWindows = useMemo(() => sortWindows(getProviderQuotaWindows(usage)), [usage]);
   const compactWindows = useMemo(() => getCompactWindows(sortedWindows, now), [sortedWindows, now]);
   const compactToneOverride = useMemo(() => getProviderUsageTone(usage, now), [usage, now]);
@@ -166,6 +170,8 @@ function QuotaProviderRow({
           <View style={styles.providerMainRowContent}>
             <View style={styles.providerIcon}>
               <ThemedProviderIcon
+                provider={usage.providerId}
+                serverId={serverId}
                 size={16}
                 uniProps={hasStaleWindow ? warningColorMapping : foregroundMutedColorMapping}
               />
@@ -242,6 +248,7 @@ export function ProviderUsageSidebarSection({ serverId }: ProviderUsageSidebarSe
           <QuotaProviderRow
             key={usage.providerId}
             usage={usage}
+            serverId={serverId}
             isExpanded={isExpanded}
             now={now}
           />

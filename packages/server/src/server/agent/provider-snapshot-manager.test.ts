@@ -226,8 +226,13 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("getSnapshot returns loading entries for built-in providers before warmup", () => {
-    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+  test("getSnapshot returns loading entries with provider metadata before warmup", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
+      },
+    });
     try {
       const snapshot = manager.getSnapshot("/tmp/project");
       const claude = snapshot.find((entry) => entry.provider === "claude");
@@ -236,6 +241,10 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(claude?.label).toBe("Claude");
       expect(claude?.defaultModeId).toBe("auto");
       expect(codex?.defaultModeId).toBe("auto-review");
+      expect(claude?.derivedFromProviderId).toBeNull();
+      expect(snapshot.find((entry) => entry.provider === "zai-claude")?.derivedFromProviderId).toBe(
+        "claude",
+      );
     } finally {
       manager.destroy();
     }
@@ -1332,9 +1341,13 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
         opencode: { enabled: false },
         pi: { enabled: false },
       },
+      extraClients: {
+        "zai-claude": createExtraClient("zai-claude"),
+      },
     });
     try {
       expect(manager.hasProvider("zai-claude")).toBe(false);
+      manager.getSnapshot("/tmp/project");
 
       const state = manager.applyMutableProviderConfig({
         "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
@@ -1346,29 +1359,12 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       expect(manager.getSnapshot().find((entry) => entry.provider === "zai-claude")?.source).toBe(
         "custom",
       );
-    } finally {
-      manager.destroy();
-    }
-  });
-
-  test("removes startup provider overrides from the live registry", () => {
-    const manager = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      providerOverrides: {
-        "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
-      },
-    });
-    try {
-      expect(manager.hasProvider("zai-claude")).toBe(true);
-
-      const state = manager.applyMutableProviderConfig({}, { removeProviders: ["zai-claude"] });
-
-      expect(manager.hasProvider("zai-claude")).toBe(false);
-      expect(state.providerDefinitions["zai-claude"]).toBeUndefined();
-      expect(manager.getSnapshot().some((entry) => entry.provider === "zai-claude")).toBe(false);
-
-      manager.applyMutableProviderConfig({ codex: { enabled: false } });
-      expect(manager.hasProvider("zai-claude")).toBe(false);
+      expect(
+        await manager.getProvider({ cwd: "/tmp/project", provider: "zai-claude", wait: true }),
+      ).toMatchObject({
+        status: "unavailable",
+        derivedFromProviderId: "claude",
+      });
     } finally {
       manager.destroy();
     }

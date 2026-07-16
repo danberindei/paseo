@@ -126,6 +126,7 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+  derivedFromProviderId?: string | null;
 }
 
 export interface AgentCreateConfigParent {

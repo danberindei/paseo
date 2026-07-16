@@ -20,3 +20,22 @@ export function resolveProviderIconName(provider: string): ProviderIconName {
   }
   return { kind: "bot" };
 }
+
+/**
+ * Resolves the icon of a derived provider's base. The wire carries a single
+ * `derivedFromProviderId` hop (the base a profile `extends`), so this is a
+ * one-step lookup: if the base id resolves to a known icon, use it; otherwise
+ * (no base, or an unknown base) fall back to `{ kind: "bot" }`.
+ *
+ * Pure function - no snapshot access, no cache. Callers needing reactivity
+ * should read `derivedFromProviderId` from the live `useProvidersSnapshot`
+ * data and pass it here.
+ */
+export function resolveProviderBaseIconId(
+  derivedFromProviderId: string | null | undefined,
+): ProviderIconName {
+  if (!derivedFromProviderId) {
+    return { kind: "bot" };
+  }
+  return resolveProviderIconName(derivedFromProviderId);
+}

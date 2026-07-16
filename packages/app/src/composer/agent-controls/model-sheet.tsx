@@ -7,8 +7,8 @@ import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { getProviderIcon } from "@/components/provider-icons";
-import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
+import { makeProviderPanelIcon } from "@/components/provider-icon";
+import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
@@ -130,9 +130,11 @@ export function CompactModelSheet({
     profiles,
     serverId,
   });
-  const ProviderIcon =
-    selectedProvider.trim().length > 0 ? getProviderIcon(selectedProvider) : null;
-  const ModelIcon = ProviderIcon ?? Bot;
+  const hasProvider = selectedProvider.trim().length > 0;
+  const ModelIcon = useMemo(
+    () => (hasProvider ? makeProviderPanelIcon(selectedProvider, serverId) : Bot),
+    [hasProvider, selectedProvider, serverId],
+  );
   const rootHeader = useMemo(
     () => ({
       ...rootBrowser.header,
@@ -277,9 +279,9 @@ export function CompactModelSheet({
         testID="combined-model-selector"
         chevron={null}
       >
-        {ProviderIcon ? (
+        {hasProvider ? (
           <ComposerToolbarGlyph size={glyphSize}>
-            <ProviderIcon size={glyphSize} color={styles.providerIcon.color} />
+            <ModelProviderGlyph provider={selectedProvider} serverId={serverId} size={glyphSize} />
           </ComposerToolbarGlyph>
         ) : null}
         <View style={styles.triggerLabels}>
@@ -416,9 +418,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundExtraMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-  },
-  providerIcon: {
-    color: theme.colors.foregroundMuted,
   },
   sheetBody: {
     paddingHorizontal: 0,

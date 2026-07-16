@@ -37,7 +37,7 @@ import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getProviderIcon } from "@/components/provider-icons";
+import { ProviderIcon } from "@/components/provider-icon";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -162,6 +162,7 @@ export interface ModelBrowserState {
   selectedModel: string;
   profiles: AgentProfilePicker | null;
   providerTones: Map<string, WindowTone>;
+  serverId: string | null;
   view: ModelBrowserView;
   searchQuery: string;
   isSearchFocused: boolean;
@@ -204,6 +205,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
   providerTones: Map<string, WindowTone>;
+  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
   searchAllOnFocus: boolean;
@@ -214,17 +216,19 @@ type ProviderGlyphTone = "muted" | "foreground";
 
 export function ModelProviderGlyph({
   provider,
+  serverId,
   size,
   tone = "muted",
 }: {
   provider: string;
+  /** Required for the derived-profile badge. Pass `null` to skip the badge. */
+  serverId: string | null;
   size: number;
   tone?: ProviderGlyphTone;
 }) {
-  const Icon = getProviderIcon(provider);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
-  return <Icon size={size} color={color} />;
+  return <ProviderIcon provider={provider} serverId={serverId} size={size} color={color} />;
 }
 
 function HeaderSettingsIcon({ disabled }: { disabled: boolean }) {
@@ -335,7 +339,12 @@ export function useModelBrowser({
     return {
       title: view.providerLabel,
       leading: (
-        <ModelProviderGlyph provider={view.providerId} size={ICON_SIZE.md} tone="foreground" />
+        <ModelProviderGlyph
+          provider={view.providerId}
+          serverId={serverId}
+          size={ICON_SIZE.md}
+          tone="foreground"
+        />
       ),
       back: singleProviderView ? undefined : { onPress: showAll },
       actions: (
@@ -413,6 +422,7 @@ export function useModelBrowser({
     selectedModel,
     profiles,
     providerTones,
+    serverId,
     view,
     searchQuery,
     isSearchFocused,
@@ -684,6 +694,7 @@ function ModelRow({
   isSelected,
   showProviderLabel = false,
   isDanger = false,
+  serverId,
   onPress,
   profiledRows,
   onCreateProfile,
@@ -694,6 +705,7 @@ function ModelRow({
   isSelected: boolean;
   showProviderLabel?: boolean;
   isDanger?: boolean;
+  serverId: string | null;
   onPress: () => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -703,8 +715,8 @@ function ModelRow({
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={row.provider} size={ICON_SIZE.sm} />,
-    [row.provider],
+    () => <ModelProviderGlyph provider={row.provider} serverId={serverId} size={ICON_SIZE.sm} />,
+    [row.provider, serverId],
   );
 
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
@@ -847,6 +859,7 @@ function SelectableModelRow({
   isSelected,
   showProviderLabel,
   isDanger,
+  serverId,
   onSelect,
   profiledRows,
   onCreateProfile,
@@ -857,6 +870,7 @@ function SelectableModelRow({
   isSelected: boolean;
   showProviderLabel?: boolean;
   isDanger?: boolean;
+  serverId: string | null;
   onSelect: (provider: string, modelId: string) => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => void;
@@ -872,6 +886,7 @@ function SelectableModelRow({
       isSelected={isSelected}
       showProviderLabel={showProviderLabel}
       isDanger={isDanger}
+      serverId={serverId}
       onPress={handlePress}
       profiledRows={profiledRows}
       onCreateProfile={onCreateProfile}
@@ -985,9 +1000,11 @@ function AgentProfilesPickerContent({
 
 function GroupProviderButton({
   provider,
+  serverId,
   onDrillDown,
 }: {
   provider: ProviderSelectorProvider;
+  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
 }) {
   const { t } = useTranslation();
@@ -1025,8 +1042,8 @@ function GroupProviderButton({
     );
   }, [selection, t]);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={provider.id} size={ICON_SIZE.sm} />,
-    [provider.id],
+    () => <ModelProviderGlyph provider={provider.id} serverId={serverId} size={ICON_SIZE.sm} />,
+    [provider.id, serverId],
   );
   const trailingSlot = useMemo(
     () => (
@@ -1053,9 +1070,11 @@ function GroupProviderButton({
 
 function GroupedProviderRows({
   providers,
+  serverId,
   onDrillDown,
 }: {
   providers: ProviderSelectorProvider[];
+  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
 }) {
   return (
@@ -1063,7 +1082,7 @@ function GroupedProviderRows({
       {providers.map((provider, index) => (
         <View key={provider.id}>
           {index > 0 ? <View style={styles.separator} /> : null}
-          <GroupProviderButton provider={provider} onDrillDown={onDrillDown} />
+          <GroupProviderButton provider={provider} serverId={serverId} onDrillDown={onDrillDown} />
         </View>
       ))}
     </View>
@@ -1150,6 +1169,7 @@ function ModelRowList({
   rows,
   selectedProvider,
   selectedModel,
+  serverId,
   onSelect,
   providerTones,
   showProviderLabel = false,
@@ -1163,6 +1183,7 @@ function ModelRowList({
   rows: ProviderSelectionModelRow[];
   selectedProvider: string;
   selectedModel: string;
+  serverId: string | null;
   onSelect: (provider: string, modelId: string) => void;
   providerTones: Map<string, WindowTone>;
   showProviderLabel?: boolean;
@@ -1181,6 +1202,7 @@ function ModelRowList({
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
         showProviderLabel={showProviderLabel}
         isDanger={isDangerTone(providerTones.get(item.provider))}
+        serverId={serverId}
         onSelect={onSelect}
         profiledRows={profiledLookup.get(`${item.provider}:${item.modelId}`) ?? []}
         onCreateProfile={onCreateProfile}
@@ -1197,6 +1219,7 @@ function ModelRowList({
       providerTones,
       selectedModel,
       selectedProvider,
+      serverId,
       showProviderLabel,
     ],
   );
@@ -1277,6 +1300,7 @@ function ProviderModelBrowserContent({
   selectedModel,
   normalizedQuery,
   providerTones,
+  serverId,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1295,6 +1319,7 @@ function ProviderModelBrowserContent({
   selectedModel: string;
   normalizedQuery: string;
   providerTones: Map<string, WindowTone>;
+  serverId: string | null;
   onSelect: (provider: string, modelId: string) => void;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
@@ -1364,6 +1389,7 @@ function ProviderModelBrowserContent({
       rows={visibleRows}
       selectedProvider={selectedProvider}
       selectedModel={selectedModel}
+      serverId={serverId}
       onSelect={onSelect}
       providerTones={providerTones}
       header={profileHeader}
@@ -1385,6 +1411,7 @@ function ModelBrowserContent({
   isSearchFocused,
   profiles,
   providerTones,
+  serverId,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1432,6 +1459,7 @@ function ModelBrowserContent({
         selectedModel={selectedModel}
         normalizedQuery={normalizedQuery}
         providerTones={providerTones}
+        serverId={serverId}
         onSelect={onSelect}
         onApplyProfile={onApplyProfile}
         onEditProfiles={onEditProfiles}
@@ -1463,6 +1491,7 @@ function ModelBrowserContent({
         rows={allView.rows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
+        serverId={serverId}
         onSelect={onSelect}
         providerTones={providerTones}
         showProviderLabel
@@ -1492,7 +1521,11 @@ function ModelBrowserContent({
                 <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
               </View>
             ) : null}
-            <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
+            <GroupedProviderRows
+              providers={providers}
+              serverId={serverId}
+              onDrillDown={onDrillDown}
+            />
           </View>
         ) : null)}
       {!hasResults ? <ModelSearchEmptyState /> : null}
@@ -1542,6 +1575,7 @@ export function ModelBrowser({
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
       providerTones={state.providerTones}
+      serverId={state.serverId}
       onSelect={onSelect}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}

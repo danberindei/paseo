@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
 import { AgentStreamView } from "@/agent-stream/view";
-import { getProviderIcon } from "@/components/provider-icons";
+import { makeProviderPanelIcon } from "@/components/provider-icon";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { usePaneContext } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
@@ -46,17 +46,20 @@ function useProviderSubagentDescriptor(
     (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
-  // The task names the tab; the subagent type is supporting detail beside the provider.
+  const label = descriptor?.title?.trim() || descriptor?.description?.trim() || "Subagent";
   const subagentType = descriptor?.title?.trim();
-  const label = descriptor?.description?.trim() || subagentType || "Subagent";
   const providerLabel = `${formatProviderLabel(provider)} subagent`;
+  const icon = useMemo(
+    () => makeProviderPanelIcon(provider, context.serverId),
+    [provider, context.serverId],
+  );
   return {
     label,
     subtitle:
       subagentType && subagentType !== label ? `${subagentType} · ${providerLabel}` : providerLabel,
     tooltip: label,
     titleState: descriptor ? "ready" : "loading",
-    icon: getProviderIcon(provider),
+    icon,
     statusBucket: descriptor
       ? deriveSidebarStateBucket({
           status: providerSubagentLifecycleStatus(descriptor.status),

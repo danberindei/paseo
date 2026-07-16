@@ -759,6 +759,7 @@ export class ProviderSnapshotManager {
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
+        derivedFromProviderId: definition?.derivedFromProviderId ?? null,
       });
     }
     return entries;
@@ -778,6 +779,7 @@ export class ProviderSnapshotManager {
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
+        derivedFromProviderId: definition?.derivedFromProviderId ?? null,
       };
 
       if (!definition?.enabled) {
@@ -946,6 +948,7 @@ export class ProviderSnapshotManager {
       label: definition.label,
       description: definition.description,
       defaultModeId: definition.defaultModeId,
+      derivedFromProviderId: definition.derivedFromProviderId ?? null,
     };
     const setEntry = (entry: ProviderSnapshotEntry) => {
       if (!this.isCurrentProviderLoad(snapshotCwd, provider, load)) {
