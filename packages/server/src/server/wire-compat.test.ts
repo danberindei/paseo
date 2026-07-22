@@ -8,6 +8,7 @@ import pino from "pino";
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
 
+import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import {
   AgentTimelineItemPayloadSchema,
@@ -340,6 +341,89 @@ async function emitTimelineResponse(options?: {
   return response;
 }
 
+function createTimelineCompatMessages(item: AgentTimelineItem): SessionOutboundMessage[] {
+  const timestamp = "2026-07-22T00:00:00.000Z";
+  const event = { type: "timeline" as const, provider: "codex", item, turnId: "turn-1" };
+  const unchangedItem: AgentTimelineItem = { type: "assistant_message", text: "Earlier reply" };
+  const entry = {
+    provider: "codex",
+    item,
+    timestamp,
+    turnId: "turn-1",
+    seqStart: 2,
+    seqEnd: 2,
+    sourceSeqRanges: [{ startSeq: 2, endSeq: 2 }],
+    collapsed: [],
+  };
+  const window = { minSeq: 1, maxSeq: 2, nextSeq: 3 };
+  return [
+    {
+      type: "agent_stream",
+      payload: { agentId: "agent-1", event, timestamp, seq: 2, epoch: "epoch-1" },
+    },
+    {
+      type: "hub.execution.agent.stream",
+      payload: { executionId: "execution-1", agentId: "agent-1", event },
+    },
+    {
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "timeline-1",
+        agentId: "agent-1",
+        agent: null,
+        direction: "tail",
+        projection: "projected",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window,
+        startCursor: { epoch: "epoch-1", seq: 1 },
+        endCursor: { epoch: "epoch-1", seq: 2 },
+        hasOlder: false,
+        hasNewer: false,
+        entries: [{ ...entry, item: unchangedItem }, entry],
+        error: null,
+      },
+    },
+    {
+      type: "agent.provider_subagents.timeline.get.response",
+      payload: {
+        requestId: "subagent-timeline-1",
+        parentAgentId: "agent-1",
+        subagentId: "subagent-1",
+        provider: "codex",
+        direction: "tail",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window,
+        hasOlder: false,
+        hasNewer: false,
+        rows: [
+          { item: unchangedItem, timestamp, seq: 1 },
+          { item, timestamp, seq: 2 },
+        ],
+        error: null,
+      },
+    },
+    {
+      type: "agent.provider_subagents.update",
+      payload: {
+        kind: "timeline",
+        parentAgentId: "agent-1",
+        subagentId: "subagent-1",
+        provider: "codex",
+        item,
+        timestamp,
+        seq: 2,
+        epoch: "epoch-1",
+      },
+    },
+  ];
+}
+
 describe("wire compatibility", () => {
   test("sends project updates only to clients that declare support", async () => {
     const project = createPersistedProjectRecord({
@@ -574,6 +658,146 @@ describe("wire compatibility", () => {
 
       paseoHome: "/tmp/paseo-home",
     });
+  });
+
+  test("preserves review_result objects in plugin RPC output", () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWireCompatTest({ messages });
+    const message: SessionOutboundMessage = {
+      type: "plugin.rpc.invoke.response",
+      payload: {
+        requestId: "plugin-review",
+        output: { results: [{ type: "review_result", text: "Plugin result", score: 95 }] },
+      },
+    };
+
+    session["emit"](message);
+
+    expect(messages).toEqual([message]);
+    expect(messages[0]).toBe(message);
+  });
+
+  test("accepts legacy review_result timeline items", () => {
+    const item: AgentTimelineItem = {
+      type: "review_result",
+      text: "No issues found.",
+      target: { type: "uncommittedChanges" },
+    };
+
+    expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+    for (const message of createTimelineCompatMessages(item)) {
+      expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+    }
+  });
+
+  test("delivers assistant messages through owned event subscriptions", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const source = {};
+    const session = createSessionForWireCompatTest({
+      clientCapabilities: {
+        [CLIENT_CAPS.ownedSubscriptions]: true,
+        [CLIENT_CAPS.explicitEventSubscriptions]: true,
+      },
+      onMessageToSource: (_source, message) => messages.push(message),
+    });
+    session.updateClientCapabilities(
+      { [CLIENT_CAPS.ownedSubscriptions]: true, [CLIENT_CAPS.explicitEventSubscriptions]: true },
+      source,
+    );
+    await session.handleMessage(
+      {
+        type: "session.events.set_subscription.request",
+        requestId: "review-events",
+        events: ["hub.execution.agent.stream", "agent.provider_subagents.update"],
+      },
+      source,
+    );
+    expect(messages).toEqual([
+      {
+        type: "session.events.set_subscription.response",
+        payload: { requestId: "review-events", subscriptionId: expect.any(String) },
+      },
+    ]);
+    messages.length = 0;
+    const item: AgentTimelineItem = {
+      type: "assistant_message",
+      text: "Review text",
+    };
+    const inputs = createTimelineCompatMessages(item);
+    const expectedEvents = createTimelineCompatMessages(item).filter(
+      (message) =>
+        message.type === "hub.execution.agent.stream" ||
+        message.type === "agent.provider_subagents.update",
+    );
+    for (const message of expectedEvents) {
+      message.payload.subscriptionId = expect.any(String);
+    }
+
+    for (const message of inputs) {
+      session.publish(message);
+    }
+
+    expect(messages).toEqual(expectedEvents);
+    await session.cleanup();
+  });
+
+  test.each([
+    ["general", undefined],
+    ["source-specific", {}],
+  ])("preserves assistant timeline items on the %s path", (_path, source) => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWireCompatTest({
+      messages,
+      clientCapabilities: { [CLIENT_CAPS.providerSubagents]: true },
+      onMessageToSource: (_source, message) => messages.push(message),
+    });
+    session.updateClientCapabilities({ [CLIENT_CAPS.providerSubagents]: true }, source);
+    const inputItem: AgentTimelineItem = {
+      type: "assistant_message",
+      text: "No issues found.",
+      messageId: "review-response",
+    };
+    const inputs = createTimelineCompatMessages(inputItem);
+
+    for (const message of inputs) {
+      session["emitForSource"](message, source);
+    }
+
+    expect(messages).toEqual(inputs);
+    for (const [index, message] of messages.entries()) {
+      expect(message).toBe(inputs[index]);
+    }
+  });
+
+  test.each([
+    ["general", undefined],
+    ["source-specific", {}],
+  ])("preserves plugin timeline data on the %s path", (_path, source) => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWireCompatTest({
+      messages,
+      clientCapabilities: { [CLIENT_CAPS.providerSubagents]: true },
+      onMessageToSource: (_source, message) => messages.push(message),
+    });
+    session.updateClientCapabilities({ [CLIENT_CAPS.providerSubagents]: true }, source);
+    const item: AgentTimelineItem = {
+      type: "plugin",
+      id: "review-1",
+      pluginId: "review-plugin",
+      kind: "review",
+      version: 1,
+      data: { results: [{ type: "review_result", text: "Plugin result", score: 95 }] },
+    };
+    const inputs = createTimelineCompatMessages(item);
+
+    for (const message of inputs) {
+      session["emitForSource"](message, source);
+    }
+
+    expect(messages).toEqual(inputs);
+    for (const [index, message] of messages.entries()) {
+      expect(message).toBe(inputs[index]);
+    }
   });
 });
 

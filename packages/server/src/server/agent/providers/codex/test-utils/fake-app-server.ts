@@ -73,6 +73,8 @@ export interface FakeCodexAppServer {
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
+  /** Writes the `thread/compacted` marker Codex sends when a compaction ends. */
+  compacts(params: { threadId: string; turnId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
   completeTurn(params?: {
     threadId?: string;
@@ -419,6 +421,12 @@ export function createFakeCodexAppServer(
       writeNotification("item/started", {
         threadId: params.threadId,
         item: { type: "contextCompaction", id: params.itemId },
+      });
+    },
+    compacts(params) {
+      writeNotification("thread/compacted", {
+        threadId: params.threadId,
+        turnId: params.turnId,
       });
     },
     updatesPlan(params) {

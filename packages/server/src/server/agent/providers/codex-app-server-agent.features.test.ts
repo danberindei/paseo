@@ -15,10 +15,12 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
+import { asInternals as castInternals } from "../../test-utils/class-mocks.js";
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
+  waitForNextEvent,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
@@ -108,6 +110,17 @@ const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
 
 type CodexFeaturesTestSession = AgentSession;
 
+interface CodexSessionInternals {
+  activeForegroundTurnId: string | null;
+  handleNotification: (method: string, params: unknown) => Promise<void>;
+}
+
+// The ordered notification drain is private, so the tests that assert ordering await the
+// handler directly instead of guessing how long delivery takes.
+function sessionInternals(session: CodexFeaturesTestSession): CodexSessionInternals {
+  return castInternals<CodexSessionInternals>(session);
+}
+
 interface CapturedLogEntry {
   level?: number;
   msg?: string;
@@ -139,7 +152,12 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSessionHarness(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[]; userAgent?: string } = {},
+  options: {
+    logger?: pino.Logger;
+    models?: unknown[];
+    userAgent?: string;
+    handlers?: Record<string, (params: unknown) => unknown>;
+  } = {},
 ): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -149,6 +167,9 @@ function createSessionHarness(
     initialize: () => ({ userAgent: options.userAgent ?? "codex/0.156.0" }),
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
     "model/list": () => ({ data: options.models ?? TEST_SPEED_MODELS }),
+    "review/start": () => ({}),
+    "thread/compact/start": () => ({}),
+    ...options.handlers,
   });
   const session = new CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
@@ -161,7 +182,7 @@ function createSessionHarness(
 
 async function createConnectedSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[]; userAgent?: string } = {},
+  options: Parameters<typeof createSessionHarness>[1] = {},
 ): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -479,6 +500,117 @@ describe("Codex app-server provider controls", () => {
     } finally {
       await session.close();
     }
+  });
+
+  test("startTurn routes built-in review slash commands through review/start", async () => {
+    const { session, appServer } = await createConnectedSession();
+
+    await session.startTurn("/review --base release/main");
+
+    await expect(appServer.waitForRequest("review/start")).resolves.toEqual({
+      threadId: "thread-1",
+      target: { type: "baseBranch", branch: "release/main" },
+      delivery: "inline",
+    });
+    expect(appServer.requests().map((request) => request.method)).not.toContain("turn/start");
+  });
+
+  test("startTurn routes built-in compact slash commands through thread/compact/start", async () => {
+    const { session, appServer } = await createConnectedSession();
+
+    await session.startTurn("/compact");
+
+    await expect(appServer.waitForRequest("thread/compact/start")).resolves.toEqual({
+      threadId: "thread-1",
+    });
+    expect(appServer.requests().map((request) => request.method)).not.toContain("turn/start");
+  });
+
+  test("thread/compacted completes the compact command turn and dedupes the item completion", async () => {
+    const { session, appServer } = await createConnectedSession();
+
+    const { turnId } = await session.startTurn("/compact");
+    expect(sessionInternals(session).activeForegroundTurnId).toBe(turnId);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    appServer.startsCompaction({ threadId: "thread-1", itemId: "manual-compact" });
+    appServer.compacts({ threadId: "thread-1", turnId: "native-compact-turn" });
+    await waitForNextEvent(session, "turn_completed");
+
+    // The marker's turn_completed proves the drain reached the compaction; the trailing item
+    // completion must dedupe against it, so await the handler rather than a timer.
+    await sessionInternals(session).handleNotification("item/completed", {
+      threadId: "thread-1",
+      item: { type: "contextCompaction", id: "manual-compact" },
+    });
+
+    expect(sessionInternals(session).activeForegroundTurnId).toBeNull();
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        turnId,
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        turnId: "native-compact-turn",
+        item: { type: "compaction", status: "completed" },
+      },
+      { type: "turn_completed", provider: CODEX_PROVIDER, usage: undefined, turnId },
+    ]);
+  });
+
+  test("thread/compacted handled before the compact start acknowledgement completes the turn", async () => {
+    let appServer: FakeCodexAppServer;
+    // Codex can write the marker lines before the response line, so the notification is
+    // delivered while the compact request is still awaiting its acknowledgement.
+    const { session, appServer: connectedAppServer } = await createConnectedSession(
+      {},
+      {
+        handlers: {
+          "thread/compact/start": () => {
+            appServer.startsCompaction({ threadId: "thread-1", itemId: "manual-compact" });
+            appServer.compacts({ threadId: "thread-1", turnId: "native-compact-turn" });
+            return {};
+          },
+        },
+      },
+    );
+    appServer = connectedAppServer;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("/compact");
+    // The marker was handled before the acknowledgement returned, so the turn is finished
+    // by the time the start resolves.
+    expect(events).toContainEqual(expect.objectContaining({ type: "turn_completed" }));
+
+    // Awaiting the handler drains the queued marker notifications too, which is what clears
+    // the foreground turn.
+    await sessionInternals(session).handleNotification("item/completed", {
+      threadId: "thread-1",
+      item: { type: "contextCompaction", id: "manual-compact" },
+    });
+
+    expect(sessionInternals(session).activeForegroundTurnId).toBeNull();
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        turnId,
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        turnId: "native-compact-turn",
+        item: { type: "compaction", status: "completed" },
+      },
+      { type: "turn_completed", provider: CODEX_PROVIDER, usage: undefined, turnId },
+    ]);
   });
 
   test("controls return the speed selector and plan toggle when supported", async () => {

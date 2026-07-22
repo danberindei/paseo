@@ -80,6 +80,8 @@ describe("codex agent commands E2E", () => {
     }
 
     const names = result.commands.map((c) => c.name);
+    expect(names).toContain("compact");
+    expect(names).toContain("review");
     expect(names).toContain("my-skill");
     expect(names).toContain("prompts:hello");
 

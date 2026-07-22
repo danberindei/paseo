@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import type { AgentSession } from "../agent-sdk-types.js";
+import { AgentTurnStartCanceledError, type AgentSession } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
@@ -55,6 +55,8 @@ function createHarness(
     },
     [TERMINATE]: (params) =>
       options.terminate?.(String(paramsOf(params).processId)) ?? { terminated: true },
+    "review/start": () => ({}),
+    "thread/compact/start": () => ({}),
   };
   const appServer: FakeCodexAppServer = createFakeCodexAppServer(handlers);
   const session = new CodexAppServerAgentSession(
@@ -701,4 +703,48 @@ test("does not confirm a stop after the provider connection is lost", async () =
   appServer.disconnect();
   response.resolve({ terminated: true });
   await expect(pending).rejects.toThrow();
+});
+
+describe("a built-in command turn waits for the interrupted turn's cleanup", () => {
+  test.each([
+    ["/review", "review/start"],
+    ["/compact", "thread/compact/start"],
+  ] as const)(
+    "dispatches %s only after the interrupted turn's commands are answered",
+    async (prompt, method) => {
+      const answer = deferred();
+      const harness = createHarness({
+        terminate: () => answer.promise.then(() => ({ terminated: true })),
+      });
+      await interruptTurnB(harness);
+
+      const command = harness.session.startTurn(prompt);
+      await vi.waitFor(() => expect(harness.terminated()).toEqual(["201", "202"]));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(harness.requests(method)).toHaveLength(0);
+
+      answer.resolve();
+      await command;
+      expect(harness.requests(method)).toHaveLength(1);
+      harness.appServer.assertNoErrors();
+    },
+  );
+
+  test("an interrupt cancelling a pending built-in command start never dispatches it", async () => {
+    const answer = deferred();
+    const harness = createHarness({
+      terminate: () => answer.promise.then(() => ({ terminated: true })),
+    });
+    await interruptTurnB(harness);
+
+    const review = harness.session.startTurn("/review");
+    await vi.waitFor(() => expect(harness.terminated()).toEqual(["201", "202"]));
+    const interrupting = harness.session.interrupt();
+    answer.resolve();
+
+    await expect(review).rejects.toThrow(AgentTurnStartCanceledError);
+    await interrupting;
+    expect(harness.requests("review/start")).toHaveLength(0);
+    harness.appServer.assertNoErrors();
+  });
 });

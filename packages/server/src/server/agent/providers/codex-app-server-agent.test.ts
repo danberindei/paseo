@@ -20,6 +20,7 @@ import type {
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
 import {
+  __codexAppServerInternals,
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
   CodexAppServerAgentSession,
@@ -30,6 +31,7 @@ import {
   mapCodexPlanUpdateToTodo,
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
+  threadItemToTimeline,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
 
@@ -136,6 +138,7 @@ type CodexTestSession = AgentSession & {
   currentThreadId: string | null;
   activeForegroundTurnId: string | null;
   client: CodexClientLike | null;
+  requestBuiltInReview: CodexAppServerAgentSession["requestBuiltInReview"];
 };
 
 type TurnTerminalEvent = Extract<
@@ -764,6 +767,48 @@ function createReopenableCodexAgent(threads: Record<string, unknown[]>, registry
 function asInternals(session: CodexTestSession): CodexSessionTestAccess {
   return castInternals<CodexSessionTestAccess>(session);
 }
+
+test("delivers built-in review findings as the same assistant message used by history", async () => {
+  const session = createSession();
+  const requests: unknown[][] = [];
+  session.client = {
+    async request(...request) {
+      requests.push(request);
+      return {};
+    },
+  };
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  await session.requestBuiltInReview({ type: "uncommittedChanges" });
+  expect(requests).toEqual([
+    [
+      "review/start",
+      {
+        threadId: "test-thread",
+        target: { type: "uncommittedChanges" },
+        delivery: "inline",
+      },
+      expect.any(Number),
+    ],
+  ]);
+
+  const item = { type: "agentMessage", id: "review-response", text: "No issues found." };
+  await asInternals(session).handleNotification("item/completed", {
+    threadId: "test-thread",
+    item,
+  });
+
+  const expectedItem = {
+    type: "assistant_message",
+    messageId: "review-response",
+    text: "No issues found.",
+  };
+  expect(events).toEqual([
+    { type: "timeline", provider: "codex", turnId: "test-turn", item: expectedItem },
+  ]);
+  expect(await threadItemToTimeline(item)).toEqual(expectedItem);
+});
 
 function markdownImageSource(markdown: string): string {
   const match = markdown.trim().match(/^!\[[^\]]*]\((.*)\)$/);
@@ -3389,6 +3434,21 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("lists built-in slash commands", () => {
+    expect(__codexAppServerInternals.listCodexBuiltInSlashCommands()).toEqual([
+      {
+        name: "compact",
+        description: "Compact the current Codex thread.",
+        argumentHint: "",
+      },
+      {
+        name: "review",
+        description: "Review changes with Codex's built-in review flow.",
+        argumentHint: "[--uncommitted | --base <branch> | --commit <sha> | <instructions>]",
+      },
+    ]);
+  });
+
   const logger = createTestLogger();
 
   test("extracts context window usage from snake_case token payloads", () => {
@@ -5636,6 +5696,43 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("settles a child compaction from thread/compacted without an item completion", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-compact-notification",
+        kind: "started",
+        agentThreadId: "child-compact-notification",
+        agentPath: "/root/child-compact-notification",
+      },
+    });
+    await asInternals(session).handleNotification("item/started", {
+      threadId: "child-compact-notification",
+      item: { type: "contextCompaction", id: "child-compact-notification-compaction" },
+    });
+    await asInternals(session).handleNotification("thread/compacted", {
+      threadId: "child-compact-notification",
+      turnId: "child-compact-turn",
+    });
+
+    const compactions = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "timeline"
+        ? [
+            `${event.event.id} ${event.event.item.type === "compaction" ? event.event.item.status : ""}`,
+          ]
+        : [],
+    );
+    expect(compactions).toEqual([
+      "child-compact-notification loading",
+      "child-compact-notification completed",
+    ]);
+  });
+
   test("keeps the parent sub-agent running when a child command fails during the child turn", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -6565,6 +6662,30 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("does not finish a foreground turn on an ordinary thread/compacted notification", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "auto-compact-turn",
+    });
+
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "auto-compact-turn",
+        item: {
+          type: "compaction",
+          status: "completed",
+        },
+      },
+    ]);
+  });
+
   test("emits consecutive Codex thread/compacted notifications", async () => {
     const session = createSession();
     session.activeForegroundTurnId = null;
@@ -6920,7 +7041,7 @@ describe("Codex app-server provider", () => {
 
     await expect(session.listCommands?.()).resolves.toContainEqual({
       name: "compact",
-      description: "Summarize conversation to prevent hitting the context limit",
+      description: "Compact the current Codex thread.",
       argumentHint: "",
       kind: "command",
     });
