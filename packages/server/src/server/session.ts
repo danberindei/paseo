@@ -7671,19 +7671,28 @@ export class Session {
     if (!this.authorization.allowsOutbound(msg)) {
       return;
     }
+    const outbound = this.applyOutboundCompat(msg);
     // JSON.stringify(msg) is only computed when trace is enabled — it runs for
     // every outbound message otherwise, and trace is disabled by default.
     // Optional-chained because test logger stubs don't implement isLevelEnabled.
     if (this.sessionLogger.isLevelEnabled?.("trace")) {
       this.sessionLogger.trace(
         {
-          messageType: msg.type,
-          payloadBytes: JSON.stringify(msg).length,
+          messageType: outbound.type,
+          payloadBytes: JSON.stringify(outbound).length,
         },
         "agent.session.outbound",
       );
     }
-    this.onMessage(msg);
+    this.onMessage(outbound);
+  }
+
+  // Single choke point for outbound wire-compat downgrades: every message a
+  // client sees passes through here. Each capability gate adds its own
+  // transform to this pipeline (see the downgrade helpers near the top of the
+  // file); with no gate active it returns the message unchanged.
+  private applyOutboundCompat(msg: SessionOutboundMessage): SessionOutboundMessage {
+    return msg;
   }
 
   private emitBinary(frame: Uint8Array): void {
