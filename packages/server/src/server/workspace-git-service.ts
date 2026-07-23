@@ -225,6 +225,7 @@ export interface WorkspaceGitService {
   onWorkspaceStateMayHaveChanged(cwd: string): void;
   invalidateForge(cwd: string): void;
   getMetrics(): WorkspaceGitServiceMetrics;
+  setFocusedForgeCwd(sessionId: string, cwd: string | null): void;
   dispose(): Promise<void>;
 }
 
@@ -571,6 +572,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
   >({ max: WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX });
   private watcherErrorCallbackCount = 0;
+  // Forge PR-status polling spawns a `gh`/forge subprocess per workspace; running one for
+  // every observed sidebar workspace produced a polling storm. Scope it to the workspace each
+  // client session is focused on, keyed by session id so several connected clients each
+  // contribute their focused cwd. A workspace polls its forge iff at least one session focuses
+  // it. The cheap on-disk git watch that feeds branch/diff badges is unaffected.
+  private readonly focusedForgeCwdBySession = new Map<string, string>();
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
@@ -611,6 +618,46 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         this.removeWorkspaceListener(cwd, listener);
       },
     };
+  }
+
+  /**
+   * Report which workspace a client session is focused on for forge PR-status polling. The
+   * client reports the focused agent via heartbeat; the session maps it to a cwd and calls this.
+   * Pass null when no agent is focused or the app is backgrounded. Polling runs only for cwds at
+   * least one session focuses, so idle or off-screen workspaces spawn no forge subprocesses.
+   */
+  setFocusedForgeCwd(sessionId: string, cwd: string | null): void {
+    const normalized = cwd === null ? null : resolve(cwd);
+    const previous = this.focusedForgeCwdBySession.get(sessionId) ?? null;
+    if (previous === normalized) {
+      return;
+    }
+    if (normalized === null) {
+      this.focusedForgeCwdBySession.delete(sessionId);
+    } else {
+      this.focusedForgeCwdBySession.set(sessionId, normalized);
+    }
+    // Re-evaluate polling for the workspace this session left and the one it moved to. A cwd
+    // another session still focuses keeps polling, because updateForgePrStatusPollForTarget
+    // re-checks isForgePollFocused across all sessions.
+    for (const affectedCwd of [previous, normalized]) {
+      if (affectedCwd === null) {
+        continue;
+      }
+      const target = this.workspaceTargets.get(affectedCwd);
+      if (target) {
+        this.updateForgePrStatusPollForTarget(target);
+      }
+    }
+  }
+
+  private isForgePollFocused(cwd: string): boolean {
+    for (const focusedCwd of this.focusedForgeCwdBySession.values()) {
+      if (focusedCwd === cwd) {
+        return true;
+      }
+    }
+    return false;
   }
 
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription {
@@ -2390,6 +2437,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private updateForgePrStatusPollForTarget(target: WorkspaceGitTarget): void {
+    if (!this.isForgePollFocused(target.cwd)) {
+      this.stopForgePrStatusPollForTarget(target);
+      return;
+    }
     if (target.listeners.size === 0) {
       this.stopForgePrStatusPollForTarget(target);
       return;

@@ -4287,6 +4287,20 @@ export class Session {
     if (this.registeredPushToken) {
       this.pushNotifications.renew(this.registeredPushToken);
     }
+    this.syncFocusedForgePoll();
+  }
+
+  /**
+   * Scope forge PR-status polling to the workspace this client is currently looking at. The
+   * focused agent's cwd is the only workspace whose PR badge is on screen, so it is the only one
+   * worth spawning forge subprocesses for. A backgrounded app or no focused agent reports null,
+   * which stops the poll. The workspace-git-service unions this across all connected sessions.
+   */
+  private syncFocusedForgePoll(): void {
+    const activity = this.clientActivity;
+    const focusedAgentId = activity?.appVisible ? activity.focusedAgentId : null;
+    const cwd = focusedAgentId ? (this.agentManager.getAgent(focusedAgentId)?.cwd ?? null) : null;
+    this.workspaceGitService.setFocusedForgeCwd(this.sessionId, cwd);
   }
 
   private async clearFocusedTerminalAttention(terminalId: string): Promise<void> {
@@ -5162,6 +5176,22 @@ export class Session {
     }
   }
 
+  private syncWorkspaceObserversFromFetch(
+    request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
+    payload: { entries: FetchWorkspacesResponseEntry[]; pageInfo: FetchWorkspacesResponsePageInfo },
+  ): void {
+    this.workspaceGitObserver.syncObservers(payload.entries);
+    // A complete, unfiltered listing that fits in one page represents every active workspace, so
+    // only then can an observer whose workspace is absent be told apart from one that is merely
+    // off-page or filtered out. Report such leaked observers (a removal path that failed to
+    // release its subscription) instead of tearing them down, so the root cause gets fixed rather
+    // than masked. Observer teardown stays the job of removeForWorkspaceId on archive/remove.
+    const isCompleteListing = !request.filter && !request.page?.cursor && !payload.pageInfo.hasMore;
+    if (isCompleteListing) {
+      this.workspaceGitObserver.reportLeakedObservers(payload.entries);
+    }
+  }
+
   private bufferOrEmitWorkspaceUpdate(
     subscription: WorkspaceUpdatesSubscriptionState,
     payload: WorkspaceUpdatePayload,
@@ -5728,7 +5758,7 @@ export class Session {
       const payload = request.sync
         ? await this.readWorkspaceDirectorySync(request)
         : await this.listFetchWorkspacesEntries(request);
-      this.workspaceGitObserver.syncObservers(payload.entries);
+      this.syncWorkspaceObserversFromFetch(request, payload);
       this.sessionLogger.debug(
         {
           requestId: request.requestId,
@@ -7831,6 +7861,9 @@ export class Session {
 
     this.workspaceGitObserver.dispose();
     this.workspaceFilesSession.dispose();
+    // Drop this session's forge-poll focus contribution on the shared git service so a
+    // disconnected client stops keeping its last-focused workspace polling.
+    this.workspaceGitService.setFocusedForgeCwd(this.sessionId, null);
   }
 }
 

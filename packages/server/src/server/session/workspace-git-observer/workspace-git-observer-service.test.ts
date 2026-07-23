@@ -238,6 +238,69 @@ describe("syncObservers", () => {
   });
 });
 
+describe("reportLeakedObservers", () => {
+  function leakWarnings(warnCalls: unknown[][]): Array<{ workspaceId: string; cwd: string }> {
+    return warnCalls
+      .filter(([, message]) => typeof message === "string" && message.startsWith("Leaked "))
+      .map(([context]) => context as { workspaceId: string; cwd: string });
+  }
+
+  test("never tears down an observer whose workspace is absent from the listing", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    h.service.reportLeakedObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.service.reportLeakedObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    expect(h.unsubscribeCalls).toEqual([]);
+  });
+
+  test("does not warn on a single absence, so a freshly warmed workspace is not misreported", () => {
+    const h = buildHarness();
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.service.reportLeakedObservers([]);
+    expect(leakWarnings(h.warnCalls)).toEqual([]);
+  });
+
+  test("warns once after a workspace is absent from two consecutive complete listings", () => {
+    const h = buildHarness();
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.service.reportLeakedObservers([]);
+    h.service.reportLeakedObservers([]);
+    h.service.reportLeakedObservers([]);
+    expect(leakWarnings(h.warnCalls)).toEqual([{ workspaceId: "ws1", cwd: WS1 }]);
+  });
+
+  test("resets leak tracking when the workspace reappears before the second absence", () => {
+    const h = buildHarness();
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.service.reportLeakedObservers([]);
+    // Reappears: the earlier absence no longer counts toward a sustained leak.
+    h.service.reportLeakedObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.service.reportLeakedObservers([]);
+    expect(leakWarnings(h.warnCalls)).toEqual([]);
+  });
+
+  test("keeps observers present in the listing and does not warn", () => {
+    const h = buildHarness();
+    h.service.syncObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    h.service.reportLeakedObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    h.service.reportLeakedObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    expect(h.unsubscribeCalls).toEqual([]);
+    expect(leakWarnings(h.warnCalls)).toEqual([]);
+  });
+});
+
 describe("git snapshot listener", () => {
   test("fans a snapshot out to branch-change, workspace-update, and status-update", async () => {
     const h = buildHarness();

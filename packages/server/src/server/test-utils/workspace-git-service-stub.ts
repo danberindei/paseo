@@ -112,6 +112,7 @@ export function createNoopWorkspaceGitService(
         maxReconciliationDurationMs: 0,
       },
     }),
+    setFocusedForgeCwd: () => {},
     dispose: async () => {},
     ...overrides,
   };

@@ -356,6 +356,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     // adapter's cache. The resolved forge here is github, so delegate to it.
     invalidateForge: vi.fn((cwd: string) => github.invalidate({ cwd })),
     getProjectSlug: vi.fn(),
+    setFocusedForgeCwd: vi.fn(),
     ...options.workspaceGitService,
   };
   const messages = options.messages ?? [];

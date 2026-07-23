@@ -434,6 +434,74 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("polls forge PR status only while a session is focused on the workspace", async () => {
+    const getCurrentPullRequestStatus = vi.fn(async () => null);
+    const github: ForgeService = {
+      ...createGitHubServiceStub(),
+      getCurrentPullRequestStatus,
+    };
+    const service = createService({ forgeOverrides: { github } });
+
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    // Let the initial workspace refresh populate git state (branch + remote url).
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    // No client is focused on this workspace, so the forge poll must never fire.
+    await vi.advanceTimersByTimeAsync(130_000);
+    await flushPromises();
+    expect(getCurrentPullRequestStatus).not.toHaveBeenCalled();
+
+    // Focusing the workspace starts the poll.
+    service.setFocusedForgeCwd("session-1", REPO_CWD);
+    await vi.advanceTimersByTimeAsync(130_000);
+    await flushPromises();
+    expect(getCurrentPullRequestStatus).toHaveBeenCalled();
+
+    // Unfocusing stops it: no further calls once the last session clears focus.
+    service.setFocusedForgeCwd("session-1", null);
+    getCurrentPullRequestStatus.mockClear();
+    await vi.advanceTimersByTimeAsync(130_000);
+    await flushPromises();
+    expect(getCurrentPullRequestStatus).not.toHaveBeenCalled();
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("keeps polling forge PR status while any session still focuses the workspace", async () => {
+    const getCurrentPullRequestStatus = vi.fn(async () => null);
+    const github: ForgeService = {
+      ...createGitHubServiceStub(),
+      getCurrentPullRequestStatus,
+    };
+    const service = createService({ forgeOverrides: { github } });
+
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    service.setFocusedForgeCwd("session-1", REPO_CWD);
+    service.setFocusedForgeCwd("session-2", REPO_CWD);
+
+    // session-1 unfocuses, but session-2 still focuses the workspace: polling continues.
+    service.setFocusedForgeCwd("session-1", null);
+    getCurrentPullRequestStatus.mockClear();
+    await vi.advanceTimersByTimeAsync(130_000);
+    await flushPromises();
+    expect(getCurrentPullRequestStatus).toHaveBeenCalled();
+
+    // The last focused session clears: polling stops.
+    service.setFocusedForgeCwd("session-2", null);
+    getCurrentPullRequestStatus.mockClear();
+    await vi.advanceTimersByTimeAsync(130_000);
+    await flushPromises();
+    expect(getCurrentPullRequestStatus).not.toHaveBeenCalled();
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("getSnapshot keeps plain git classification when shortstat lookup fails", async () => {
     const getCheckoutShortstat = vi.fn(async () => {
       throw new Error(

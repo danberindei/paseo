@@ -9,6 +9,13 @@ import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 
+function replaceSetContents(target: Set<string>, next: Set<string>): void {
+  target.clear();
+  for (const value of next) {
+    target.add(value);
+  }
+}
+
 interface WorkspaceGitWatchTarget {
   workspaceIds: Set<string>;
 }
@@ -39,6 +46,12 @@ export interface WorkspaceGitObserverMetrics {
  */
 export interface WorkspaceGitObserverService {
   syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void;
+  // Log (never tear down) observers whose workspace is absent from the passed set: a leaked
+  // subscription that some removal path failed to release. Call ONLY with a complete workspace
+  // listing (no filter, no pagination); a filtered or paged subset omits workspaces that are
+  // merely off-page, not leaked. A leak is reported only after it persists across two consecutive
+  // complete listings, so a workspace warmed after this listing's snapshot is not misreported.
+  reportLeakedObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void;
   syncObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void>;
   warmGitData(workspace: PersistedWorkspaceRecord): Promise<void>;
   // Check-and-record dedupe gate: returns true when the descriptor state is unchanged
@@ -79,6 +92,12 @@ export function createWorkspaceGitObserverService(deps: {
   const watchTargets = new Map<string, WorkspaceGitWatchTarget>();
   const workspaceStates = new Map<string, WorkspaceGitWatchState>();
   const subscriptions = new Map<string, () => void>();
+  // Leak-report state, both keyed by workspace id and scoped to complete listings only.
+  // suspected: absent from the last complete listing, awaiting a second consecutive absence.
+  // logged: already reported, kept so a persistent leak is not re-logged on every fetch.
+  // A workspace reappearing in a listing drops out of both, resetting its leak tracking.
+  const suspectedLeakedWorkspaceIds = new Set<string>();
+  const loggedLeakedWorkspaceIds = new Set<string>();
 
   function descriptorStateKey(workspace: WorkspaceDescriptorPayload | null): string {
     if (!workspace) {
@@ -206,6 +225,36 @@ export function createWorkspaceGitObserverService(deps: {
     }
   }
 
+  function reportLeakedObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
+    const presentWorkspaceIds = new Set<string>();
+    for (const workspace of workspaces) {
+      presentWorkspaceIds.add(workspace.id);
+    }
+    const nextSuspected = new Set<string>();
+    const nextLogged = new Set<string>();
+    for (const [workspaceId, state] of workspaceStates) {
+      if (presentWorkspaceIds.has(workspaceId)) {
+        continue;
+      }
+      if (loggedLeakedWorkspaceIds.has(workspaceId)) {
+        nextLogged.add(workspaceId);
+        continue;
+      }
+      if (suspectedLeakedWorkspaceIds.has(workspaceId)) {
+        logger.warn(
+          { workspaceId, cwd: state.cwd },
+          "Leaked workspace git observer: subscription outlived its workspace across two " +
+            "consecutive complete listings; a workspace removal path failed to release it",
+        );
+        nextLogged.add(workspaceId);
+      } else {
+        nextSuspected.add(workspaceId);
+      }
+    }
+    replaceSetContents(suspectedLeakedWorkspaceIds, nextSuspected);
+    replaceSetContents(loggedLeakedWorkspaceIds, nextLogged);
+  }
+
   async function syncObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const descriptor = await describeWorkspaceRecordWithGitData(workspace);
     syncObservers([descriptor]);
@@ -213,6 +262,7 @@ export function createWorkspaceGitObserverService(deps: {
 
   return {
     syncObservers,
+    reportLeakedObservers,
     syncObserverForWorkspace,
 
     async warmGitData(workspace) {
@@ -263,6 +313,8 @@ export function createWorkspaceGitObserverService(deps: {
       subscriptions.clear();
       watchTargets.clear();
       workspaceStates.clear();
+      suspectedLeakedWorkspaceIds.clear();
+      loggedLeakedWorkspaceIds.clear();
     },
   };
 }

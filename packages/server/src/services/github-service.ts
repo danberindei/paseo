@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import { z } from "zod";
 import {
   isGitHubHost,
@@ -126,6 +127,23 @@ const GITHUB_ENV = {
 const GITHUB_COMMAND_TIMEOUT_MS = 30_000;
 const REPO_HOST_NULL_TTL_MS = 60_000;
 const GIT_ORIGIN_URL_READ_TIMEOUT_MS = 5_000;
+
+// Every observed git workspace runs its own PR-status poll loop, so `gh` subprocesses can
+// fan out across the whole workspace list at once. Cap concurrent `gh` spawns with a dedicated
+// pool, kept separate from git's pLimit (run-git-command.ts) so slow network `gh` calls can't
+// starve fast local git operations. Tunable via PASEO_GH_CONCURRENCY (default 6).
+const GH_CONCURRENCY_DEFAULT = 6;
+// Accept only a finite integer >= 1; anything else (0, negative, non-numeric, fractional)
+// falls back to the default. pLimit throws on a concurrency below 1, so an unvalidated
+// negative value here would crash the daemon at import.
+function resolveGhConcurrency(raw: string | undefined): number {
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return GH_CONCURRENCY_DEFAULT;
+  }
+  return parsed;
+}
+const ghLimit = pLimit(resolveGhConcurrency(process.env.PASEO_GH_CONCURRENCY));
 
 const LabelSchema = z.object({
   name: z.string().optional(),
@@ -2833,7 +2851,10 @@ async function runGhCommand(
   args: string[],
   options: GitHubCommandRunnerOptions,
 ): Promise<GitHubCommandResult> {
-  return githubCliRunner.run(args, options);
+  // pLimit defers the wrapped call until a slot is free, so the command timeout inside
+  // githubCliRunner.run only starts once this actually spawns — a queued command never
+  // "times out" while waiting for a slot.
+  return ghLimit(() => githubCliRunner.run(args, options));
 }
 
 // Anchored to github.com so a pasted URL from an unrelated tracker (a GitLab

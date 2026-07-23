@@ -300,6 +300,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
         maxReconciliationDurationMs: 0,
       },
     }),
+    setFocusedForgeCwd: () => {},
     dispose: async () => {},
   };
 }
