@@ -25,14 +25,19 @@ export function getMountedRecentStreamItems(): number {
 export function findMountedWindowStart(input: {
   items: StreamItem[];
   minMountedCount: number;
+  maxMountedCount?: number;
 }): number {
   const { items, minMountedCount } = input;
+  const maxMountedCount = Math.max(input.maxMountedCount ?? minMountedCount * 2, minMountedCount);
   if (items.length <= minMountedCount) {
     return 0;
   }
 
+  // Stop the user-message rewind here so the mounted window never exceeds
+  // maxMountedCount items, even on a turn with no earlier user_message.
+  const floorIndex = Math.max(items.length - maxMountedCount, 0);
   let startIndex = Math.max(items.length - minMountedCount, 0);
-  while (startIndex > 0 && items[startIndex]?.kind !== "user_message") {
+  while (startIndex > floorIndex && items[startIndex]?.kind !== "user_message") {
     startIndex -= 1;
   }
   return startIndex;

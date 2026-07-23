@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import { findMountedWindowStart } from "./history-window";
 import { buildAgentStreamRenderModel } from "./model";
+
+vi.mock("react-native-unistyles", () => ({
+  StyleSheet: { create: () => ({}) },
+  withUnistyles: <T>(Component: T): T => Component,
+}));
 
 function createTimestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
@@ -125,9 +130,14 @@ describe("buildAgentStreamRenderModel", () => {
     expect(model.history).not.toContain(head[0]);
   });
 
-  it("keeps the full committed tail mounted on mobile web", () => {
-    const tail = [userMessage("u1", 1), assistantMessage("a1", 2)];
-    const head = [assistantMessage("live-a", 3)];
+  it("virtualizes committed history on mobile web like desktop", () => {
+    const tail: StreamItem[] = [];
+    for (let index = 0; index < 60; index += 1) {
+      const seed = index * 2;
+      tail.push(userMessage(`u${index}`, seed + 1));
+      tail.push(assistantMessage(`a${index}`, seed + 2));
+    }
+    const head = [assistantMessage("live-a", 121)];
 
     const model = buildAgentStreamRenderModel({
       isTurnActive: true,
@@ -138,9 +148,27 @@ describe("buildAgentStreamRenderModel", () => {
       isMobileBreakpoint: true,
     });
 
+    expect(model.segments.historyVirtualized.length).toBeGreaterThan(0);
+    expect(model.segments.historyMounted.length).toBeGreaterThan(0);
+    expect(model.segments.liveHead.map((item) => item.id)).toEqual(["live-a"]);
+    expect(model.history).not.toContain(head[0]);
+  });
+
+  it("keeps a short committed tail fully mounted on web", () => {
+    const tail = [userMessage("u1", 1), assistantMessage("a1", 2)];
+    const head = [assistantMessage("live-a", 3)];
+
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head,
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+
     expect(model.segments.historyVirtualized).toHaveLength(0);
     expect(model.segments.historyMounted).toBe(tail);
-    expect(model.segments.liveHead).toBe(head);
   });
 
   it("reuses ordered committed history when only the live head changes", () => {

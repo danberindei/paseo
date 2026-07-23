@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { deriveStreamTurnTiming, type StreamTurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
-import { getWebPartialVirtualizationThreshold } from "./web-virtualization";
+import {
+  getWebMaxMountedStreamItems,
+  getWebPartialVirtualizationThreshold,
+} from "./web-virtualization";
 import { orderHeadForStreamRenderStrategy, orderTailForStreamRenderStrategy } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
@@ -82,14 +85,11 @@ function getOrderedItems(params: {
 function splitOrderedTail(params: {
   orderedTail: StreamItem[];
   platform: "web" | "native";
-  isMobileBreakpoint: boolean;
 }): Pick<AgentStreamRenderModel, "history" | "segments"> {
-  const { orderedTail, platform, isMobileBreakpoint } = params;
+  const { orderedTail, platform } = params;
   const shouldSplitHistory =
-    platform === "web" &&
-    !isMobileBreakpoint &&
-    orderedTail.length > getWebPartialVirtualizationThreshold();
-  const cacheKey = `${platform}:${isMobileBreakpoint}:${getMountedRecentStreamItems()}:${shouldSplitHistory}`;
+    platform === "web" && orderedTail.length > getWebPartialVirtualizationThreshold();
+  const cacheKey = `${platform}:${getMountedRecentStreamItems()}:${getWebMaxMountedStreamItems()}:${shouldSplitHistory}`;
   let cachedByKey = splitHistoryCache.get(orderedTail);
   if (!cachedByKey) {
     cachedByKey = new Map();
@@ -116,6 +116,7 @@ function splitOrderedTail(params: {
   const mountedWindowStart = findMountedWindowStart({
     items: orderedTail,
     minMountedCount: getMountedRecentStreamItems(),
+    maxMountedCount: getWebMaxMountedStreamItems(),
   });
   const split = {
     history: orderedTail,
@@ -187,7 +188,6 @@ export function buildAgentStreamRenderModel(
   const splitHistory = splitOrderedTail({
     orderedTail,
     platform: input.platform,
-    isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const turnTiming = getTurnTiming({
     isTurnActive: input.isTurnActive,

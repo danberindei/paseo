@@ -8,6 +8,10 @@ import {
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = DEFAULT_MOUNTED_RECENT_STREAM_ITEMS;
+// Hard ceiling on how far the mounted window may grow while rewinding to a
+// user-message boundary. Without it a single very long turn (no user_message
+// between the recent cutoff and index 0) mounts the entire transcript.
+export const DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS = 100;
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
 export function shouldAdjustScrollForVirtualRowResize(input: {
@@ -27,6 +31,7 @@ export function shouldAdjustScrollForVirtualRowResize(input: {
 
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
   __PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
+  __PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS?: unknown;
 };
 
 function readPositiveIntegerOverride(value: unknown): number | null {
@@ -46,6 +51,13 @@ export function getWebPartialVirtualizationThreshold(): number {
 
 export function getWebMountedRecentStreamItems(): number {
   return getMountedRecentStreamItems();
+}
+
+export function getWebMaxMountedStreamItems(): number {
+  const override = readPositiveIntegerOverride(
+    (globalThis as BottomAnchorE2ETestGlobals).__PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS,
+  );
+  return override ?? DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS;
 }
 
 export interface IndexedStreamItem {
@@ -84,10 +96,12 @@ export { findMountedWindowStart };
 export function splitWebVirtualizedHistory(input: {
   entries: IndexedStreamItem[];
   minMountedCount: number;
+  maxMountedCount?: number;
 }): WebVirtualizedHistoryWindow {
   const startIndex = findMountedWindowStart({
     items: input.entries.map((entry) => entry.item),
     minMountedCount: input.minMountedCount,
+    maxMountedCount: input.maxMountedCount,
   });
   return {
     virtualizedEntries: input.entries.slice(0, startIndex),
