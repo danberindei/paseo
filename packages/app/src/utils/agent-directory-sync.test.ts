@@ -279,6 +279,8 @@ describe("replaceFetchedAgentDirectory", () => {
       serverId,
       new Map([[agentId, { epoch: "epoch", startSeq: 1, endSeq: 2 }]]),
     );
+    store.setAgentTimelineHasOlder(serverId, new Map([[agentId, true]]));
+    store.setAgentTimelineOlderFetchInFlight(serverId, new Map([[agentId, true]]));
     store.setPendingPermissions(
       serverId,
       new Map([["permission", { key: "permission", agentId, request: null as never }]]),
@@ -294,6 +296,8 @@ describe("replaceFetchedAgentDirectory", () => {
       details: session?.agentDetails.has(agentId),
       queued: session?.queuedMessages.has(agentId),
       cursor: session?.agentTimelineCursor.has(agentId),
+      hasOlder: session?.agentTimelineHasOlder.has(agentId),
+      olderFetchInFlight: session?.agentTimelineOlderFetchInFlight.has(agentId),
       permissions: session?.pendingPermissions.size,
       initializing: session?.initializingAgents.has(agentId),
       archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
@@ -302,6 +306,8 @@ describe("replaceFetchedAgentDirectory", () => {
       details: false,
       queued: false,
       cursor: false,
+      hasOlder: false,
+      olderFetchInFlight: false,
       permissions: 0,
       initializing: false,
       archivePending: false,

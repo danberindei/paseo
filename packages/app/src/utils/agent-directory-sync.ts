@@ -117,6 +117,8 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
   store.setAgentDetails(serverId, removeKey);
   store.setQueuedMessages(serverId, removeKey);
   store.setAgentTimelineCursor(serverId, removeKey);
+  store.setAgentTimelineHasOlder(serverId, removeKey);
+  store.setAgentTimelineOlderFetchInFlight(serverId, removeKey);
   store.setInitializingAgents(serverId, removeKey);
   store.setPendingPermissions(serverId, (current) => {
     const next = new Map(current);
