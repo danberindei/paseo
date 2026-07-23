@@ -6,10 +6,12 @@ import {
   clearAssistantMessageHeightEstimateCache,
 } from "@/utils/assistant-message-height-estimate";
 import {
+  DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS,
   DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
   DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
   estimateStreamItemHeight,
   findMountedWindowStart,
+  getWebMaxMountedStreamItems,
   getWebMountedRecentStreamItems,
   getWebPartialVirtualizationThreshold,
   splitWebVirtualizedHistory,
@@ -108,6 +110,34 @@ describe("findMountedWindowStart", () => {
       }),
     ).toBe(39);
   });
+
+  it("stops the rewind at the max mounted floor on a long boundary-less turn", () => {
+    // One user_message at index 0, then a single turn of 200 tool calls with no
+    // further user boundary. Without the floor the rewind reaches index 0 and
+    // mounts the entire transcript.
+    const items: StreamItem[] = [userMessage("u0", 1)];
+    for (let index = 1; index <= 200; index += 1) {
+      items.push(toolCall(`t${index}`, index % 60));
+    }
+
+    const startIndex = findMountedWindowStart({
+      items,
+      minMountedCount: 50,
+      maxMountedCount: 100,
+    });
+
+    expect(startIndex).toBe(items.length - 100);
+    expect(items.length - startIndex).toBe(100);
+  });
+
+  it("keeps a whole turn when the caller does not cap the rewind", () => {
+    const items = Array.from({ length: DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS + 40 }, (_, index) => ({
+      ...toolCall(`t${index}`, index % 60),
+      turnId: "long",
+    }));
+
+    expect(findMountedWindowStart({ items, minMountedCount: 20 })).toBe(0);
+  });
 });
 
 describe("splitWebVirtualizedHistory", () => {
@@ -129,6 +159,58 @@ describe("splitWebVirtualizedHistory", () => {
     expect(window.virtualizedEntries.at(-1)?.item.id).toBe("a4");
     expect(window.mountedEntries[0]?.item.id).toBe("u5");
     expect(window.mountedEntries).toHaveLength(50);
+  });
+
+  it("bounds the mounted window to the max mounted floor", () => {
+    const items: StreamItem[] = [userMessage("u0", 1)];
+    for (let index = 1; index <= 200; index += 1) {
+      items.push(toolCall(`t${index}`, index % 60));
+    }
+
+    const window = splitWebVirtualizedHistory({
+      entries: indexEntries(items),
+      minMountedCount: 50,
+      maxMountedCount: 100,
+    });
+
+    expect(window.mountedEntries).toHaveLength(100);
+    expect(window.virtualizedEntries).toHaveLength(items.length - 100);
+  });
+
+  it("virtualizes the older rows of a turn that is longer than the mounted cap", () => {
+    const length = DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS + 25;
+    const items = Array.from({ length }, (_, index) => ({
+      ...toolCall(`t${index}`, index % 60),
+      turnId: "long",
+    }));
+
+    const window = splitWebVirtualizedHistory({
+      entries: indexEntries(items),
+      minMountedCount: DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
+      maxMountedCount: DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS,
+    });
+
+    expect(window.mountedEntries).toHaveLength(DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS);
+    expect(window.virtualizedEntries).toHaveLength(25);
+    expect(window.mountedEntries[0]?.item.id).toBe(
+      `t${length - DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS}`,
+    );
+    expect(window.virtualizedEntries[0]?.item.id).toBe("t0");
+  });
+
+  it("keeps a turn that fits under the cap mounted together", () => {
+    const items = Array.from({ length: 40 }, (_, index) => ({
+      ...toolCall(`t${index}`, index),
+      turnId: "short",
+    }));
+
+    const window = splitWebVirtualizedHistory({
+      entries: indexEntries(items),
+      minMountedCount: DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
+    });
+
+    expect(window.virtualizedEntries).toHaveLength(0);
+    expect(window.mountedEntries).toHaveLength(40);
   });
 });
 
@@ -192,22 +274,28 @@ describe("web virtualization test overrides", () => {
     const globalWithOverrides = globalThis as typeof globalThis & {
       __PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
       __PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS?: unknown;
+      __PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS?: unknown;
     };
     const previousThreshold = globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
     const previousMounted = globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
+    const previousMaxMounted = globalWithOverrides.__PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS;
 
     try {
       delete globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
       delete globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
+      delete globalWithOverrides.__PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS;
       expect(getWebPartialVirtualizationThreshold()).toBe(
         DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
       );
       expect(getWebMountedRecentStreamItems()).toBe(DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS);
+      expect(getWebMaxMountedStreamItems()).toBe(DEFAULT_WEB_MAX_MOUNTED_STREAM_ITEMS);
 
       globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 6;
       globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS = 4;
+      globalWithOverrides.__PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS = 8;
       expect(getWebPartialVirtualizationThreshold()).toBe(6);
       expect(getWebMountedRecentStreamItems()).toBe(4);
+      expect(getWebMaxMountedStreamItems()).toBe(8);
     } finally {
       if (previousThreshold === undefined) {
         delete globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
@@ -218,6 +306,11 @@ describe("web virtualization test overrides", () => {
         delete globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
       } else {
         globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS = previousMounted;
+      }
+      if (previousMaxMounted === undefined) {
+        delete globalWithOverrides.__PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS;
+      } else {
+        globalWithOverrides.__PASEO_E2E_WEB_MAX_MOUNTED_STREAM_ITEMS = previousMaxMounted;
       }
     }
   });
