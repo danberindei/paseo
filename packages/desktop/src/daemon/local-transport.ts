@@ -27,7 +27,10 @@ export interface TransportEventPayload {
   sessionId: string;
   kind: "open" | "message" | "close" | "error";
   text?: string | null;
-  binaryBase64?: string | null;
+  // Raw frame bytes. Sent over webContents.send, which serializes typed arrays
+  // via structured clone, so we skip the +33% base64 string and its encode/decode
+  // on the terminal frame hot path.
+  binary?: Uint8Array | null;
   code?: number | null;
   reason?: string | null;
   error?: string | null;
@@ -59,7 +62,7 @@ export interface TransportWebSocket {
   on(event: "message", listener: (data: RawData, isBinary: boolean) => void): void;
   on(event: "close", listener: (code: number, reason?: Buffer | string) => void): void;
   on(event: "error", listener: (error: Error) => void): void;
-  send(data: string | Buffer, callback: (error?: Error) => void): void;
+  send(data: string | Uint8Array, callback: (error?: Error) => void): void;
   close(): void;
   terminate(): void;
 }
@@ -73,7 +76,7 @@ export interface LocalTransportManagerDependencies {
 
 export interface LocalTransportManager {
   open(rawInput: unknown): void;
-  send(input: { sessionId: string; text?: string; binaryBase64?: string }): Promise<void>;
+  send(input: { sessionId: string; text?: string; binary?: Uint8Array }): Promise<void>;
   close(sessionId: string): void;
   closeAll(): void;
 }
@@ -275,13 +278,16 @@ async function resolveTransportEndpoint(target: TransportTarget): Promise<Transp
   };
 }
 
-function decodeTransportMessage(input: { text?: string; binaryBase64?: string }): string | Buffer {
+function decodeTransportMessage(input: {
+  text?: string;
+  binary?: Uint8Array;
+}): string | Uint8Array {
   if (typeof input.text === "string") {
     return input.text;
   }
 
-  if (typeof input.binaryBase64 === "string") {
-    return Buffer.from(input.binaryBase64, "base64");
+  if (input.binary) {
+    return input.binary;
   }
 
   throw new Error("Local transport send requires text or binary payload.");
@@ -416,7 +422,7 @@ export function createLocalTransportManager(
         emitEvent({
           sessionId: session.id,
           kind: "message",
-          binaryBase64: buf.toString("base64"),
+          binary: buf,
         });
         return;
       }
@@ -496,7 +502,7 @@ export function createLocalTransportManager(
   async function send(input: {
     sessionId: string;
     text?: string;
-    binaryBase64?: string;
+    binary?: Uint8Array;
   }): Promise<void> {
     const session = sessions.get(input.sessionId);
     if (!session) {
@@ -558,7 +564,7 @@ export function openLocalTransportSession(rawInput: unknown): void {
 export async function sendLocalTransportMessage(input: {
   sessionId: string;
   text?: string;
-  binaryBase64?: string;
+  binary?: Uint8Array;
 }): Promise<void> {
   await localTransportManager.send(input);
 }
