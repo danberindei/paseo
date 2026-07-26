@@ -72,12 +72,30 @@ function modelInput(
     typography: { family: "monospace", size: 12, lineHeight: 18 },
     measureText,
     palette,
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", lineTooLong: "Line too long for wrapping" },
     ...overrides,
   };
 }
 
 describe("diff document workspace cache", () => {
+  it("returns the cached model for an oversized line when the files array changes", () => {
+    const cache = createDiffDocumentWorkspaceCache();
+    const source = diffFile();
+    source.hunks[0]!.lines[0]!.content = "x".repeat(10 * 1024 + 1);
+    const { measureText, stats } = countingMeasurer();
+    const input = modelInput([source], measureText, { wrapLines: true });
+
+    const first = cache.buildModel(input);
+    expect(first.rows).toEqual([
+      expect.objectContaining({ kind: "status", label: "Line too long for wrapping" }),
+    ]);
+    const second = cache.buildModel({ ...input, files: [source] });
+
+    expect(second).toBe(first);
+    expect(second.files[0]!.file).toBe(source);
+    expect(stats.calls).toBe(0);
+  });
+
   it("keeps text prepared in each visited window of the same file", () => {
     const cache = createDiffDocumentWorkspaceCache();
     const source = diffFile();
@@ -204,12 +222,35 @@ describe("diff document workspace cache", () => {
     const first = cache.buildModel(modelInput(files, measureText));
     const second = cache.buildModel(
       modelInput(files, measureText, {
-        labels: { binary: "Binary blob", tooLarge: "Too large" },
+        labels: {
+          binary: "Binary blob",
+          tooLarge: "Too large",
+          lineTooLong: "Line too long for wrapping",
+        },
       }),
     );
 
     expect(first.rows[0]).toMatchObject({ kind: "status", label: "Binary" });
     expect(second.rows[0]).toMatchObject({ kind: "status", label: "Binary blob" });
+  });
+
+  it("updates the wrapping warning when its translated label changes", () => {
+    const cache = createDiffDocumentWorkspaceCache();
+    const source = diffFile();
+    source.hunks[0]!.lines[0]!.content = "x".repeat(10 * 1024 + 1);
+    const { measureText } = countingMeasurer();
+    const input = modelInput([source], measureText, { wrapLines: true });
+    const first = cache.buildModel(input);
+    const second = cache.buildModel({
+      ...input,
+      labels: { ...input.labels, lineTooLong: "Ligne trop longue pour le retour à la ligne" },
+    });
+
+    expect(first.rows[0]).toMatchObject({ kind: "status", label: "Line too long for wrapping" });
+    expect(second.rows[0]).toMatchObject({
+      kind: "status",
+      label: "Ligne trop longue pour le retour à la ligne",
+    });
   });
 
   it("materializes successive unwrapped windows without remeasuring retained files", () => {

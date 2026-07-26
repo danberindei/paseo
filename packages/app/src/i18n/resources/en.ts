@@ -992,6 +992,7 @@ export const en = {
         },
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
+        lineTooLong: "Line too long for wrapping",
         previewTooLargeTitle: "This diff is too large to preview",
         previewTooLargeDescription: "Narrow the comparison to preview it here",
         unified: "Unified diff",

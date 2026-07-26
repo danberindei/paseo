@@ -1,5 +1,6 @@
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { findClusterBreak } from "@marijn/find-cluster-break";
+import { Buffer } from "buffer";
 import {
   buildSplitDiffRows,
   buildUnifiedDiffLines,
@@ -27,6 +28,8 @@ import type {
 export const FILE_HEADER_HEIGHT = 30;
 export const DIFF_BODY_BORDER_HEIGHT = 1;
 const CODE_HORIZONTAL_PADDING = 16;
+// About 100 wrapped lines of 100 characters each bounds measurement of one source line.
+const MAX_LINE_BYTES = 10 * 1024;
 
 interface CellSource {
   type: DiffCell["type"];
@@ -228,7 +231,20 @@ function appendNewFileRows(candidate: {
   bodyTop: number;
   gutterWidth: number;
 }): FileRowsResult {
-  if (candidate.file.status === "binary" || candidate.file.status === "too_large") {
+  let statusLabel: string | undefined;
+  if (candidate.file.status === "binary") {
+    statusLabel = candidate.input.labels.binary;
+  } else if (candidate.file.status === "too_large") {
+    statusLabel = candidate.input.labels.tooLarge;
+  } else if (
+    candidate.input.wrapLines &&
+    candidate.file.hunks.some((hunk) =>
+      hunk.lines.some((line) => exceedsWrappingLimit(line.content)),
+    )
+  ) {
+    statusLabel = candidate.input.labels.lineTooLong;
+  }
+  if (statusLabel !== undefined) {
     const height = candidate.input.typography.lineHeight + 24;
     candidate.rows.push({
       kind: "status",
@@ -237,10 +253,7 @@ function appendNewFileRows(candidate: {
       path: candidate.file.path,
       top: candidate.bodyTop,
       height,
-      label:
-        candidate.file.status === "binary"
-          ? candidate.input.labels.binary
-          : candidate.input.labels.tooLarge,
+      label: statusLabel,
     });
     return {
       bottom: candidate.bodyTop + height + DIFF_BODY_BORDER_HEIGHT,
@@ -301,6 +314,13 @@ function appendNewFileRows(candidate: {
     top += height;
   }
   return { bottom: top + DIFF_BODY_BORDER_HEIGHT, maximumHorizontalOverflow };
+}
+
+function exceedsWrappingLimit(content: string): boolean {
+  // UTF-8 needs between one and three bytes per UTF-16 code unit.
+  if (content.length > MAX_LINE_BYTES) return true;
+  if (content.length * 3 <= MAX_LINE_BYTES) return false;
+  return Buffer.byteLength(content, "utf8") > MAX_LINE_BYTES;
 }
 
 function materializeCells(

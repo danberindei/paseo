@@ -982,6 +982,7 @@ export const ar: TranslationResources = {
         },
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
+        lineTooLong: "السطر طويل جدًا للالتفاف",
         previewTooLargeTitle: "هذا الفرق كبير جدًا بحيث لا يمكن معاينته",
         previewTooLargeDescription: "ضيّق نطاق المقارنة لمعاينتها هنا",
         unified: "الفرق الموحدة",

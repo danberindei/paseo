@@ -1008,6 +1008,7 @@ export const fr: TranslationResources = {
         },
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop volumineux pour être affiché",
+        lineTooLong: "Ligne trop longue pour le retour à la ligne",
         previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",
         previewTooLargeDescription: "Réduisez la comparaison pour le prévisualiser ici",
         unified: "Diff unifié",

@@ -65,12 +65,93 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", lineTooLong: "Line too long for wrapping" },
     ...overrides,
   };
 }
 
 describe("diff document model", () => {
+  it.each(["unified", "split"] as const)(
+    "shows the wrapping warning without measuring oversized text: %s",
+    (layout) => {
+      const source = file();
+      source.hunks[0]!.lines[1]!.content = "x".repeat(10 * 1024 + 1);
+      let measurements = 0;
+      const model = buildDiffDocumentModel(
+        input({
+          files: [source],
+          layout,
+          labels: { ...input().labels, lineTooLong: "Ligne trop longue pour le retour à la ligne" },
+          measureText: {
+            measure(text) {
+              measurements++;
+              return measurer.measure(text);
+            },
+          },
+        }),
+      );
+
+      expect(model.files.map((section) => section.path)).toEqual([source.path]);
+      expect(model.rows).toEqual([
+        expect.objectContaining({
+          kind: "status",
+          path: source.path,
+          label: "Ligne trop longue pour le retour à la ligne",
+        }),
+      ]);
+      expect(model.files[0]!.file).toBe(source);
+      expect(measurements).toBe(0);
+    },
+  );
+
+  it.each(["unified", "split"] as const)(
+    "displays oversized lines without the warning when wrapping is disabled: %s",
+    (layout) => {
+      const source = file();
+      const content = "x".repeat(10 * 1024 + 1);
+      source.hunks[0]!.lines[1]!.content = content;
+      const model = buildDiffDocumentModel(input({ files: [source], layout, wrapLines: false }));
+
+      expect(model.rows.filter((row) => row.kind === "status")).toEqual([]);
+      const lineRows = model.rows.filter((row) => row.kind === "line");
+      const cells = lineRows.flatMap((row) => row.cells);
+      const fragments = cells.flatMap((cell) => cell?.fragments ?? []);
+      const renderedText = fragments.map((fragment) => fragment.text);
+      expect(renderedText).toContain(content);
+    },
+  );
+
+  it.each([
+    ["ASCII", "x".repeat(10 * 1024)],
+    ["multibyte text", "é".repeat(5 * 1024)],
+    ["three-byte text", "中".repeat(3413) + "x"],
+    ["emoji", "😀".repeat(2560)],
+  ])("allows a 10 KB %s line while wrapping and warns above it", (_, content) => {
+    const source = file();
+    source.hunks[0]!.lines[1]!.content = content;
+    const model = buildDiffDocumentModel(input({ files: [source], viewportWidth: 200_000 }));
+    expect(model.rows.filter((row) => row.kind === "status")).toEqual([]);
+
+    const updated = structuredClone(source);
+    updated.hunks[0]!.lines[1]!.content += "x";
+    const oversized = buildDiffDocumentModel(input({ files: [updated] }));
+    expect(oversized.rows).toEqual([
+      expect.objectContaining({ kind: "status", label: "Line too long for wrapping" }),
+    ]);
+  });
+
+  it("displays a file with many short lines while wrapping", () => {
+    const source = file();
+    source.hunks[0]!.lines = Array.from({ length: 40 }, () => ({
+      type: "add",
+      content: "中".repeat(1024),
+    }));
+
+    const model = buildDiffDocumentModel(input({ files: [source] }));
+    expect(model.rows.filter((row) => row.kind === "status")).toEqual([]);
+    expect(model.files[0]!.file).toBe(source);
+  });
+
   it("preserves shaped wrap breaks when joining makes a longer prefix narrower", () => {
     const measure = (text: string) => {
       if (text === "لا") return 30;

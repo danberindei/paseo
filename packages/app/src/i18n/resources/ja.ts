@@ -995,6 +995,7 @@ export const ja: TranslationResources = {
         },
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
+        lineTooLong: "行が長すぎるため折り返せません",
         previewTooLargeTitle: "この差分は大きすぎるためプレビューできません",
         previewTooLargeDescription: "比較範囲を狭めると、ここでプレビューできます",
         unified: "ユニファイド差分",

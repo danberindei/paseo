@@ -1000,6 +1000,7 @@ export const ru: TranslationResources = {
         },
         binaryFile: "Бинарный файл",
         tooLarge: "Дифф слишком велик для отображения",
+        lineTooLong: "Строка слишком длинная для переноса",
         previewTooLargeTitle: "Этот дифф слишком велик для предварительного просмотра",
         previewTooLargeDescription: "Сузьте диапазон сравнения, чтобы просмотреть дифф здесь",
         unified: "Унифицированный дифф",

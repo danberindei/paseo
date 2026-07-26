@@ -46,6 +46,49 @@ function headSha(repoDir: string): string {
 }
 
 describe("getCommitFileDiff", () => {
+  it.each([
+    "generated.txt",
+    "report => final.txt",
+    "report {draft => final}.txt",
+    "目录.txt",
+    "report\tfinal.txt",
+    "report\nfinal.txt",
+  ])("preserves statistics for an oversized committed diff at %s", async (name) => {
+    const repoDir = initRepo();
+    commitFile(repoDir, name, "old\n", "initial");
+    commitFile(repoDir, name, "x".repeat(201 * 1024) + "\n", "large edit");
+
+    expect(await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path: name })).toEqual({
+      path: name,
+      isNew: false,
+      isDeleted: false,
+      additions: 1,
+      deletions: 1,
+      hunks: [],
+      status: "too_large",
+    });
+  });
+
+  it("preserves statistics for an oversized committed rename with literal arrows", async () => {
+    const repoDir = initRepo();
+    const oldPath = "report => draft.txt";
+    const path = "report => final.txt";
+    const unchanged = "keep\n".repeat(60_000);
+    commitFile(repoDir, oldPath, unchanged, "initial");
+    git(["mv", oldPath, path], repoDir);
+    commitFile(repoDir, path, unchanged + "x".repeat(201 * 1024) + "\n", "rename and edit");
+
+    expect(await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path })).toEqual({
+      path,
+      isNew: false,
+      isDeleted: false,
+      additions: 1,
+      deletions: 0,
+      hunks: [],
+      status: "too_large",
+    });
+  });
+
   it.each(["new.txt", "with spaces.txt"])("preserves a rename-only commit to %s", async (name) => {
     const repoDir = initRepo();
     commitFile(repoDir, "old.txt", "same\n", "initial");

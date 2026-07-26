@@ -704,8 +704,12 @@ async function getTrackedNumstatByPath(
     },
   );
 
+  return parseNulNumstat(result.stdout);
+}
+
+function parseNulNumstat(stdout: string): Map<string, FileStat> {
   const stats = new Map<string, FileStat>();
-  const records = result.stdout.split("\0");
+  const records = stdout.split("\0");
   for (let index = 0; index < records.length; index += 1) {
     const parts = records[index].split("\t");
     if (parts.length < 3) {
@@ -2264,7 +2268,8 @@ export async function getCheckoutSnapshotFacts(
   };
 }
 
-export const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
+// About 2,000 lines of 100 characters each bounds the file's rendering work.
+export const PER_FILE_DIFF_MAX_BYTES = 200 * 1024; // 200KB
 export const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
 const CHECKOUT_DIFF_FRAME_HEADROOM_BYTES = 1024 * 1024;
 // Temporary until diffs load lazily per file. The Paseo relay's 32 MiB frame limit is
@@ -2273,6 +2278,12 @@ const CHECKOUT_DIFF_FRAME_HEADROOM_BYTES = 1024 * 1024;
 export const CHECKOUT_DIFF_MAX_STRUCTURED_BYTES =
   maxSecuredPlaintextByteLength(MAX_RELAY_WEBSOCKET_MESSAGE_BYTES) -
   CHECKOUT_DIFF_FRAME_HEADROOM_BYTES;
+// TOTAL_DIFF_MAX_BYTES bounds the raw patch text; per-line highlight tokens make
+// the structured form serialize several times larger, so it needs its own budget.
+const STRUCTURED_DIFF_MAX_PAYLOAD_BYTES = 2 * 1024 * 1024; // 2MB
+// Headroom so appending the omitted-tail placeholder cannot push the payload past
+// STRUCTURED_DIFF_MAX_PAYLOAD_BYTES. The placeholder serializes to ~140 bytes.
+const STRUCTURED_DIFF_PLACEHOLDER_RESERVE_BYTES = 256;
 
 interface StructuredDiffAccumulator {
   files: ParsedDiffFile[];
@@ -2297,6 +2308,7 @@ function appendStructuredFile(
   structured.serializedBytes = nextBytes;
   return true;
 }
+
 const UNTRACKED_BINARY_SNIFF_BYTES = 16 * 1024;
 
 async function isLikelyBinaryFile(absolutePath: string): Promise<boolean> {
@@ -2851,22 +2863,40 @@ export async function getCommitFileDiff({
   const renames = await getCommitRenames(worktreeRoot, sha);
   const oldPath = renames.get(path);
   const paths = oldPath === undefined ? [path] : [oldPath, path];
-  const { stdout } = await runGitCommand(
-    [
-      "show",
-      sha,
-      "--format=",
-      "--diff-merges=first-parent",
-      "-M",
-      ...GIT_PATCH_FORMAT_ARGS,
-      "--",
-      ...paths.map((filePath) => `:(literal)${filePath}`),
-    ],
+  const showArgs = ["show", sha, "--format=", "--diff-merges=first-parent", "-M"];
+  // Include the source to discover the rename, but exclude separate source edits from its budget.
+  if (oldPath !== undefined) showArgs.push("--diff-filter=R");
+  const pathArgs = paths.map((filePath) => `:(literal)${filePath}`);
+  const { stdout, truncated } = await runGitCommand(
+    [...showArgs, ...GIT_PATCH_FORMAT_ARGS, "--", ...pathArgs],
     {
       cwd: worktreeRoot,
       envOverlay: READ_ONLY_GIT_ENV,
+      maxOutputBytes: PER_FILE_DIFF_MAX_BYTES,
     },
   );
+
+  if (truncated) {
+    const hunkStart = stdout.indexOf("\n@@ ");
+    const header = hunkStart < 0 ? stdout : stdout.slice(0, hunkStart);
+    const file = parseDiff(header).find((candidate) => candidate.path === path);
+    if (!file) return null;
+    const { stdout: numstat } = await runGitCommand(
+      [...showArgs, "--numstat", "-z", "--", ...pathArgs],
+      {
+        cwd: worktreeRoot,
+        envOverlay: READ_ONLY_GIT_ENV,
+      },
+    );
+    const stats = parseNulNumstat(numstat).get(path);
+    return {
+      ...file,
+      additions: stats?.additions ?? file.additions,
+      deletions: stats?.deletions ?? file.deletions,
+      hunks: [],
+      status: "too_large",
+    };
+  }
 
   if (stdout.trim().length === 0) {
     return null;
@@ -2931,27 +2961,20 @@ async function countUntrackedAdditions(
   throwOnGitError = false,
 ): Promise<number> {
   try {
-    const { stdout } = await getRunGitCommand(context)(
-      ["ls-files", "-z", "--others", "--exclude-standard"],
-      {
-        cwd,
-        envOverlay: READ_ONLY_GIT_ENV,
-      },
-    );
-    const files = stdout.split("\0").filter(Boolean);
-
+    const runGit = getRunGitCommand(context);
+    const { stdout } = await runGit(["ls-files", "-z", "--others", "--exclude-standard"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
     let additions = 0;
-    for (const file of files.slice(0, UNTRACKED_SHORTSTAT_MAX_FILES)) {
+    for (const file of stdout.split("\0").filter(Boolean).slice(0, UNTRACKED_SHORTSTAT_MAX_FILES)) {
       const absolutePath = resolve(cwd, file);
       try {
         const metadata = await statFile(absolutePath);
-        if (metadata.size > PER_FILE_DIFF_MAX_BYTES) continue;
+        // Files above the diff limit render as too_large, so they count as 0 here too.
+        if (metadata.size > PER_FILE_DIFF_MAX_BYTES || metadata.size === 0) continue;
         if (await isLikelyBinaryFile(absolutePath)) continue;
-        const content = await readFile(absolutePath, "utf-8");
-        if (content.length === 0) continue;
-        const normalized = content.replace(/\r\n/g, "\n");
-        const lineCount = normalized.split("\n").length;
-        additions += normalized.endsWith("\n") ? lineCount - 1 : lineCount;
+        additions += await countNewlinesInFile(absolutePath);
       } catch {
         // Skip unreadable files.
       }
@@ -2962,6 +2985,27 @@ async function countUntrackedAdditions(
       throw error;
     }
     return 0;
+  }
+}
+
+// Newline bytes, not a utf-8 string split: this runs for up to UNTRACKED_SHORTSTAT_MAX_FILES
+// files on every shortstat read, and the string path allocated whole-file copies and arrays.
+async function countNewlinesInFile(absolutePath: string): Promise<number> {
+  const handle = await openFile(absolutePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(PER_FILE_DIFF_MAX_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    let count = 0;
+    let at = buffer.indexOf(0x0a);
+    while (at >= 0 && at < bytesRead) {
+      count += 1;
+      at = buffer.indexOf(0x0a, at + 1);
+    }
+    // A final line without a trailing newline still counts.
+    if (bytesRead > 0 && buffer[bytesRead - 1] !== 0x0a) count += 1;
+    return count;
+  } finally {
+    await handle.close();
   }
 }
 
@@ -3760,6 +3804,9 @@ async function readCheckoutDiff(
   const structured = createStructuredDiffAccumulator();
   let diffText = "";
   let diffBytes = 0;
+  // Untracked files dropped before they were ever read, so they never reach
+  // `structured` and only this count can represent them.
+  let untrackedOmittedCount = 0;
   const appendDiff = (text: string) => {
     if (!text) return;
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) return;
@@ -3822,8 +3869,9 @@ async function readCheckoutDiff(
     }
   }
 
-  for (const change of untrackedChanges) {
+  for (const [index, change] of untrackedChanges.entries()) {
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+      untrackedOmittedCount = untrackedChanges.length - index;
       break;
     }
     const didAppendUntrackedDiff = await processUntrackedChange({
@@ -3841,9 +3889,71 @@ async function readCheckoutDiff(
   }
 
   if (compare.includeStructured) {
-    return { diff: diffText, structured: structured.files };
+    return {
+      diff: diffText,
+      structured: capStructuredDiffPayload(structured.files, untrackedOmittedCount),
+    };
   }
   return { diff: diffText };
+}
+
+// Files keep their order, so the cap omits the tail rather than an arbitrary subset,
+// and one placeholder stands in for the whole tail so the client can tell a capped
+// diff from a complete one.
+function capStructuredDiffPayload(
+  structured: ParsedDiffFile[],
+  untrackedOmittedCount: number,
+): ParsedDiffFile[] {
+  const loopBudget = STRUCTURED_DIFF_MAX_PAYLOAD_BYTES - STRUCTURED_DIFF_PLACEHOLDER_RESERVE_BYTES;
+  let payloadBytes = Buffer.byteLength("[]", "utf8");
+  const capped: ParsedDiffFile[] = [];
+  for (const [index, file] of structured.entries()) {
+    const fileBytes = Buffer.byteLength(JSON.stringify(file), "utf8");
+    const commaBytes = capped.length > 0 ? 1 : 0;
+    if (payloadBytes + commaBytes + fileBytes > loopBudget) {
+      capped.push(
+        buildOmittedTailParsedDiffFile(structured.slice(index), untrackedOmittedCount, capped),
+      );
+      return capped;
+    }
+    payloadBytes += commaBytes + fileBytes;
+    capped.push(file);
+  }
+  if (untrackedOmittedCount > 0) {
+    capped.push(buildOmittedTailParsedDiffFile([], untrackedOmittedCount, capped));
+  }
+  return capped;
+}
+
+// untrackedOmittedCount covers files dropped before they were read, so they have no
+// entry in `omitted` and contribute no line counts.
+function buildOmittedTailParsedDiffFile(
+  omitted: ParsedDiffFile[],
+  untrackedOmittedCount: number,
+  kept: ParsedDiffFile[],
+): ParsedDiffFile {
+  let additions = 0;
+  let deletions = 0;
+  for (const file of omitted) {
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  const total = omitted.length + untrackedOmittedCount;
+  const label = `${total} more ${total === 1 ? "file" : "files"} omitted`;
+  const paths = new Set(kept.map((file) => file.path));
+  let path = label;
+  for (let suffix = 1; paths.has(path); suffix += 1) {
+    path = `${label} (${suffix})`;
+  }
+  return {
+    path,
+    isNew: false,
+    isDeleted: false,
+    additions,
+    deletions,
+    hunks: [],
+    status: "too_large",
+  };
 }
 
 export async function commitChanges(

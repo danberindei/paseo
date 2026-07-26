@@ -1015,6 +1015,7 @@ export const es: TranslationResources = {
         },
         binaryFile: "archivo binario",
         tooLarge: "La diferencia es demasiado grande para mostrarse",
+        lineTooLong: "La línea es demasiado larga para ajustarla",
         previewTooLargeTitle: "Este diff es demasiado grande para previsualizarlo",
         previewTooLargeDescription: "Reduce la comparación para previsualizarla aquí",
         unified: "Diferencia unificada",

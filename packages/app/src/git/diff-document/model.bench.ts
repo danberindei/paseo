@@ -195,7 +195,7 @@ function input(
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", lineTooLong: "Line too long for wrapping" },
     // What the surfaces pass at scrollTop 0: five viewports tall.
     materializationWindow: { top: 0, height: options.viewport.height * 5 },
   };

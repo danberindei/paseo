@@ -1005,6 +1005,7 @@ export const ptBR: TranslationResources = {
         },
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
+        lineTooLong: "Linha longa demais para quebrar",
         previewTooLargeTitle: "Este diff é grande demais para visualizar",
         previewTooLargeDescription: "Reduza a comparação para visualizá-la aqui",
         unified: "Diff unificado",

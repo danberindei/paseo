@@ -185,7 +185,7 @@ export interface BuildDiffDocumentModelInput {
   measureText: TextMeasurer;
   palette: DiffPalette;
   reviewActions?: InlineReviewActions;
-  labels: { binary: string; tooLarge: string };
+  labels: { binary: string; tooLarge: string; lineTooLong: string };
   materializationWindow?: { top: number; height: number };
   /** Also measure the anchored row so relayout can restore its exact fragment. */
   materializationAnchor?: DiffScrollAnchor | null;

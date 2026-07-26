@@ -1324,6 +1324,46 @@ const x = 1;
     expect(shortstat).toEqual({ additions: 2, deletions: 0 });
   });
 
+  it.each([200 * 1024, 200 * 1024 + 1])(
+    "enforces the per-file diff limit on untracked shortstat at %s bytes",
+    async (bytes) => {
+      setupRemoteTrackingMain(repoDir, tempDir);
+      writeFileSync(join(repoDir, "generated.txt"), "x".repeat(bytes - 1) + "\n");
+
+      const shortstat = await getCheckoutShortstat(repoDir);
+
+      expect(shortstat).toEqual(bytes > 200 * 1024 ? null : { additions: 1, deletions: 0 });
+    },
+  );
+
+  it("counts untracked additions without changing staged or working content", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    writeFileSync(join(repoDir, "file.txt"), "staged\n");
+    execFileSync("git", ["add", "--", "file.txt"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "working\nextra\n");
+    for (let index = 0; index < 40; index += 1) {
+      writeFileSync(join(repoDir, `untracked-${index}.txt`), "one\ntwo\n");
+    }
+    for (const path of ["with spaces.txt", "literal[1].txt", "literal1.txt", "-option.txt"]) {
+      writeFileSync(join(repoDir, path), "one\n");
+    }
+    writeFileSync(join(repoDir, "crlf.txt"), "one\r\ntwo");
+    writeFileSync(join(repoDir, "binary.bin"), Buffer.from([0, 10, 1, 10]));
+    writeFileSync(join(repoDir, ".git", "info", "exclude"), "ignored.txt\n");
+    writeFileSync(join(repoDir, "ignored.txt"), "ignored\n");
+    const beforeStatus = execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd: repoDir });
+    const beforeIndex = readFileSync(join(repoDir, ".git", "index"));
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 88, deletions: 1 });
+    expect(readFileSync(join(repoDir, ".git", "index"))).toEqual(beforeIndex);
+    expect(execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd: repoDir })).toEqual(
+      beforeStatus,
+    );
+    expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe("working\nextra\n");
+  });
+
   it("counts empty untracked files as 0 additions", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
@@ -1727,6 +1767,117 @@ const x = 1;
     expect(maximumFrameWireBytes).toBeLessThanOrEqual(relayFrameBytes);
   });
 
+  it("replaces the structured-diff tail with one placeholder when highlight tokens inflate a within-budget raw diff", async () => {
+    const structuredPayloadMaxBytes = 2 * 1024 * 1024;
+    const fileBody =
+      Array.from(
+        { length: 400 },
+        (_, i) => `export const value${i} = { id: ${i}, name: "n${i}" };`,
+      ).join("\n") + "\n";
+    const paths: string[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const path = `bulk-${String(i).padStart(2, "0")}.ts`;
+      writeFileSync(join(repoDir, path), fileBody);
+      paths.push(path);
+    }
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const structured = diff.structured ?? [];
+
+    expect(Buffer.byteLength(diff.diff, "utf8")).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(structured), "utf8")).toBeLessThanOrEqual(
+      structuredPayloadMaxBytes,
+    );
+    expect(structured.length).toBeGreaterThan(1);
+    expect(structured.length).toBeLessThan(paths.length);
+
+    const placeholder = structured[structured.length - 1];
+    const kept = structured.slice(0, -1);
+
+    expect(kept.map((file) => file.path)).toEqual(paths.slice(0, kept.length));
+    expect(kept.every((file) => file.status === "ok")).toBe(true);
+
+    // One placeholder stands in for every file past the budget.
+    const omittedCount = paths.length - kept.length;
+    expect(placeholder?.status).toBe("too_large");
+    expect(placeholder?.hunks).toEqual([]);
+    expect(placeholder?.path).toBe(`${omittedCount} more files omitted`);
+  });
+
+  it("keeps the omitted-tail path distinct from retained filenames", async () => {
+    for (let count = 1; count <= 40; count += 1) {
+      const label = `${count} more ${count === 1 ? "file" : "files"} omitted`;
+      writeFileSync(join(repoDir, label), "content\n");
+      writeFileSync(join(repoDir, `${label} (1)`), "content\n");
+    }
+    const fileBody =
+      Array.from({ length: 400 }, (_, i) => `export const value${i} = { id: ${i} };`).join("\n") +
+      "\n";
+    for (let i = 0; i < 40; i += 1) {
+      writeFileSync(join(repoDir, `bulk-${String(i).padStart(2, "0")}.ts`), fileBody);
+    }
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const structured = diff.structured ?? [];
+    const kept = structured.slice(0, -1);
+    const omittedCount = 120 - kept.length;
+    const label = `${omittedCount} more ${omittedCount === 1 ? "file" : "files"} omitted`;
+
+    expect(omittedCount).toBeGreaterThan(0);
+    expect(omittedCount).toBeLessThanOrEqual(40);
+    expect(kept.map((file) => file.path)).toContain(label);
+    expect(kept.map((file) => file.path)).toContain(`${label} (1)`);
+    expect(structured.at(-1)).toEqual(expect.objectContaining({ path: `${label} (2)` }));
+    expect(Buffer.byteLength(JSON.stringify(structured), "utf8")).toBeLessThanOrEqual(
+      2 * 1024 * 1024,
+    );
+  });
+
+  it("marks a tracked diff above 200 KB as too_large", async () => {
+    commitFile(repoDir, "generated.txt", "old\n", "add generated file");
+    writeFileSync(join(repoDir, "generated.txt"), "x".repeat(201 * 1024) + "\n");
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+
+    expect(diff.structured).toEqual([
+      expect.objectContaining({ path: "generated.txt", status: "too_large", hunks: [] }),
+    ]);
+    expect(diff.diff).toContain("# generated.txt: diff too large omitted");
+  });
+
+  it.each([
+    { patchBytes: 200 * 1024, status: "ok", hunkCount: 1 },
+    { patchBytes: 200 * 1024 + 1, status: "too_large", hunkCount: 0 },
+  ])(
+    "enforces the tracked patch boundary at $patchBytes bytes",
+    async ({ patchBytes, status, hunkCount }) => {
+      commitFile(repoDir, "boundary.txt", "old\n", "add boundary file");
+      writeFileSync(join(repoDir, "boundary.txt"), "x\n");
+      const args = ["diff", "--no-ext-diff", "--no-color", "HEAD", "--", "boundary.txt"];
+      const patchOverhead = execFileSync("git", args, { cwd: repoDir }).length - 1;
+      writeFileSync(join(repoDir, "boundary.txt"), "x".repeat(patchBytes - patchOverhead) + "\n");
+      expect(execFileSync("git", args, { cwd: repoDir }).length).toBe(patchBytes);
+
+      const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+      expect(
+        diff.structured?.map((file) => ({
+          path: file.path,
+          status: file.status,
+          hunkCount: file.hunks.length,
+        })),
+      ).toEqual([{ path: "boundary.txt", status, hunkCount }]);
+    },
+  );
+
+  it("marks an untracked file above 200 KB as too_large", async () => {
+    writeFileSync(join(repoDir, "generated.txt"), "x".repeat(201 * 1024) + "\n");
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    expect(diff.structured).toEqual([
+      expect.objectContaining({ path: "generated.txt", status: "too_large", hunks: [] }),
+    ]);
+  });
+
   it("marks tracked generated one-line diffs as too_large by content size", async () => {
     writeFileSync(join(repoDir, "generated.js"), `const data = "old";\n`);
     execFileSync("git", ["add", "generated.js"], { cwd: repoDir });
@@ -1787,17 +1938,21 @@ const x = 1;
   });
 
   it("marks tracked files omitted by the total diff budget as too_large", async () => {
-    for (let i = 1; i <= 4; i += 1) {
-      writeFileSync(join(repoDir, `budget-${i}.txt`), "old\n");
+    const paths = Array.from(
+      { length: 12 },
+      (_, index) => `budget-${String(index + 1).padStart(2, "0")}.txt`,
+    );
+    for (const path of paths) {
+      writeFileSync(join(repoDir, path), "old\n");
     }
     execFileSync("git", ["add", "."], { cwd: repoDir });
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add budget files"], {
       cwd: repoDir,
     });
 
-    const largeLine = "x".repeat(700_000);
-    for (let i = 1; i <= 4; i += 1) {
-      writeFileSync(join(repoDir, `budget-${i}.txt`), `${largeLine}-${i}\n`);
+    const largeLine = "x".repeat(180_000);
+    for (const path of paths) {
+      writeFileSync(join(repoDir, path), `${largeLine}\n`);
     }
 
     const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
@@ -1809,15 +1964,11 @@ const x = 1;
         hunks: file.hunks.length,
       })),
     ).toEqual([
-      { path: "budget-1.txt", status: "ok", hunks: 1 },
-      { path: "budget-2.txt", status: "ok", hunks: 1 },
-      { path: "budget-3.txt", status: "too_large", hunks: 0 },
-      { path: "budget-4.txt", status: "too_large", hunks: 0 },
+      ...paths.slice(0, 11).map((path) => ({ path, status: "ok", hunks: 1 })),
+      { path: "budget-12.txt", status: "too_large", hunks: 0 },
     ]);
-    expect(diff.diff).toContain("budget-1.txt");
-    expect(diff.diff).toContain("budget-2.txt");
-    expect(diff.diff).toContain("# budget-3.txt: diff too large omitted");
-    expect(diff.diff).toContain("# budget-4.txt: diff too large omitted");
+    expect(diff.diff).toContain("diff --git a/budget-11.txt b/budget-11.txt");
+    expect(diff.diff).toContain("# budget-12.txt: diff too large omitted");
   });
 
   it("short-circuits tracked binary files", async () => {
