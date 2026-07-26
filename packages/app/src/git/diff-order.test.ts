@@ -59,6 +59,20 @@ describe("checkout diff ordering", () => {
     expect(orderCheckoutDiffFiles(single)).toBe(single);
   });
 
+  it("keeps the omitted-tail placeholder last", () => {
+    const ordered = orderCheckoutDiffFiles([
+      { ...createFile("131 more files omitted"), status: "too_large" as const, omittedTail: true },
+      createFile("zeta.ts"),
+      createFile("alpha.ts"),
+    ]);
+
+    expect(ordered.map((file) => file.path)).toEqual([
+      "alpha.ts",
+      "zeta.ts",
+      "131 more files omitted",
+    ]);
+  });
+
   it("preserves relative order for equal paths", () => {
     const ordered = orderCheckoutDiffFiles([
       createFile("same.ts", 1),

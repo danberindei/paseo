@@ -62,6 +62,10 @@ function sortTree(node: DiffTreeDirNode): void {
     }
     // Plain ASCII, not localeCompare: the order must not shift with the
     // device locale, and every surface derives from this comparison.
+    if (a.kind === "file" && b.kind === "file" && a.file.omittedTail !== b.file.omittedTail) {
+      // The omitted-tail placeholder's path is a label, so it stays last.
+      return a.file.omittedTail === true ? 1 : -1;
+    }
     if (a.name === b.name) return 0;
     return a.name < b.name ? -1 : 1;
   });

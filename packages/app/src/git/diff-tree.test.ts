@@ -73,6 +73,19 @@ describe("buildDiffTree", () => {
       src.children.map((c) => (c.kind === "dir" ? `dir:${c.name}` : `file:${c.name}`)),
     ).toEqual(["dir:m", "dir:z", "file:a.ts"]);
   });
+
+  it("keeps the omitted-tail placeholder after other root-level files", () => {
+    // Its label starts with a digit, so plain name ordering would hoist it.
+    const placeholder: ParsedDiffFile = {
+      ...createFile("131 more files omitted"),
+      status: "too_large",
+      omittedTail: true,
+    };
+    const root = tree([placeholder, "README.md", "app.ts"]);
+    expect(
+      root.children.map((c) => (c.kind === "dir" ? `dir:${c.name}` : `file:${c.name}`)),
+    ).toEqual(["file:README.md", "file:app.ts", "file:131 more files omitted"]);
+  });
 });
 
 describe("compressSingleChildChains", () => {

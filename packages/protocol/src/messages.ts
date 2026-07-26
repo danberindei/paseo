@@ -2637,6 +2637,10 @@ const ParsedDiffFileSchema = z.object({
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
+  // Marks the synthetic "N more files omitted" entry the daemon appends when a
+  // diff exceeds the payload cap. Its `path` is a human label, not a real path,
+  // so every path sort has to pin it to the end instead of ordering it.
+  omittedTail: z.boolean().optional(),
 });
 
 const FileExplorerEntrySchema = z.object({

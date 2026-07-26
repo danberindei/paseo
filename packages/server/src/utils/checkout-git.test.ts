@@ -1456,6 +1456,43 @@ const x = 1;
     expect(maximumFrameWireBytes).toBe(relayFrameBytes);
   });
 
+  it("replaces the structured-diff tail with one placeholder when highlight tokens inflate a within-budget raw diff", async () => {
+    const structuredPayloadMaxBytes = 2 * 1024 * 1024;
+    const fileBody =
+      Array.from(
+        { length: 400 },
+        (_, i) => `export const value${i} = { id: ${i}, name: "n${i}" };`,
+      ).join("\n") + "\n";
+    const paths: string[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const path = `bulk-${String(i).padStart(2, "0")}.ts`;
+      writeFileSync(join(repoDir, path), fileBody);
+      paths.push(path);
+    }
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const structured = diff.structured ?? [];
+
+    expect(Buffer.byteLength(diff.diff, "utf8")).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(structured), "utf8")).toBeLessThanOrEqual(
+      structuredPayloadMaxBytes,
+    );
+    expect(structured.length).toBeGreaterThan(1);
+    expect(structured.length).toBeLessThan(paths.length);
+
+    const placeholder = structured[structured.length - 1];
+    const kept = structured.slice(0, -1);
+
+    expect(kept.map((file) => file.path)).toEqual(paths.slice(0, kept.length));
+    expect(kept.every((file) => file.status === "ok")).toBe(true);
+
+    // One placeholder stands in for every file past the budget.
+    const omittedCount = paths.length - kept.length;
+    expect(placeholder?.status).toBe("too_large");
+    expect(placeholder?.hunks).toEqual([]);
+    expect(placeholder?.path).toBe(`${omittedCount} more files omitted`);
+  });
+
   it("marks tracked generated one-line diffs as too_large by content size", async () => {
     writeFileSync(join(repoDir, "generated.js"), `const data = "old";\n`);
     execFileSync("git", ["add", "generated.js"], { cwd: repoDir });

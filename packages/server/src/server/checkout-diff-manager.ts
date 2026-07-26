@@ -273,6 +273,8 @@ export class CheckoutDiffManager {
       }
       const files = [...(diffResult.structured ?? [])];
       files.sort((a, b) => {
+        // The omitted-tail placeholder's path is a label, so it stays last.
+        if (a.omittedTail !== b.omittedTail) return a.omittedTail === true ? 1 : -1;
         if (a.path === b.path) return 0;
         return a.path < b.path ? -1 : 1;
       });

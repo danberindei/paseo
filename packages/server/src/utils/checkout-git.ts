@@ -2055,6 +2055,12 @@ const CHECKOUT_DIFF_FRAME_HEADROOM_BYTES = 1024 * 1024;
 // the surrounding WebSocket JSON envelope after inverting that exact wire expansion.
 export const CHECKOUT_DIFF_MAX_STRUCTURED_BYTES =
   maxBase64EncryptedPlaintextByteLength(RELAY_MAX_FRAME_BYTES) - CHECKOUT_DIFF_FRAME_HEADROOM_BYTES;
+// TOTAL_DIFF_MAX_BYTES bounds the raw patch text; per-line highlight tokens make
+// the structured form serialize several times larger, so it needs its own budget.
+const STRUCTURED_DIFF_MAX_PAYLOAD_BYTES = 2 * 1024 * 1024; // 2MB
+// Headroom so appending the omitted-tail placeholder cannot push the payload past
+// STRUCTURED_DIFF_MAX_PAYLOAD_BYTES. The placeholder serializes to ~140 bytes.
+const STRUCTURED_DIFF_PLACEHOLDER_RESERVE_BYTES = 256;
 
 interface StructuredDiffAccumulator {
   files: ParsedDiffFile[];
@@ -2079,6 +2085,7 @@ function appendStructuredFile(
   structured.serializedBytes = nextBytes;
   return true;
 }
+
 const UNTRACKED_BINARY_SNIFF_BYTES = 16 * 1024;
 
 async function isLikelyBinaryFile(absolutePath: string): Promise<boolean> {
@@ -3295,6 +3302,9 @@ export async function getCheckoutDiff(
   const structured = createStructuredDiffAccumulator();
   let diffText = "";
   let diffBytes = 0;
+  // Untracked files dropped before they were ever read, so they never reach
+  // `structured` and only this count can represent them.
+  let untrackedOmittedCount = 0;
   const appendDiff = (text: string) => {
     if (!text) return;
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) return;
@@ -3356,8 +3366,9 @@ export async function getCheckoutDiff(
     }
   }
 
-  for (const change of untrackedChanges) {
+  for (const [index, change] of untrackedChanges.entries()) {
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+      untrackedOmittedCount = untrackedChanges.length - index;
       break;
     }
     const didAppendUntrackedDiff = await processUntrackedChange({
@@ -3374,9 +3385,63 @@ export async function getCheckoutDiff(
   }
 
   if (compare.includeStructured) {
-    return { diff: diffText, structured: structured.files };
+    return {
+      diff: diffText,
+      structured: capStructuredDiffPayload(structured.files, untrackedOmittedCount),
+    };
   }
   return { diff: diffText };
+}
+
+// Files keep their order, so the cap omits the tail rather than an arbitrary subset,
+// and one placeholder stands in for the whole tail so the client can tell a capped
+// diff from a complete one.
+function capStructuredDiffPayload(
+  structured: ParsedDiffFile[],
+  untrackedOmittedCount: number,
+): ParsedDiffFile[] {
+  const loopBudget = STRUCTURED_DIFF_MAX_PAYLOAD_BYTES - STRUCTURED_DIFF_PLACEHOLDER_RESERVE_BYTES;
+  let payloadBytes = Buffer.byteLength("[]", "utf8");
+  const capped: ParsedDiffFile[] = [];
+  for (const [index, file] of structured.entries()) {
+    const fileBytes = Buffer.byteLength(JSON.stringify(file), "utf8");
+    const commaBytes = capped.length > 0 ? 1 : 0;
+    if (payloadBytes + commaBytes + fileBytes > loopBudget) {
+      capped.push(buildOmittedTailParsedDiffFile(structured.slice(index), untrackedOmittedCount));
+      return capped;
+    }
+    payloadBytes += commaBytes + fileBytes;
+    capped.push(file);
+  }
+  if (untrackedOmittedCount > 0) {
+    capped.push(buildOmittedTailParsedDiffFile([], untrackedOmittedCount));
+  }
+  return capped;
+}
+
+// untrackedOmittedCount covers files dropped before they were read, so they have no
+// entry in `omitted` and contribute no line counts.
+function buildOmittedTailParsedDiffFile(
+  omitted: ParsedDiffFile[],
+  untrackedOmittedCount: number,
+): ParsedDiffFile {
+  let additions = 0;
+  let deletions = 0;
+  for (const file of omitted) {
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  const total = omitted.length + untrackedOmittedCount;
+  return {
+    path: `${total} more ${total === 1 ? "file" : "files"} omitted`,
+    isNew: false,
+    isDeleted: false,
+    additions,
+    deletions,
+    hunks: [],
+    status: "too_large",
+    omittedTail: true,
+  };
 }
 
 export async function commitChanges(

@@ -26,6 +26,9 @@ export interface ParsedDiffFile {
   deletions: number;
   hunks: DiffHunk[];
   status?: "ok" | "too_large" | "binary";
+  // Marks the synthetic "N more files omitted" entry the diff cap appends. Its
+  // `path` is a human label, not a real path, so path sorts must pin it last.
+  omittedTail?: boolean;
 }
 
 interface HighlightDiffWithFileContentOptions {

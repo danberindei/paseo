@@ -262,6 +262,30 @@ describe("CheckoutDiffManager", () => {
     );
   });
 
+  test("the omitted-tail placeholder sorts after real paths", async () => {
+    const getCheckoutDiff = vi.fn().mockResolvedValue({
+      diff: "",
+      structured: [
+        { path: "131 more files omitted", additions: 0, deletions: 0, omittedTail: true },
+        { path: "zeta.ts", additions: 1, deletions: 0 },
+        { path: "alpha.ts", additions: 1, deletions: 0 },
+      ],
+    });
+
+    const { manager } = createManager({ getCheckoutDiffImplementation: getCheckoutDiff });
+
+    const { initial } = await manager.subscribe(
+      { cwd: "/tmp/repo/packages/server", compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+
+    expect(initial.files.map((file) => file.path)).toEqual([
+      "alpha.ts",
+      "zeta.ts",
+      "131 more files omitted",
+    ]);
+  });
+
   test("diff refresh is triggered when the working tree watch callback fires", async () => {
     const getCheckoutDiff = vi
       .fn()
