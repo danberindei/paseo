@@ -41,12 +41,16 @@ test("negotiated binary ciphertext accepts the exact hard bound and rejects one 
   const channel = new BlockingChannel();
   let terminations = 0;
   let transportBufferedAmount = 0;
+  let oversizedDrops = 0;
   const socket = createEncryptedRelaySocket({
     channel,
     emitter: new EventEmitter(),
     getTransportBufferedAmount: () => transportBufferedAmount,
     terminateTransport: () => {
       terminations += 1;
+    },
+    onOversizedFrame: () => {
+      oversizedDrops += 1;
     },
   });
 
@@ -60,6 +64,7 @@ test("negotiated binary ciphertext accepts the exact hard bound and rejects one 
 
   expect(channel.sent).toHaveLength(1);
   expect(terminations).toBe(1);
+  expect(oversizedDrops).toBe(0);
   expect(channel.closes).toEqual([]);
   expect(socket.readyState).toBe(3);
 
@@ -70,12 +75,16 @@ test("negotiated binary ciphertext accepts the exact hard bound and rejects one 
 test("underlying relay backpressure rejects binary before encryption and terminates physically", async () => {
   const channel = new BlockingChannel();
   let terminations = 0;
+  let oversizedDrops = 0;
   const socket = createEncryptedRelaySocket({
     channel,
     emitter: new EventEmitter(),
     getTransportBufferedAmount: () => MAX_PHYSICAL_SOCKET_BUFFERED_BYTES - 1,
     terminateTransport: () => {
       terminations += 1;
+    },
+    onOversizedFrame: () => {
+      oversizedDrops += 1;
     },
   });
 
@@ -85,11 +94,13 @@ test("underlying relay backpressure rejects binary before encryption and termina
   expect(channel.sent).toEqual([]);
   expect(channel.closes).toEqual([]);
   expect(terminations).toBe(1);
+  expect(oversizedDrops).toBe(0);
 });
 
-test("explicit encrypted-socket termination forcibly terminates the relay transport", () => {
+test("a frame above the encrypted bound is dropped without killing the relay socket", () => {
   const channel = new BlockingChannel();
   let terminations = 0;
+  let oversizedDrops = 0;
   const socket = createEncryptedRelaySocket({
     channel,
     emitter: new EventEmitter(),
@@ -97,11 +108,44 @@ test("explicit encrypted-socket termination forcibly terminates the relay transp
     terminateTransport: () => {
       terminations += 1;
     },
+    onOversizedFrame: () => {
+      oversizedDrops += 1;
+    },
+  });
+
+  // The 40-byte encryption overhead pushes this frame past the bound even
+  // though the transport is idle.
+  socket.send(new Uint8Array(MAX_PHYSICAL_SOCKET_BUFFERED_BYTES));
+
+  expect(channel.sent).toEqual([]);
+  expect(oversizedDrops).toBe(1);
+  expect(terminations).toBe(0);
+  expect(socket.readyState).toBe(1);
+
+  socket.send(new Uint8Array(1));
+  expect(channel.sent).toHaveLength(1);
+});
+
+test("explicit encrypted-socket termination forcibly terminates the relay transport", () => {
+  const channel = new BlockingChannel();
+  let terminations = 0;
+  let oversizedDrops = 0;
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => 0,
+    terminateTransport: () => {
+      terminations += 1;
+    },
+    onOversizedFrame: () => {
+      oversizedDrops += 1;
+    },
   });
 
   socket.terminate();
 
   expect(terminations).toBe(1);
+  expect(oversizedDrops).toBe(0);
   expect(channel.closes).toEqual([]);
   expect(socket.readyState).toBe(3);
 });
@@ -113,6 +157,7 @@ test("encrypted sends report physical completion through the returned promise", 
     emitter: new EventEmitter(),
     getTransportBufferedAmount: () => 0,
     terminateTransport: () => undefined,
+    onOversizedFrame: () => undefined,
   });
   let completed = false;
 
@@ -136,6 +181,7 @@ test("encrypted sockets do not double-count bytes already buffered by the transp
     emitter: new EventEmitter(),
     getTransportBufferedAmount: () => transportBufferedAmount,
     terminateTransport: () => undefined,
+    onOversizedFrame: () => undefined,
   });
   const payload = new Uint8Array(3 * 1024 * 1024);
 

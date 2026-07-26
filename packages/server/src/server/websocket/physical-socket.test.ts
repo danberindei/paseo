@@ -3,6 +3,8 @@ import {
   APPLICATION_SOCKET_LEASE_MS,
   ApplicationSocketLease,
   MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  type OutboundFrameRejection,
+  classifyOutboundFrame,
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./physical-socket.js";
@@ -48,7 +50,7 @@ test("an application ping claims a socket lease", () => {
 
 test("the shared physical send boundary rejects binary above the hard bound", () => {
   const sent: Array<string | Uint8Array | ArrayBuffer> = [];
-  let terminated = false;
+  const rejections: OutboundFrameRejection[] = [];
   const socket = {
     readyState: 1,
     bufferedAmount: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES - 1,
@@ -58,14 +60,45 @@ test("the shared physical send boundary rejects binary above the hard bound", ()
   const accepted = sendBoundedPhysicalFrame({
     socket,
     frame: new Uint8Array(2),
-    onHighWater: () => {
-      terminated = true;
-    },
+    onReject: (rejection) => rejections.push(rejection),
   });
 
   expect(accepted).toBe(false);
   expect(sent).toEqual([]);
-  expect(terminated).toBe(true);
+  expect(rejections).toEqual(["backpressure"]);
+});
+
+test("a frame wider than the whole bound is reported as oversized, not as backpressure", () => {
+  const sent: Array<string | Uint8Array | ArrayBuffer> = [];
+  const rejections: OutboundFrameRejection[] = [];
+  const socket = {
+    readyState: 1,
+    bufferedAmount: 0,
+    send: (data: string | Uint8Array | ArrayBuffer) => sent.push(data),
+  };
+
+  const accepted = sendBoundedPhysicalFrame({
+    socket,
+    frame: new Uint8Array(MAX_PHYSICAL_SOCKET_BUFFERED_BYTES + 1),
+    onReject: (rejection) => rejections.push(rejection),
+  });
+
+  expect(accepted).toBe(false);
+  expect(sent).toEqual([]);
+  expect(rejections).toEqual(["oversized_frame"]);
+});
+
+test("an idle socket still accepts a frame exactly at the bound", () => {
+  expect(classifyOutboundFrame({ bufferedAmount: 0 }, MAX_PHYSICAL_SOCKET_BUFFERED_BYTES)).toEqual({
+    accepted: true,
+  });
+});
+
+test("a socket without a buffered amount only rejects oversized frames", () => {
+  expect(classifyOutboundFrame({ bufferedAmount: undefined }, 1)).toEqual({ accepted: true });
+  expect(
+    classifyOutboundFrame({ bufferedAmount: undefined }, MAX_PHYSICAL_SOCKET_BUFFERED_BYTES + 1),
+  ).toEqual({ accepted: false, rejection: "oversized_frame" });
 });
 
 test("the awaitable physical send resolves only when that frame send completes", async () => {
@@ -84,7 +117,7 @@ test("the awaitable physical send resolves only when that frame send completes",
   const sending = sendBoundedPhysicalFrameAndWait({
     socket,
     frame: new Uint8Array([1, 2, 3]),
-    onHighWater: () => undefined,
+    onReject: () => undefined,
   }).then(() => {
     return (completed = true);
   });
@@ -95,7 +128,7 @@ test("the awaitable physical send resolves only when that frame send completes",
     sendBoundedPhysicalFrame({
       socket,
       frame: "unrelated",
-      onHighWater: () => undefined,
+      onReject: () => undefined,
     }),
   ).toBe(true);
   expect(sent).toEqual([new Uint8Array([1, 2, 3]), "unrelated"]);
@@ -116,7 +149,7 @@ test("the awaitable physical send rejects callback errors", async () => {
     sendBoundedPhysicalFrameAndWait({
       socket,
       frame: new Uint8Array([1]),
-      onHighWater: () => undefined,
+      onReject: () => undefined,
     }),
   ).rejects.toThrow("send failed");
 });

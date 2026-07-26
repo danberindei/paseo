@@ -445,6 +445,9 @@ async function attachEncryptedSocket(
       emitter,
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
+      onOversizedFrame: (encryptedFrameBytes) => {
+        logger.error({ encryptedFrameBytes }, "relay_oversized_frame_dropped");
+      },
     });
     await attachSocket(encryptedSocket, metadata);
     attached = true;

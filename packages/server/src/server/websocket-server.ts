@@ -105,11 +105,12 @@ import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
   MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  classifyOutboundFrame,
   outboundFrameByteLength,
-  physicalSocketHasCapacity,
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./websocket/physical-socket.js";
+import type { OutboundFrameRejection } from "./websocket/physical-socket.js";
 import { createProviderUsageFetchers } from "../services/quota-fetcher/manifest.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
@@ -1118,7 +1119,10 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private sendMessageToSockets(sockets: Iterable<WebSocketLike>, message: WSOutboundMessage): void {
-    const writableSockets = [...sockets].filter((ws) => this.ensureOutboundCapacity(ws, 0));
+    const frameLabel = describeOutboundFrame(message);
+    const writableSockets = [...sockets].filter((ws) =>
+      this.ensureOutboundCapacity(ws, frameLabel),
+    );
     if (writableSockets.length === 0) {
       return;
     }
@@ -1133,14 +1137,14 @@ export class VoiceAssistantWebSocketServer {
 
     const payloadBytes = outboundFrameByteLength(payload);
     for (const ws of writableSockets) {
-      this.sendFrameToClient(ws, payload, payloadBytes, () => {
+      this.sendFrameToClient(ws, payload, payloadBytes, frameLabel, () => {
         this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
       });
     }
   }
 
   private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array): void {
-    this.sendFrameToClient(ws, frame, outboundFrameByteLength(frame), () => {
+    this.sendFrameToClient(ws, frame, outboundFrameByteLength(frame), "binary", () => {
       this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     });
   }
@@ -1150,7 +1154,8 @@ export class VoiceAssistantWebSocketServer {
       const sent = await sendBoundedPhysicalFrameAndWait({
         socket: ws,
         frame,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
+        onReject: (rejection) =>
+          this.rejectOutboundFrame(ws, rejection, frame.byteLength, "binary"),
       });
       if (!sent) {
         throw new Error("Physical WebSocket is not open");
@@ -1166,6 +1171,7 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     frame: string | Uint8Array,
     frameBytes: number,
+    frameLabel: string,
     recordSent: () => void,
   ): void {
     try {
@@ -1173,7 +1179,7 @@ export class VoiceAssistantWebSocketServer {
         socket: ws,
         frame,
         frameBytes,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
+        onReject: (rejection) => this.rejectOutboundFrame(ws, rejection, frameBytes, frameLabel),
       });
       if (sent) recordSent();
     } catch (err) {
@@ -1181,20 +1187,61 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private ensureOutboundCapacity(ws: WebSocketLike, frameBytes: number): boolean {
+  // Runs before the payload is serialized, so the frame size is unknown here;
+  // this only asks whether the socket is already over the bound.
+  private ensureOutboundCapacity(ws: WebSocketLike, frameLabel: string): boolean {
     if (ws.readyState !== 1) return false;
-    if (physicalSocketHasCapacity(ws, frameBytes)) return true;
+    if (classifyOutboundFrame(ws, 0).accepted) return true;
 
-    this.closeAtOutboundHighWater(ws);
+    this.closeAtOutboundHighWater(ws, undefined, frameLabel);
     return false;
   }
 
-  private closeAtOutboundHighWater(ws: WebSocketLike): void {
+  private rejectOutboundFrame(
+    ws: WebSocketLike,
+    rejection: OutboundFrameRejection,
+    frameBytes: number,
+    frameLabel: string,
+  ): void {
+    if (rejection === "backpressure") {
+      this.closeAtOutboundHighWater(ws, frameBytes, frameLabel);
+      return;
+    }
+    this.dropOversizedOutboundFrame(ws, frameBytes, frameLabel);
+  }
+
+  // An oversized frame is a daemon-side bug: whatever produced it needs its own
+  // size budget, so the log names the message type.
+  private dropOversizedOutboundFrame(
+    ws: WebSocketLike,
+    frameBytes: number,
+    frameLabel: string,
+  ): void {
+    this.runtimeMetrics.incrementCounter("outboundFrameDroppedOversized");
+    const identity = this.socketIdentities.get(ws);
+    this.logger.error(
+      {
+        ...(identity ? toConnectionLogFields(identity) : {}),
+        frameLabel,
+        frameBytes,
+        maxBufferedBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+      },
+      "Dropping outbound WebSocket frame above the physical frame bound",
+    );
+  }
+
+  private closeAtOutboundHighWater(
+    ws: WebSocketLike,
+    frameBytes: number | undefined,
+    frameLabel: string,
+  ): void {
     this.closePhysicalSocket({
       ws,
       logMessage: "Closing physical WebSocket at outbound high-water mark",
       logFields: {
         bufferedAmount: ws.bufferedAmount,
+        frameLabel,
+        frameBytes,
         maxBufferedBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
       },
     });
@@ -2721,6 +2768,11 @@ function toConnectionLogFields(identity: WebSocketConnectionIdentity): Record<st
     ...(identity.sessionId ? { sessionId: identity.sessionId } : {}),
     ...(identity.appVersion ? { appVersion: identity.appVersion } : {}),
   };
+}
+
+function describeOutboundFrame(message: WSOutboundMessage): string {
+  if (message.type !== "session") return message.type;
+  return `session_message:${message.message.type}`;
 }
 
 function resolveConnectionPeer(

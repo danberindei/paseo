@@ -61,12 +61,13 @@ export async function sendBoundedPhysicalFrameAndWait(params: {
   socket: BoundedPhysicalSocket;
   frame: string | Uint8Array | ArrayBuffer;
   frameBytes?: number;
-  onHighWater: () => void;
+  onReject: (rejection: OutboundFrameRejection) => void;
 }): Promise<boolean> {
-  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onReject } = params;
   if (socket.readyState !== 1) return false;
-  if (!physicalSocketHasCapacity(socket, frameBytes)) {
-    onHighWater();
+  const verdict = classifyOutboundFrame(socket, frameBytes);
+  if (!verdict.accepted) {
+    onReject(verdict.rejection);
     return false;
   }
 
@@ -86,24 +87,39 @@ export async function sendBoundedPhysicalFrameAndWait(params: {
   return true;
 }
 
-export function physicalSocketHasCapacity(
+// An oversized frame is unsendable no matter how long the buffer drains, so
+// closing the socket just makes the client reconnect and re-request it.
+export type OutboundFrameRejection = "backpressure" | "oversized_frame";
+
+export type OutboundFrameVerdict =
+  | { accepted: true }
+  | { accepted: false; rejection: OutboundFrameRejection };
+
+export function classifyOutboundFrame(
   socket: Pick<BoundedPhysicalSocket, "bufferedAmount">,
   frameBytes: number,
-): boolean {
-  if (typeof socket.bufferedAmount !== "number") return true;
-  return socket.bufferedAmount + frameBytes <= MAX_PHYSICAL_SOCKET_BUFFERED_BYTES;
+): OutboundFrameVerdict {
+  if (frameBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
+    return { accepted: false, rejection: "oversized_frame" };
+  }
+  if (typeof socket.bufferedAmount !== "number") return { accepted: true };
+  if (socket.bufferedAmount + frameBytes <= MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
+    return { accepted: true };
+  }
+  return { accepted: false, rejection: "backpressure" };
 }
 
 export function sendBoundedPhysicalFrame(params: {
   socket: BoundedPhysicalSocket;
   frame: string | Uint8Array | ArrayBuffer;
   frameBytes?: number;
-  onHighWater: () => void;
+  onReject: (rejection: OutboundFrameRejection) => void;
 }): boolean {
-  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onReject } = params;
   if (socket.readyState !== 1) return false;
-  if (!physicalSocketHasCapacity(socket, frameBytes)) {
-    onHighWater();
+  const verdict = classifyOutboundFrame(socket, frameBytes);
+  if (!verdict.accepted) {
+    onReject(verdict.rejection);
     return false;
   }
   const result = socket.send(frame);

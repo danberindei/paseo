@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
+import { classifyOutboundFrame } from "./physical-socket.js";
 
 export interface EncryptedRelayChannel {
   setState: (state: "open") => void;
@@ -23,8 +23,10 @@ export function createEncryptedRelaySocket(params: {
   emitter: EventEmitter;
   getTransportBufferedAmount: () => number | undefined;
   terminateTransport: () => void;
+  onOversizedFrame: (encryptedFrameBytes: number) => void;
 }): EncryptedRelaySocket {
-  const { channel, emitter, getTransportBufferedAmount, terminateTransport } = params;
+  const { channel, emitter, getTransportBufferedAmount, terminateTransport, onOversizedFrame } =
+    params;
   let readyState = 1;
 
   channel.setState("open");
@@ -59,7 +61,12 @@ export function createEncryptedRelaySocket(params: {
       const outbound = normalizeRelaySendPayload(data);
       const outboundBytes = channel.outboundWireByteLength(outbound);
       const queuedBytes = getTransportBufferedAmount() ?? 0;
-      if (queuedBytes + outboundBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
+      const verdict = classifyOutboundFrame({ bufferedAmount: queuedBytes }, outboundBytes);
+      if (!verdict.accepted) {
+        if (verdict.rejection === "oversized_frame") {
+          onOversizedFrame(outboundBytes);
+          return;
+        }
         terminate();
         return Promise.reject(
           new Error("Encrypted relay socket exceeded its outbound high-water mark"),
