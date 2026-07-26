@@ -1292,10 +1292,11 @@ export class VoiceAssistantWebSocketServer {
     message: WSOutboundMessage,
     reportRejection = false,
   ): void {
-    const prepared = this.prepareJsonDelivery(sockets, message, reportRejection);
+    const frameLabel = describeOutboundFrame(message);
+    const prepared = this.prepareJsonDelivery(sockets, message, reportRejection, frameLabel);
     if (!prepared) return;
     for (const ws of prepared.sockets) {
-      this.sendFrameToClient(ws, prepared.payload, prepared.bytes, () => {
+      this.sendFrameToClient(ws, prepared.payload, prepared.bytes, frameLabel, () => {
         this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
       });
     }
@@ -1305,6 +1306,7 @@ export class VoiceAssistantWebSocketServer {
     sockets: Iterable<WebSocketLike>,
     message: WSOutboundMessage,
     reportRejection: boolean,
+    frameLabel: string,
   ): { sockets: WebSocketLike[]; payload: string; bytes: number } | null {
     const writableSockets = [...sockets].filter((ws) => {
       if (
@@ -1324,7 +1326,7 @@ export class VoiceAssistantWebSocketServer {
           );
         return false;
       }
-      return this.ensureOutboundCapacity(ws, 0);
+      return this.ensureOutboundCapacity(ws, 0, frameLabel);
     });
     if (writableSockets.length === 0) {
       return null;
@@ -1361,11 +1363,12 @@ export class VoiceAssistantWebSocketServer {
             logMessage: "Closing physical WebSocket after outbound framing failure",
             logFields: { err },
           }),
-        send: (frame, waitForDrain) => {
+        send: (frame, waitForDrain, frameLabel) => {
           const params = {
             socket: ws,
             frame,
-            onHighWater: () => this.closeAtOutboundHighWater(ws),
+            onHighWater: () =>
+              this.closeAtOutboundHighWater(ws, outboundFrameByteLength(frame), frameLabel),
           };
           if (waitForDrain)
             return sendBoundedPhysicalFrameAndWait(params).then((sent) => {
@@ -1392,25 +1395,27 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     frame: string | Uint8Array,
     bytes: number,
+    frameLabel: string,
     waitForDrain = false,
   ): Promise<void> {
     const transport = this.chunkedSocket(ws);
     const admittedBytes = transport.isWriting
       ? bytes
       : Math.min(bytes, ws.maxFrameBytes ?? 32 * 1024 * 1024);
-    if (!this.ensureOutboundCapacity(ws, admittedBytes))
+    if (!this.ensureOutboundCapacity(ws, admittedBytes, frameLabel))
       return Promise.reject(new Error("Source is closed"));
-    return transport.send(frame, { waitForDrain, byteLength: bytes });
+    return transport.send(frame, { waitForDrain, byteLength: bytes, label: frameLabel });
   }
 
   private async sendMessageToClientAndWait(
     ws: WebSocketLike,
     message: WSOutboundMessage,
   ): Promise<void> {
-    const prepared = this.prepareJsonDelivery([ws], message, true);
+    const frameLabel = describeOutboundFrame(message);
+    const prepared = this.prepareJsonDelivery([ws], message, true, frameLabel);
     if (!prepared) throw new Error("Source message delivery unavailable");
     try {
-      await this.sendSocketFrame(ws, prepared.payload, prepared.bytes, true);
+      await this.sendSocketFrame(ws, prepared.payload, prepared.bytes, frameLabel, true);
       this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1425,7 +1430,7 @@ export class VoiceAssistantWebSocketServer {
         this.logger.warn({ bytes: frame.byteLength }, "ws_application_binary_delivery_denied");
       return;
     }
-    this.sendFrameToClient(ws, frame, outboundFrameByteLength(frame), () => {
+    this.sendFrameToClient(ws, frame, outboundFrameByteLength(frame), "binary", () => {
       this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     });
   }
@@ -1437,7 +1442,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
     try {
-      await this.sendSocketFrame(ws, frame, frame.byteLength, true);
+      await this.sendSocketFrame(ws, frame, frame.byteLength, "binary", true);
       this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1449,10 +1454,11 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     frame: string | Uint8Array,
     frameBytes: number,
+    frameLabel: string,
     recordSent: () => void,
   ): void {
     try {
-      void this.sendSocketFrame(ws, frame, frameBytes).then(recordSent, (err) => {
+      void this.sendSocketFrame(ws, frame, frameBytes, frameLabel).then(recordSent, (err) => {
         this.logger.warn({ err }, "ws_send_failed");
       });
     } catch (err) {
@@ -1460,7 +1466,13 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private ensureOutboundCapacity(ws: WebSocketLike, frameBytes: number): boolean {
+  // Callers that have not serialized the payload pass 0, which only asks whether
+  // the socket is already over the bound.
+  private ensureOutboundCapacity(
+    ws: WebSocketLike,
+    frameBytes: number,
+    frameLabel: string,
+  ): boolean {
     if (ws.readyState !== 1) return false;
     if (
       physicalSocketHasCapacity(
@@ -1470,16 +1482,22 @@ export class VoiceAssistantWebSocketServer {
     )
       return true;
 
-    this.closeAtOutboundHighWater(ws);
+    this.closeAtOutboundHighWater(ws, undefined, frameLabel);
     return false;
   }
 
-  private closeAtOutboundHighWater(ws: WebSocketLike): void {
+  private closeAtOutboundHighWater(
+    ws: WebSocketLike,
+    frameBytes: number | undefined,
+    frameLabel: string | undefined,
+  ): void {
     this.closePhysicalSocket({
       ws,
       logMessage: "Closing physical WebSocket at outbound high-water mark",
       logFields: {
         bufferedAmount: ws.bufferedAmount,
+        frameLabel,
+        frameBytes,
         maxBufferedBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
       },
     });
@@ -3210,6 +3228,11 @@ function toConnectionLogFields(identity: WebSocketConnectionIdentity): Record<st
     ...(identity.sessionId ? { sessionId: identity.sessionId } : {}),
     ...(identity.appVersion ? { appVersion: identity.appVersion } : {}),
   };
+}
+
+function describeOutboundFrame(message: WSOutboundMessage): string {
+  if (message.type !== "session") return message.type;
+  return `session_message:${message.message.type}`;
 }
 
 function resolveConnectionPeer(

@@ -19,7 +19,10 @@ import {
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import { APPLICATION_SOCKET_LEASE_MS } from "./websocket/physical-socket.js";
+import {
+  APPLICATION_SOCKET_LEASE_MS,
+  MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+} from "./websocket/physical-socket.js";
 
 type SocketListener = (...args: unknown[]) => void;
 
@@ -50,8 +53,11 @@ const sessionMock = vi.hoisted(() => {
 
   class MockSession {
     readonly delivery = new SessionDelivery((source, message) => {
-      const send = this.args.onMessageToSource as (source: object, message: unknown) => void;
-      send(source, message);
+      const send = this.args.onMessageToSource as (
+        source: object,
+        message: unknown,
+      ) => void | Promise<void>;
+      return send(source, message);
     });
     cleanup = vi.fn(async () => {
       await this.delivery.close();
@@ -497,6 +503,62 @@ function holdSessionCleanup(session: (typeof sessionMock.instances)[number]): {
 }
 
 describe("relay external socket reconnect behavior", () => {
+  test.each([false, true])(
+    "logs the rejected message and closes an oversized response's source (owned subscriptions: %s)",
+    async (modern) => {
+      const logger = createLogger();
+      const server = createServer({ logger });
+      const socket = new MockSocket();
+      try {
+        await server.attachExternalSocket(socket, { transport: "relay" });
+        socket.emit(
+          "message",
+          JSON.stringify(
+            createHelloMessage("oversized-response", {
+              capabilities: { owned_subscriptions: modern },
+            }),
+          ),
+        );
+        await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
+        const session = sessionMock.instances[0];
+        const reply = {
+          type: "rpc_error" as const,
+          payload: {
+            requestId: "oversized",
+            requestType: "ping",
+            error: "x".repeat(MAX_PHYSICAL_SOCKET_BUFFERED_BYTES),
+          },
+        };
+        const frameBytes = Buffer.byteLength(JSON.stringify({ type: "session", message: reply }));
+        if (modern) {
+          await session.delivery.request(
+            socket,
+            { type: "ping", requestId: "oversized" },
+            async () => {
+              session.delivery.reply(reply);
+            },
+          );
+        } else {
+          session.publish(reply);
+        }
+
+        await vi.waitFor(() => expect(socket.readyState).toBe(3));
+        expect(socket.sent).toHaveLength(1);
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            frameLabel: "session_message:rpc_error",
+            frameBytes,
+            bufferedAmount: 0,
+            maxBufferedBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+          }),
+          "Closing physical WebSocket at outbound high-water mark",
+        );
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
   test("closes only a hello socket when post-admission setup throws", async () => {
     const server = createServer();
     class ThrowOnceSocket extends MockSocket {

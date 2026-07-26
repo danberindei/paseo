@@ -25,8 +25,9 @@ export function createEncryptedRelaySocket(params: {
   emitter: EventEmitter;
   getTransportBufferedAmount: () => number | undefined;
   terminateTransport: () => void;
+  onHighWater?: (encryptedFrameBytes: number, bufferedAmount: number) => void;
 }): EncryptedRelaySocket {
-  const { channel, emitter, getTransportBufferedAmount, terminateTransport } = params;
+  const { channel, emitter, getTransportBufferedAmount, terminateTransport, onHighWater } = params;
   let readyState = 1;
 
   const terminate = () => {
@@ -61,6 +62,7 @@ export function createEncryptedRelaySocket(params: {
       const outboundBytes = channel.outboundWireByteLength(outbound);
       const queuedBytes = getTransportBufferedAmount() ?? 0;
       if (queuedBytes + outboundBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
+        onHighWater?.(outboundBytes, queuedBytes);
         terminate();
         return Promise.reject(
           new Error("Encrypted relay socket exceeded its outbound high-water mark"),

@@ -25,7 +25,7 @@ export class ChunkedTransport {
       supportsDrain?: boolean;
       /** Writes are admitted synchronously in order; promises track only their drain. */
       supportsConcurrentWrites?: boolean;
-      send: (frame: Frame, waitForDrain: boolean) => void | Promise<void>;
+      send: (frame: Frame, waitForDrain: boolean, label?: string) => void | Promise<void>;
       deliver: (frame: Frame) => void;
       onActivity?: () => void;
       onFailure?: (error: unknown) => void;
@@ -42,7 +42,12 @@ export class ChunkedTransport {
     return this.pending !== undefined;
   }
 
-  send(frame: Frame, options: { waitForDrain?: boolean; byteLength?: number } = {}): Promise<void> {
+  // `label` names the logical frame, so a physical write that hits a socket bound
+  // can report which application message was being written.
+  send(
+    frame: Frame,
+    options: { waitForDrain?: boolean; byteLength?: number; label?: string } = {},
+  ): Promise<void> {
     const byteLength = options.byteLength ?? frameByteLength(frame);
     if (byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
     const chunk =
@@ -59,8 +64,9 @@ export class ChunkedTransport {
         ? this.sendChunks(
             typeof frame === "string" ? new TextEncoder().encode(frame) : frame,
             typeof frame === "string",
+            options.label,
           )
-        : this.io.send(frame, options.waitForDrain === true);
+        : this.io.send(frame, options.waitForDrain === true, options.label);
       if (!result) return;
       return result.catch((error) => {
         this.fail(error);
@@ -108,7 +114,7 @@ export class ChunkedTransport {
     return completion;
   }
 
-  private sendChunks(bytes: Uint8Array, text: boolean): Promise<void> {
+  private sendChunks(bytes: Uint8Array, text: boolean, label?: string): Promise<void> {
     const capacity = this.io.frameBytes - HEADER;
     const writeChunk = (offset: number) => {
       if (this.closed) throw new Error("Transport closed");
@@ -121,7 +127,7 @@ export class ChunkedTransport {
         (offset === 0 ? 1 : 0) | (end === bytes.byteLength ? 2 : 0),
       ]);
       wire.set(bytes.subarray(offset, end), HEADER);
-      return this.io.send(wire, true);
+      return this.io.send(wire, true, label);
     };
     const first = writeChunk(0);
     return (async () => {

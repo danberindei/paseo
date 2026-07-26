@@ -83,6 +83,35 @@ test("underlying relay backpressure rejects binary before encryption and termina
   expect(terminations).toBe(1);
 });
 
+test("an oversized encrypted frame reports its size and terminates an idle relay socket", async () => {
+  const channel = new BlockingChannel();
+  let terminations = 0;
+  const failures: Array<{ encryptedFrameBytes: number; bufferedAmount: number }> = [];
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => 0,
+    terminateTransport: () => {
+      terminations += 1;
+    },
+    onHighWater: (encryptedFrameBytes, bufferedAmount) => {
+      failures.push({ encryptedFrameBytes, bufferedAmount });
+    },
+  });
+
+  await expect(socket.send(new Uint8Array(MAX_PHYSICAL_SOCKET_BUFFERED_BYTES))).rejects.toThrow(
+    "outbound high-water mark",
+  );
+
+  expect(failures).toEqual([
+    { encryptedFrameBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES + 40, bufferedAmount: 0 },
+  ]);
+  expect(channel.sent).toEqual([]);
+  expect(channel.closes).toEqual([]);
+  expect(terminations).toBe(1);
+  expect(socket.readyState).toBe(3);
+});
+
 test("explicit encrypted-socket termination forcibly terminates the relay transport", () => {
   const channel = new BlockingChannel();
   let terminations = 0;

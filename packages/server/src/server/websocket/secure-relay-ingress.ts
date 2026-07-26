@@ -17,6 +17,7 @@ import {
   type Transport as RelayTransport,
 } from "@getpaseo/relay/e2ee";
 import { createEncryptedRelaySocket, type EncryptedRelaySocket } from "./encrypted-relay-socket.js";
+import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
 
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 
@@ -91,6 +92,16 @@ export async function admitSecuredRelaySocket(
       emitter,
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
+      onHighWater: (encryptedFrameBytes, bufferedAmount) => {
+        logger.warn(
+          {
+            encryptedFrameBytes,
+            bufferedAmount,
+            maxBufferedBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+          },
+          "Closing encrypted relay socket at outbound high-water mark",
+        );
+      },
     });
     await attach({ socket: encryptedSocket, securityMode: channel.securityMode() });
     attached = true;
