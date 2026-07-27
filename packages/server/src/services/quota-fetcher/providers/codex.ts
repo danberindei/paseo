@@ -18,6 +18,8 @@ import {
   balanceToneFromRemaining,
   toneFromUsedPct,
   fetchProviderApi,
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   resolveProviderEnv,
   unavailableUsage,
   windowFromUsedPct,
@@ -262,8 +264,8 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
         headers,
       },
     );
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
-    if (!res.ok) throw new Error(`Codex usage API returned ${res.status}`);
+    if (isExpectedAuthFailureStatus(res.status)) return "NEEDS_AUTH";
+    if (!res.ok) throw providerApiHttpError(this, res);
     const text = await res.text();
     if (text.trim().startsWith("<")) return "NEEDS_AUTH";
     return CodexUsageResponseSchema.parse(JSON.parse(text));

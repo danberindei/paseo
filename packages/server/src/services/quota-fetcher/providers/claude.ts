@@ -18,6 +18,8 @@ import type {
 import {
   ApiNumberSchema,
   fetchProviderApi,
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   resolveProviderEnv,
   toneFromUsedPct,
   unavailableUsage,
@@ -483,8 +485,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
-    if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
+    if (isExpectedAuthFailureStatus(res.status)) return "NEEDS_AUTH";
+    if (!res.ok) throw providerApiHttpError(this, res);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }
 }

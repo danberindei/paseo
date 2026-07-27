@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import { z } from "zod";
 import type {
   ProviderUsage,
@@ -46,6 +47,76 @@ export function fetchProviderApi(
     ...init,
     signal: init.signal ?? AbortSignal.timeout(PROVIDER_HTTP_TIMEOUT_MS),
   });
+}
+
+/**
+ * Whether a failing status is the expected shape of "no usable session for this provider".
+ *
+ * The daemon reads credentials it does not own: the env may hold a token for a different
+ * product, and a token on disk may be waiting for its CLI to refresh it. Those states are
+ * routine and must stay quiet. Every other failing status is a real failure that nothing
+ * else reports.
+ */
+export function isExpectedAuthFailureStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+/**
+ * A provider usage API answered with a failing HTTP status.
+ *
+ * Carries the status and `Retry-After` so the failure stays diagnosable after it leaves
+ * the provider: a 429 is the one failure a user has no other way to see, and the service
+ * that catches this is the only place that knows whether cached data still covers it.
+ */
+export class ProviderApiHttpError extends Error {
+  readonly status: number;
+  readonly retryAfter: string | null;
+
+  constructor(input: { displayName: string; status: number; retryAfter: string | null }) {
+    super(`${input.displayName} usage API returned ${input.status}`);
+    this.name = "ProviderApiHttpError";
+    this.status = input.status;
+    this.retryAfter = input.retryAfter;
+  }
+}
+
+export function providerApiHttpError(
+  provider: { displayName: string },
+  res: Response,
+): ProviderApiHttpError {
+  return new ProviderApiHttpError({
+    displayName: provider.displayName,
+    status: res.status,
+    retryAfter: res.headers.get("retry-after"),
+  });
+}
+
+/**
+ * Log a failed provider usage response and return the quiet `unavailable` result, for
+ * providers that absorb an HTTP failure rather than throwing it.
+ *
+ * The level is the point: file logging defaults to `info`, so an HTTP failure logged at
+ * `debug` is retained nowhere and cannot be diagnosed after the fact. Expected
+ * authentication failures stay at `debug`; anything else warns with the provider, the
+ * status, and `Retry-After`.
+ */
+export function logUnavailableHttpFailure(
+  logger: Logger,
+  provider: { providerId: string; displayName: string },
+  res: Response,
+): ProviderUsage {
+  const details = {
+    providerId: provider.providerId,
+    status: res.status,
+    retryAfter: res.headers.get("retry-after"),
+  };
+  const message = `${provider.displayName} usage fetch failed`;
+  if (isExpectedAuthFailureStatus(res.status)) {
+    logger.debug(details, message);
+  } else {
+    logger.warn(details, message);
+  }
+  return unavailableUsage(provider);
 }
 
 export function unavailableUsage(provider: {

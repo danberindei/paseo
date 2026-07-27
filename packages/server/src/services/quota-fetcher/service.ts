@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import type { ProviderUsage, ProviderUsageBalance } from "../../server/messages.js";
 import { createProviderUsageFetchers, defaultProviderUsageTargets } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
-import { unavailableUsage } from "./usage.js";
+import { ProviderApiHttpError, unavailableUsage } from "./usage.js";
 
 function hasPositiveBalance(balance: ProviderUsageBalance): boolean {
   const { used, remaining, limit } = balance;
@@ -43,6 +43,19 @@ export interface ProviderUsageListResult {
 
 const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// How long the same unresolved failure stays quiet after it has been warned about. A
+// forced refresh bypasses the cache, so a provider stuck at 429 would otherwise write a
+// warning per refresh.
+const PROVIDER_FETCH_FAILURE_WARN_INTERVAL_MS = 15 * 60 * 1000;
+
+// The last failure logged for a provider, so a repeat can be recognized as one. Cleared
+// on the provider's next successful fetch.
+interface ProviderFetchFailure {
+  signature: string;
+  warnedAtMs: number;
+  repeats: number;
+}
+
 export class ProviderUsageService {
   private readonly logger: Logger;
   private readonly resolveFetchers: () => ProviderUsageFetcher[];
@@ -55,6 +68,7 @@ export class ProviderUsageService {
   // (e.g. an expired token that briefly fails to refresh) instead of letting it
   // vanish from the sidebar.
   private readonly lastKnownGood = new Map<string, { usage: ProviderUsage; fetchedAt: string }>();
+  private readonly lastFailure = new Map<string, ProviderFetchFailure>();
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
@@ -107,12 +121,15 @@ export class ProviderUsageService {
     const providers = settled.map((result, index) => {
       const fetcher = fetchers[index];
       if (result.status === "fulfilled") {
+        this.lastFailure.delete(fetcher.providerId);
         return this.applyLastKnownGood(result.value, fetchedAt);
       }
-      this.logger.debug(
-        { err: result.reason, providerId: fetcher.providerId },
-        "Provider usage fetch failed",
-      );
+      this.logFetchFailure({
+        fetcher,
+        reason: result.reason,
+        nowMs,
+        servedFromCache: this.lastKnownGood.has(fetcher.providerId),
+      });
       return this.applyLastKnownGood(
         unavailableUsage({
           providerId: fetcher.providerId,
@@ -126,6 +143,53 @@ export class ProviderUsageService {
     const result = { fetchedAt, providers };
     this.cached = { fetchedAtMs: nowMs, result };
     return result;
+  }
+
+  /**
+   * Record a provider fetch failure at a level that matches what it costs the user.
+   *
+   * File logging defaults to `info`, so the previous `debug` line retained nothing: a 429
+   * from a provider's usage API left no trace anywhere and could not be diagnosed after
+   * the fact. A failure that is new, or that leaves the provider with nothing to show,
+   * warns with the provider, the status, and `Retry-After`. A repeat that last-known-good
+   * data still covers stays at `debug`, and an uncovered repeat warns at most once per
+   * interval, so a persistently failing provider cannot flood the log.
+   */
+  private logFetchFailure(input: {
+    fetcher: ProviderUsageFetcher;
+    reason: unknown;
+    nowMs: number;
+    servedFromCache: boolean;
+  }): void {
+    const { fetcher, reason, nowMs, servedFromCache } = input;
+    const httpError = reason instanceof ProviderApiHttpError ? reason : null;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const signature = `${httpError?.status ?? "none"}:${message}`;
+    const previous = this.lastFailure.get(fetcher.providerId);
+    const repeated = previous?.signature === signature ? previous : null;
+    const shouldWarn =
+      !repeated ||
+      (!servedFromCache && nowMs - repeated.warnedAtMs >= PROVIDER_FETCH_FAILURE_WARN_INTERVAL_MS);
+    const repeats = repeated ? repeated.repeats + 1 : 0;
+    this.lastFailure.set(fetcher.providerId, {
+      signature,
+      warnedAtMs: repeated && !shouldWarn ? repeated.warnedAtMs : nowMs,
+      repeats,
+    });
+
+    const details = {
+      err: reason,
+      providerId: fetcher.providerId,
+      status: httpError?.status ?? null,
+      retryAfter: httpError?.retryAfter ?? null,
+      servedFromCache,
+      repeats,
+    };
+    if (shouldWarn) {
+      this.logger.warn(details, "Provider usage fetch failed");
+      return;
+    }
+    this.logger.debug(details, "Provider usage fetch failed");
   }
 
   // Stamp every successful result with its fetch time, and keep a copy as a

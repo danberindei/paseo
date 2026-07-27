@@ -17,6 +17,7 @@ import {
   fetchProviderApi,
   resolveProviderEnv,
   toIsoStringOrNull,
+  logUnavailableHttpFailure,
   unavailableUsage,
 } from "../usage.js";
 
@@ -221,10 +222,7 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
       },
     );
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Cursor usage fetch failed");
-      return unavailableUsage(this);
-    }
+    if (!res.ok) return logUnavailableHttpFailure(this.logger, this, res);
 
     const resp = CursorUsageResponseSchema.parse(await res.json());
     const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);

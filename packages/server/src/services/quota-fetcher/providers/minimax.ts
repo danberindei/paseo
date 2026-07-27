@@ -9,6 +9,7 @@ import {
   ApiNumberSchema,
   ApiOptionalStringSchema,
   fetchProviderApi,
+  logUnavailableHttpFailure,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -175,10 +176,7 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
       },
     });
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "MiniMax usage fetch failed");
-      return unavailableUsage(this);
-    }
+    if (!res.ok) return logUnavailableHttpFailure(this.logger, this, res);
 
     const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
     const models = resp.model_remains ?? [];

@@ -10,6 +10,7 @@ import {
   ApiOptionalStringSchema,
   fetchProviderApi,
   resolveProviderEnv,
+  logUnavailableHttpFailure,
   unavailableUsage,
 } from "../usage.js";
 
@@ -63,10 +64,7 @@ export class ZaiQuotaProvider implements ProviderUsageFetcher {
       },
     );
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Z.ai usage fetch failed");
-      return unavailableUsage(this);
-    }
+    if (!res.ok) return logUnavailableHttpFailure(this.logger, this, res);
 
     const resp = ZaiUsageResponseSchema.parse(await res.json());
     const sub = resp.data?.[0];

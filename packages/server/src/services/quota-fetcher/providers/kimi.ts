@@ -15,6 +15,7 @@ import {
   fetchProviderApi,
   resolveProviderEnv,
   toneFromUsedPct,
+  logUnavailableHttpFailure,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -285,11 +286,8 @@ export class KimiQuotaProvider implements ProviderUsageFetcher {
 
     const res = await this.callUsageApi(credentials.access_token);
 
-    if (!res.ok) {
-      // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
-      this.logger.debug({ status: res.status }, "Kimi usage fetch failed");
-      return unavailableUsage(this);
-    }
+    // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
+    if (!res.ok) return logUnavailableHttpFailure(this.logger, this, res);
 
     const windows = kimiUsageWindowsFromPayload(await res.json(), this.logger);
 

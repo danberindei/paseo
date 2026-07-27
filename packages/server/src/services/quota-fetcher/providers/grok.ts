@@ -20,6 +20,7 @@ import {
   usedPctOf,
   fetchProviderApi,
   resolveProviderEnv,
+  logUnavailableHttpFailure,
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
@@ -157,10 +158,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
       },
     );
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Grok usage fetch failed");
-      return unavailableUsage(this);
-    }
+    if (!res.ok) return logUnavailableHttpFailure(this.logger, this, res);
 
     const resp = GrokUsageResponseSchema.parse(await res.json());
     const balance = grokMonthlyCreditBalance(resp);

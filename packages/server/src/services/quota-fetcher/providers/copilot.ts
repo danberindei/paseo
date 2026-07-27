@@ -13,6 +13,7 @@ import {
   ApiOptionalStringSchema,
   fetchProviderApi,
   resolveProviderEnv,
+  logUnavailableHttpFailure,
   unavailableUsage,
 } from "../usage.js";
 
@@ -85,10 +86,7 @@ export class CopilotQuotaProvider implements ProviderUsageFetcher {
       },
     );
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Copilot usage fetch failed");
-      return unavailableUsage(this);
-    }
+    if (!res.ok) return logUnavailableHttpFailure(this.logger, this, res);
 
     const resp = CopilotUsageResponseSchema.parse(await res.json());
     const details: ProviderUsageDetail[] = resp.quota_reset_date

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
@@ -2099,5 +2100,179 @@ describe("KimiQuotaProvider usage windows", () => {
       "coding_limit_300_time_unit_minute",
       "coding_limit_300_time_unit_minute_2",
     ]);
+  });
+});
+
+/**
+ * Failure logging.
+ *
+ * A 429 from a provider's usage API was logged at `debug`, which the daemon's default
+ * `info` file level discards, so the failure was retained nowhere: no daemon log held any
+ * trace of it and there was nothing to diagnose after the fact.
+ */
+describe("provider usage fetch failure logging", () => {
+  const CLAUDE_TOKEN = "at_secret_must_not_be_logged";
+  const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+  const COPILOT_USER_URL = "https://api.github.com/copilot_internal/user";
+
+  let claudeHome: string;
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-quota-failure-"));
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+  });
+
+  interface RecordingLogger {
+    warn: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+  }
+
+  function recordingLogger(): RecordingLogger {
+    return createLogger() as unknown as RecordingLogger;
+  }
+
+  function claudeService(options: { respond: () => Response; now?: () => number }) {
+    writeClaudeCredentials(claudeHome, CLAUDE_TOKEN);
+    const logger = recordingLogger();
+    const service = new ProviderUsageService({
+      logger: logger as never,
+      now: options.now ?? (() => Date.parse("2026-06-19T00:00:00.000Z")),
+      cacheTtlMs: 0,
+      fetchers: [
+        new ClaudeQuotaProvider({
+          logger: logger as never,
+          claudeHome,
+          claudeKeychainReader: async () => null,
+          fetch: mockFetch(new Map([[CLAUDE_USAGE_URL, options.respond]])),
+        }),
+      ],
+    });
+    return { service, logger };
+  }
+
+  it("warns with the provider, status, and Retry-After when a usage API answers 429", async () => {
+    const { service, logger } = claudeService({
+      respond: () => new Response(null, { status: 429, headers: { "Retry-After": "120" } }),
+    });
+
+    const claude = findProvider(await service.listUsage(), "claude");
+
+    expect(claude).toMatchObject({ status: "error", error: "Claude usage API returned 429" });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerId: "claude",
+        status: 429,
+        retryAfter: "120",
+        servedFromCache: false,
+        repeats: 0,
+      }),
+      "Provider usage fetch failed",
+    );
+  });
+
+  it("keeps the access token out of the logged failure", async () => {
+    const { service, logger } = claudeService({
+      respond: () => new Response(null, { status: 429 }),
+    });
+
+    await service.listUsage();
+
+    expect(logger.warn).toHaveBeenCalled();
+    expect(inspect(logger.warn.mock.calls, { depth: 8 })).not.toContain(CLAUDE_TOKEN);
+  });
+
+  it("drops a repeated failure to debug and warns again once the interval passes", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    const { service, logger } = claudeService({
+      respond: () => new Response(null, { status: 429 }),
+      now: () => now,
+    });
+
+    await service.listUsage();
+    now += 60_000;
+    await service.listUsage();
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: "claude", status: 429, repeats: 1 }),
+      "Provider usage fetch failed",
+    );
+
+    now += 15 * 60 * 1000;
+    await service.listUsage();
+
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps repeats quiet while last known good usage still covers them", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    let respond = () => jsonResponse(makeClaudeResponse());
+    const { service, logger } = claudeService({ respond: () => respond(), now: () => now });
+
+    await service.listUsage();
+    respond = () => new Response(null, { status: 429 });
+    await service.listUsage();
+
+    // The first failure is still news, even though nothing user-visible changed.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: "claude", servedFromCache: true }),
+      "Provider usage fetch failed",
+    );
+
+    now += 60 * 60 * 1000;
+    const claude = findProvider(await service.listUsage(), "claude");
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(claude.windows).not.toEqual([]);
+  });
+
+  it("stays quiet when a usage API reports an expected authentication failure", async () => {
+    const { service, logger } = claudeService({
+      respond: () => new Response(null, { status: 401 }),
+    });
+
+    const claude = findProvider(await service.listUsage(), "claude");
+
+    expect(claude.status).toBe("unavailable");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  // Providers that absorb an HTTP failure instead of throwing it log it themselves, and
+  // have to draw the same line between a real failure and a missing session.
+  it("warns for an absorbed HTTP failure and stays quiet for an absorbed auth failure", async () => {
+    const logger = recordingLogger();
+    const copilotAt = (status: number) =>
+      new CopilotQuotaProvider({
+        logger: logger as never,
+        fetch: mockFetch(
+          new Map([
+            [
+              COPILOT_USER_URL,
+              () => new Response(null, { status, headers: { "Retry-After": "60" } }),
+            ],
+          ]),
+        ),
+        context: { env: { COPILOT_TOKEN: "copilot_secret_must_not_be_logged" } },
+      });
+
+    await expect(copilotAt(429).fetchUsage()).resolves.toMatchObject({ status: "unavailable" });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { providerId: "copilot", status: 429, retryAfter: "60" },
+      "GitHub Copilot usage fetch failed",
+    );
+
+    logger.warn.mockClear();
+    await copilotAt(403).fetchUsage();
+
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      { providerId: "copilot", status: 403, retryAfter: "60" },
+      "GitHub Copilot usage fetch failed",
+    );
   });
 });
