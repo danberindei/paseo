@@ -936,6 +936,7 @@ export const ja: TranslationResources = {
           loading: "コミットを読み込み中…",
           loadError: "コミットの読み込みに失敗しました",
           empty: "コミットはまだありません",
+          resizeHandle: "コミットセクションのサイズを変更",
         },
       },
       openInEditor: {

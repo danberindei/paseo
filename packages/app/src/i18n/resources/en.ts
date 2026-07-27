@@ -934,6 +934,7 @@ export const en = {
           loading: "Loading commits…",
           loadError: "Failed to load commits",
           empty: "No commits yet",
+          resizeHandle: "Resize the commits section",
         },
       },
       openInEditor: {

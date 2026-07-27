@@ -947,6 +947,7 @@ export const ptBR: TranslationResources = {
           loading: "Carregando commits…",
           loadError: "Falha ao carregar commits",
           empty: "Ainda não há commits",
+          resizeHandle: "Redimensionar a seção de commits",
         },
       },
       openInEditor: {

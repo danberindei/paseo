@@ -932,6 +932,7 @@ export const ko: TranslationResources = {
           loading: "커밋 로드 중…",
           loadError: "커밋을 로드하지 못했습니다.",
           empty: "아직 커밋이 없습니다.",
+          resizeHandle: "Resize the commits section",
         },
       },
       openInEditor: {

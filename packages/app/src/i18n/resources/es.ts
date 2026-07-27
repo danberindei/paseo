@@ -956,6 +956,7 @@ export const es: TranslationResources = {
           loading: "Cargando commits…",
           loadError: "Error al cargar los commits",
           empty: "Aún no hay commits",
+          resizeHandle: "Redimensionar la sección de commits",
         },
       },
       openInEditor: {

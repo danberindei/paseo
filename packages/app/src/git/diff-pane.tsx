@@ -47,7 +47,8 @@ import {
   type PrHint,
   useCheckoutPrStatusQuery,
 } from "@/git/use-pr-status-query";
-import { CommitsSection } from "@/git/commits-section/commits-section";
+import { ChangesCommitsSplit } from "@/git/commits-section/changes-commits-split";
+import { resolveChangesBodyLayout, type ChangesPresentation } from "@/git/changes-body-layout";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import {
@@ -345,8 +346,6 @@ export function DiffModeMenu({
     </DropdownMenu>
   );
 }
-
-type ChangesPresentation = "combined" | "tree" | "diff";
 
 interface ChangesToolbarRefreshAction {
   isRefreshing: boolean;
@@ -1485,6 +1484,9 @@ function ChangesCommits({
   collapsed,
   onCommitPress,
   onCollapsedChange,
+  ratio,
+  onRatioCommit,
+  children,
 }: {
   presentation: ChangesPresentation;
   serverId: string;
@@ -1492,16 +1494,23 @@ function ChangesCommits({
   collapsed: boolean;
   onCommitPress: (sha: string) => void;
   onCollapsedChange: (collapsed: boolean) => void;
+  ratio: number;
+  onRatioCommit: (ratio: number) => void;
+  children: ReactNode;
 }) {
   if (presentation === "diff") return null;
   return (
-    <CommitsSection
+    <ChangesCommitsSplit
       serverId={serverId}
       cwd={cwd}
       onCommitPress={onCommitPress}
       collapsed={collapsed}
       onCollapsedChange={onCollapsedChange}
-    />
+      ratio={ratio}
+      onRatioCommit={onRatioCommit}
+    >
+      {children}
+    </ChangesCommitsSplit>
   );
 }
 
@@ -1719,6 +1728,10 @@ export function ChangesSurface({
   }, [desktopTreeVisible, instanceState, updateState]);
   const handleCommitsCollapsedChange = useCallback(
     (commitsCollapsed: boolean) => updateState({ ...instanceState, commitsCollapsed }),
+    [instanceState, updateState],
+  );
+  const handleCommitsSplitRatioChange = useCallback(
+    (commitsSplitRatio: number) => updateState({ ...instanceState, commitsSplitRatio }),
     [instanceState, updateState],
   );
   const handleChangesTreeWidth = useCallback(
@@ -2046,16 +2059,22 @@ export function ChangesSurface({
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
-      <View style={styles.diffContainer}>{bodyContent}</View>
-
-      <ChangesCommits
-        presentation={presentation}
-        serverId={serverId}
-        cwd={cwd}
-        onCommitPress={handleCommitPress}
-        collapsed={instanceState.commitsCollapsed}
-        onCollapsedChange={handleCommitsCollapsedChange}
-      />
+      {resolveChangesBodyLayout(presentation) === "direct" ? (
+        <View style={styles.diffContainer}>{bodyContent}</View>
+      ) : (
+        <ChangesCommits
+          presentation={presentation}
+          serverId={serverId}
+          cwd={cwd}
+          onCommitPress={handleCommitPress}
+          collapsed={instanceState.commitsCollapsed}
+          onCollapsedChange={handleCommitsCollapsedChange}
+          ratio={instanceState.commitsSplitRatio}
+          onRatioCommit={handleCommitsSplitRatioChange}
+        >
+          {bodyContent}
+        </ChangesCommits>
+      )}
     </View>
   );
 }
@@ -2096,6 +2115,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.destructive,
   },
+  diffContainer: {
+    flex: 1,
+    minHeight: 0,
+    position: "relative",
+  },
   forgeSetupCallout: {
     marginHorizontal: theme.spacing[3],
     marginBottom: theme.spacing[2],
@@ -2109,11 +2133,6 @@ const styles = StyleSheet.create((theme) => ({
   forgeSetupCalloutText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
-  },
-  diffContainer: {
-    flex: 1,
-    minHeight: 0,
-    position: "relative",
   },
   scrollView: {
     flex: 1,

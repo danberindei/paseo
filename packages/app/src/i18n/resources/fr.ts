@@ -955,6 +955,7 @@ export const fr: TranslationResources = {
           loading: "Chargement des commits…",
           loadError: "Échec du chargement des commits",
           empty: "Aucun commit pour le moment",
+          resizeHandle: "Redimensionner la section des commits",
         },
       },
       openInEditor: {

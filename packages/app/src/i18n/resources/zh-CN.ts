@@ -917,6 +917,7 @@ export const zhCN: TranslationResources = {
           loading: "正在加载提交…",
           loadError: "加载提交失败",
           empty: "暂无提交",
+          resizeHandle: "调整提交区域大小",
         },
       },
       openInEditor: {

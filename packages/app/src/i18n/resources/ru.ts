@@ -940,6 +940,7 @@ export const ru: TranslationResources = {
           loading: "Загрузка коммитов…",
           loadError: "Не удалось загрузить коммиты",
           empty: "Коммитов пока нет",
+          resizeHandle: "Изменить размер раздела коммитов",
         },
       },
       openInEditor: {

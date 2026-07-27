@@ -925,6 +925,7 @@ export const ar: TranslationResources = {
           loading: "جارٍ تحميل الإيداعات…",
           loadError: "تعذّر تحميل الإيداعات",
           empty: "لا توجد إيداعات بعد",
+          resizeHandle: "تغيير حجم قسم الإيداعات",
         },
       },
       openInEditor: {
