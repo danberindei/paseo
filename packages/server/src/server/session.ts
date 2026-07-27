@@ -928,6 +928,7 @@ export class Session {
     this.checkoutSession = new CheckoutSession({
       host: {
         emit: (msg) => this.emit(msg),
+        emitToSource: (msg, source) => this.emitToSource(msg, source),
         emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
         handleWorkspaceGitBranchSnapshot: (cwd, branchName) =>
           this.workspaceGitObserver.handleBranchSnapshot(cwd, branchName),
@@ -1188,11 +1189,16 @@ export class Session {
     }
   }
 
-  clearAgentTimelineSubscription(source: object): void {
+  /**
+   * Drop everything scoped to one disconnected socket. The client re-subscribes
+   * on reconnect, so dropping is safe during the reconnect grace period.
+   */
+  clearSourceSubscriptions(source: object): void {
     this.clientCapabilitiesBySource.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
       this.rebuildViewedTimelineAgentIds();
     }
+    this.checkoutSession.clearDiffSubscriptionsForSource(source);
   }
 
   private replaceAgentTimelineSubscription(source: object | undefined, agentIds: string[]): void {
@@ -2041,7 +2047,7 @@ export class Session {
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
-      this.dispatchCheckoutMessage(msg) ??
+      this.dispatchCheckoutMessage(msg, source) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
@@ -2496,7 +2502,10 @@ export class Session {
   }
 
   // eslint-disable-next-line complexity
-  private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchCheckoutMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "checkout_status_request":
         return this.checkoutSession.handleStatusRequest(msg);
@@ -2511,7 +2520,7 @@ export class Session {
       case "directory_suggestions_request":
         return this.handleDirectorySuggestionsRequest(msg);
       case "subscribe_checkout_diff_request":
-        return this.checkoutSession.handleSubscribeDiffRequest(msg);
+        return this.checkoutSession.handleSubscribeDiffRequest(msg, source);
       case "unsubscribe_checkout_diff_request":
         this.checkoutSession.handleUnsubscribeDiffRequest(msg);
         return undefined;
@@ -7753,6 +7762,19 @@ export class Session {
    * Emit a message to the client
    */
   private emit(msg: SessionOutboundMessage): void {
+    this.deliver(msg, undefined);
+  }
+
+  /**
+   * Emit a message to a single connected socket instead of every socket sharing
+   * this session. Falls back to a session-wide emit for session kinds that never
+   * register a source, such as the hub session.
+   */
+  private emitToSource(msg: SessionOutboundMessage, source: object | undefined): void {
+    this.deliver(msg, source);
+  }
+
+  private deliver(msg: SessionOutboundMessage, source: object | undefined): void {
     if (!this.authorization.allowsOutbound(msg)) {
       return;
     }
@@ -7768,6 +7790,10 @@ export class Session {
         },
         "agent.session.outbound",
       );
+    }
+    if (source && this.onMessageToSource) {
+      this.onMessageToSource(source, outbound);
+      return;
     }
     this.onMessage(outbound);
   }

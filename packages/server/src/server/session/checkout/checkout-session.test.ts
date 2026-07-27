@@ -112,6 +112,7 @@ function makeCheckoutSession(options?: {
   gitMetadataGenerator?: Partial<GitMetadataGenerator>;
 }) {
   const emitted: SessionOutboundMessage[] = [];
+  const emittedBySource: Array<{ source: object; msg: SessionOutboundMessage }> = [];
   const hostCalls: RecordedHostCalls = {
     emitWorkspaceUpdateForCwd: [],
     handleWorkspaceGitBranchSnapshot: [],
@@ -127,6 +128,12 @@ function makeCheckoutSession(options?: {
   };
   const host: CheckoutSessionHost = {
     emit: (msg) => emitted.push(msg),
+    // Mirrors Session.deliver: a message with a source reaches only that socket,
+    // and one without falls back to the session-wide emit.
+    emitToSource: (msg, source) => {
+      if (source) emittedBySource.push({ source, msg });
+      else emitted.push(msg);
+    },
     emitWorkspaceUpdateForCwd: async (cwd) => {
       hostCalls.emitWorkspaceUpdateForCwd.push(cwd);
     },
@@ -173,7 +180,7 @@ function makeCheckoutSession(options?: {
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
-  return { checkout, emitted, hostCalls, gitMutationCalls, generatorCalls };
+  return { checkout, emitted, emittedBySource, hostCalls, gitMutationCalls, generatorCalls };
 }
 
 function createGitSnapshot(
@@ -629,6 +636,134 @@ describe("CheckoutSession", () => {
 
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
       expect(subscriptions[1].unsubscribeCalls).toBe(1);
+    });
+
+    it("sends the response and updates only to the socket that subscribed", async () => {
+      const { subscriber, subscriptions } = createFakeDiffSubscriber({
+        cwd: "/repo",
+        files: [],
+        error: null,
+      });
+      const { checkout, emitted, emittedBySource } = makeCheckoutSession({ diff: subscriber });
+      const windowA = {};
+
+      await checkout.handleSubscribeDiffRequest(
+        {
+          type: "subscribe_checkout_diff_request",
+          subscriptionId: "s1",
+          cwd: "/repo",
+          compare: { mode: "uncommitted" },
+          requestId: "r8",
+        },
+        windowA,
+      );
+      subscriptions[0].emit({ cwd: "/repo", files: [], error: null });
+
+      expect(emitted).toEqual([]);
+      expect(emittedBySource).toEqual([
+        {
+          source: windowA,
+          msg: {
+            type: "subscribe_checkout_diff_response",
+            payload: {
+              subscriptionId: "s1",
+              cwd: "/repo",
+              files: [],
+              error: null,
+              requestId: "r8",
+            },
+          },
+        },
+        {
+          source: windowA,
+          msg: {
+            type: "checkout_diff_update",
+            payload: { subscriptionId: "s1", cwd: "/repo", files: [], error: null },
+          },
+        },
+      ]);
+    });
+
+    it("keeps two sockets' subscriptions on the same session independent", async () => {
+      const { subscriber, subscriptions } = createFakeDiffSubscriber({
+        cwd: "/repo",
+        files: [],
+        error: null,
+      });
+      const { checkout, emittedBySource } = makeCheckoutSession({ diff: subscriber });
+      const windowA = {};
+      const windowB = {};
+
+      await checkout.handleSubscribeDiffRequest(
+        {
+          type: "subscribe_checkout_diff_request",
+          subscriptionId: "s1",
+          cwd: "/repo",
+          compare: { mode: "uncommitted" },
+          requestId: "ra",
+        },
+        windowA,
+      );
+      await checkout.handleSubscribeDiffRequest(
+        {
+          type: "subscribe_checkout_diff_request",
+          subscriptionId: "s2",
+          cwd: "/repo",
+          compare: { mode: "uncommitted" },
+          requestId: "rb",
+        },
+        windowB,
+      );
+      emittedBySource.length = 0;
+
+      subscriptions[1].emit({ cwd: "/repo", files: [], error: null });
+
+      expect(emittedBySource).toEqual([
+        {
+          source: windowB,
+          msg: {
+            type: "checkout_diff_update",
+            payload: { subscriptionId: "s2", cwd: "/repo", files: [], error: null },
+          },
+        },
+      ]);
+    });
+
+    it("tears down only the disconnected socket's subscriptions", async () => {
+      const { subscriber, subscriptions } = createFakeDiffSubscriber({
+        cwd: "/repo",
+        files: [],
+        error: null,
+      });
+      const { checkout } = makeCheckoutSession({ diff: subscriber });
+      const windowA = {};
+      const windowB = {};
+
+      await checkout.handleSubscribeDiffRequest(
+        {
+          type: "subscribe_checkout_diff_request",
+          subscriptionId: "s1",
+          cwd: "/repo",
+          compare: { mode: "uncommitted" },
+          requestId: "ra",
+        },
+        windowA,
+      );
+      await checkout.handleSubscribeDiffRequest(
+        {
+          type: "subscribe_checkout_diff_request",
+          subscriptionId: "s2",
+          cwd: "/repo",
+          compare: { mode: "uncommitted" },
+          requestId: "rb",
+        },
+        windowB,
+      );
+
+      checkout.clearDiffSubscriptionsForSource(windowA);
+
+      expect(subscriptions[0].unsubscribeCalls).toBe(1);
+      expect(subscriptions[1].unsubscribeCalls).toBe(0);
     });
   });
 

@@ -67,6 +67,7 @@ import type { GitMetadataGenerator } from "./git-metadata-generator.js";
  */
 export interface CheckoutSessionHost {
   emit(msg: SessionOutboundMessage): void;
+  emitToSource(msg: SessionOutboundMessage, source: object | undefined): void;
   emitWorkspaceUpdateForCwd(cwd: string): Promise<void>;
   handleWorkspaceGitBranchSnapshot(cwd: string, branchName: string | null): void;
   renameCurrentBranch(
@@ -115,6 +116,16 @@ export interface CheckoutDiffSubscriber {
   scheduleRefreshForCwd(cwd: string): void;
 }
 
+/**
+ * An open live diff subscription. `source` is the socket that asked for it, so
+ * updates reach only that window when several share one session; it is undefined
+ * for session kinds that never register a source.
+ */
+interface DiffSubscriptionEntry {
+  unsubscribe: () => void;
+  source: object | undefined;
+}
+
 export interface CheckoutSessionOptions {
   host: CheckoutSessionHost;
   gitMutation: Pick<GitMutationService, "checkoutExistingBranch" | "notifyGitMutation">;
@@ -152,7 +163,7 @@ export class CheckoutSession {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
-  private readonly diffSubscriptions = new Map<string, () => void>();
+  private readonly diffSubscriptions = new Map<string, DiffSubscriptionEntry>();
   private readonly statusUpdateFingerprints = new Map<string, string>();
 
   constructor(options: CheckoutSessionOptions) {
@@ -400,48 +411,65 @@ export class CheckoutSession {
     }
   }
 
-  async handleSubscribeDiffRequest(msg: SubscribeCheckoutDiffRequest): Promise<void> {
+  async handleSubscribeDiffRequest(
+    msg: SubscribeCheckoutDiffRequest,
+    source?: object,
+  ): Promise<void> {
     const cwd = expandTilde(msg.cwd);
-    this.diffSubscriptions.get(msg.subscriptionId)?.();
+    this.diffSubscriptions.get(msg.subscriptionId)?.unsubscribe();
     const abort = new AbortController();
-    const unsubscribe = () => abort.abort();
-    this.diffSubscriptions.set(msg.subscriptionId, unsubscribe);
+    const entry: DiffSubscriptionEntry = { unsubscribe: () => abort.abort(), source };
+    this.diffSubscriptions.set(msg.subscriptionId, entry);
 
     try {
       const subscription = await this.checkoutDiffManager.subscribe(
         { cwd, compare: msg.compare, signal: abort.signal },
         (snapshot) => {
-          this.host.emit({
-            type: "checkout_diff_update",
-            payload: {
-              subscriptionId: msg.subscriptionId,
-              ...snapshot,
+          this.host.emitToSource(
+            {
+              type: "checkout_diff_update",
+              payload: {
+                subscriptionId: msg.subscriptionId,
+                ...snapshot,
+              },
             },
-          });
+            source,
+          );
         },
       );
 
-      this.host.emit({
-        type: "subscribe_checkout_diff_response",
-        payload: {
-          subscriptionId: msg.subscriptionId,
-          ...subscription.initial,
-          requestId: msg.requestId,
+      this.host.emitToSource(
+        {
+          type: "subscribe_checkout_diff_response",
+          payload: {
+            subscriptionId: msg.subscriptionId,
+            ...subscription.initial,
+            requestId: msg.requestId,
+          },
         },
-      });
+        source,
+      );
     } catch (error) {
-      if (this.diffSubscriptions.get(msg.subscriptionId) === unsubscribe) {
+      if (this.diffSubscriptions.get(msg.subscriptionId) === entry) {
         this.diffSubscriptions.delete(msg.subscriptionId);
       }
-      unsubscribe();
+      entry.unsubscribe();
       throw error;
     }
   }
 
   handleUnsubscribeDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
-    const unsubscribe = this.diffSubscriptions.get(msg.subscriptionId);
+    const entry = this.diffSubscriptions.get(msg.subscriptionId);
     this.diffSubscriptions.delete(msg.subscriptionId);
-    unsubscribe?.();
+    entry?.unsubscribe();
+  }
+
+  clearDiffSubscriptionsForSource(source: object): void {
+    for (const [subscriptionId, entry] of this.diffSubscriptions) {
+      if (entry.source !== source) continue;
+      this.diffSubscriptions.delete(subscriptionId);
+      entry.unsubscribe();
+    }
   }
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {
@@ -1413,8 +1441,8 @@ export class CheckoutSession {
   }
 
   cleanup(): void {
-    for (const unsubscribe of this.diffSubscriptions.values()) {
-      unsubscribe();
+    for (const entry of this.diffSubscriptions.values()) {
+      entry.unsubscribe();
     }
     this.diffSubscriptions.clear();
     this.statusUpdateFingerprints.clear();

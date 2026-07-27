@@ -1931,7 +1931,7 @@ export class VoiceAssistantWebSocketServer {
 
     this.sessions.delete(ws);
     connection.sockets.delete(ws);
-    connection.session.clearAgentTimelineSubscription(ws);
+    connection.session.clearSourceSubscriptions(ws);
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {

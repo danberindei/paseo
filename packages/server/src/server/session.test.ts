@@ -5265,9 +5265,9 @@ test("unions viewed timelines across socket sources and removes detached sources
   });
   expect(messages.some((message) => message.type === "agent_stream")).toBe(true);
 
-  session.clearAgentTimelineSubscription(legacySocket);
+  session.clearSourceSubscriptions(legacySocket);
 
-  session.clearAgentTimelineSubscription(firstSocket);
+  session.clearSourceSubscriptions(firstSocket);
   messages.length = 0;
   forward({
     type: "agent_stream",
