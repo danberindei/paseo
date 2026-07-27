@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_COMMITS_SPLIT_RATIO } from "@/git/commits-section/commits-split";
 
 export const changesStateSchema = z
   .strictObject({
@@ -13,6 +14,7 @@ export const changesStateSchema = z
     collapsedFilePaths: z.array(z.string()),
     collapsedFolderPaths: z.array(z.string()),
     commitsCollapsed: z.boolean(),
+    commitsSplitRatio: z.number(),
   })
   .transform(
     ({
@@ -32,4 +34,5 @@ export const defaultChangesState: ChangesState = {
   collapsedFilePaths: [],
   collapsedFolderPaths: [],
   commitsCollapsed: true,
+  commitsSplitRatio: DEFAULT_COMMITS_SPLIT_RATIO,
 };

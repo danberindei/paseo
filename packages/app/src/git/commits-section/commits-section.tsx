@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
@@ -15,6 +15,8 @@ interface CommitsSectionProps {
   onCommitPress: (sha: string) => void;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
+  /** Set by the changes pane to give the section its share of the split. */
+  style?: StyleProp<ViewStyle>;
 }
 
 function CommitsSectionSkeleton() {
@@ -87,6 +89,7 @@ export function CommitsSection({
   onCommitPress,
   collapsed = true,
   onCollapsedChange,
+  style,
 }: CommitsSectionProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -105,8 +108,8 @@ export function CommitsSection({
     [collapsed],
   );
   const containerStyle = useMemo(
-    () => [styles.container, { paddingBottom: insets.bottom }],
-    [insets.bottom],
+    () => [styles.container, style, { paddingBottom: insets.bottom }],
+    [insets.bottom, style],
   );
 
   if (query.status === "unsupported") {
@@ -142,15 +145,32 @@ export function CommitsSection({
           </Text>
         )}
       </Pressable>
-      {collapsed ? null : <CommitsSectionContent query={query} onCommitPress={onCommitPress} />}
+      {collapsed ? null : (
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          testID="commits-section-scroll"
+        >
+          <CommitsSectionContent query={query} onCommitPress={onCommitPress} />
+        </ScrollView>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   container: {
+    minHeight: 0,
+    flexShrink: 0,
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
+  },
+  scroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   header: {
     flexDirection: "row",

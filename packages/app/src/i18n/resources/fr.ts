@@ -1047,6 +1047,7 @@ export const fr: TranslationResources = {
           loading: "Chargement des commits…",
           loadError: "Impossible de charger les commits",
           empty: "Aucun commit pour l’instant",
+          resizeHandle: "Redimensionner la section des commits",
         },
       },
       openInEditor: {

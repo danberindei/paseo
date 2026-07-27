@@ -68,6 +68,17 @@ export function resolveCheckoutCommitsQueryResult({
   return { status: "loading" };
 }
 
+// COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
+// COMPAT(commitBaseClassification): added in v0.2.0, remove after 2027-01-23.
+// Single capability-detection site; downstream reads a clean load-state union.
+export function useCheckoutCommitsCapability(serverId: string): boolean {
+  return useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.serverInfo?.features?.commitsList === true &&
+      state.sessions[serverId]?.serverInfo?.features?.commitBaseClassification === true,
+  );
+}
+
 export function useCheckoutCommitsQuery({
   serverId,
   cwd,
@@ -77,14 +88,7 @@ export function useCheckoutCommitsQuery({
   const queryEnabledByCaller = enabled && retainedPanelActive;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  // COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
-  // COMPAT(commitBaseClassification): added in v0.2.0, remove after 2027-01-23.
-  // Single capability-detection site; downstream reads a clean load-state union.
-  const capabilityPresent = useSessionStore(
-    (state) =>
-      state.sessions[serverId]?.serverInfo?.features?.commitsList === true &&
-      state.sessions[serverId]?.serverInfo?.features?.commitBaseClassification === true,
-  );
+  const capabilityPresent = useCheckoutCommitsCapability(serverId);
 
   const canFetch = Boolean(cwd) && Boolean(client) && isConnected;
   const queryEnabled = queryEnabledByCaller && capabilityPresent && canFetch;

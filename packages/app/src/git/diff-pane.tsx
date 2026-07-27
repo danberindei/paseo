@@ -44,7 +44,8 @@ import {
   type PrHint,
   useCheckoutPrStatusQuery,
 } from "@/git/use-pr-status-query";
-import { CommitsSection } from "@/git/commits-section/commits-section";
+import { ChangesCommitsSplit } from "@/git/commits-section/changes-commits-split";
+import { resolveChangesBodyLayout, type ChangesPresentation } from "@/git/changes-body-layout";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import {
@@ -356,8 +357,6 @@ export function DiffModeMenu({
     </DropdownMenu>
   );
 }
-
-type ChangesPresentation = "combined" | "tree" | "diff";
 
 interface ChangesToolbarRefreshAction {
   isRefreshing: boolean;
@@ -1318,6 +1317,20 @@ function jumpToFileClearance(visibility: JumpToFileVisibility): number {
   return JUMP_TO_FILE_CLEARANCE;
 }
 
+interface DocumentFocusRequest {
+  path: string;
+  revision: number;
+}
+
+function resolveDocumentFocusRequest(
+  local: DocumentFocusRequest | null,
+  external: DocumentFocusRequest | null,
+): DocumentFocusRequest | null {
+  if (!local) return external;
+  if (external && local.revision < external.revision) return external;
+  return local;
+}
+
 function ChangesTreeRail({
   shown,
   children,
@@ -1415,6 +1428,9 @@ function ChangesCommits({
   collapsed,
   onCommitPress,
   onCollapsedChange,
+  ratio,
+  onRatioCommit,
+  children,
 }: {
   presentation: ChangesPresentation;
   serverId: string;
@@ -1422,16 +1438,23 @@ function ChangesCommits({
   collapsed: boolean;
   onCommitPress: (sha: string) => void;
   onCollapsedChange: (collapsed: boolean) => void;
+  ratio: number;
+  onRatioCommit: (ratio: number) => void;
+  children: ReactNode;
 }) {
   if (presentation === "diff") return null;
   return (
-    <CommitsSection
+    <ChangesCommitsSplit
       serverId={serverId}
       cwd={cwd}
       onCommitPress={onCommitPress}
       collapsed={collapsed}
       onCollapsedChange={onCollapsedChange}
-    />
+      ratio={ratio}
+      onRatioCommit={onRatioCommit}
+    >
+      {children}
+    </ChangesCommitsSplit>
   );
 }
 
@@ -1654,6 +1677,10 @@ export function ChangesSurface({
     (commitsCollapsed: boolean) => updateState({ ...instanceState, commitsCollapsed }),
     [instanceState, updateState],
   );
+  const handleCommitsSplitRatioChange = useCallback(
+    (commitsSplitRatio: number) => updateState({ ...instanceState, commitsSplitRatio }),
+    [instanceState, updateState],
+  );
   const handleChangesTreeWidth = useCallback(
     (treeWidth: number) => updateState({ ...instanceState, treeWidth }),
     [instanceState, updateState],
@@ -1721,19 +1748,12 @@ export function ChangesSurface({
     [client, cwd, t, toast],
   );
   const onRevertPath = useDiscardChangesAction({ serverId, cwd, diffMode });
-  const [localFocusRequest, setLocalFocusRequest] = useState<{
-    path: string;
-    revision: number;
-  } | null>(null);
+  const [localFocusRequest, setLocalFocusRequest] = useState<DocumentFocusRequest | null>(null);
   const externalFocusRequest = useMemo(
     () => (focusPath ? { path: focusPath, revision: focusRequestId ?? 0 } : null),
     [focusPath, focusRequestId],
   );
-  const documentFocusRequest =
-    localFocusRequest &&
-    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
-      ? localFocusRequest
-      : externalFocusRequest;
+  const documentFocusRequest = resolveDocumentFocusRequest(localFocusRequest, externalFocusRequest);
   const handleSelectTreeFile = useCallback(
     (path: string) => {
       if (presentation === "tree" && onSelectDiffFile) {
@@ -2005,13 +2025,6 @@ export function ChangesSurface({
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
-      <View style={styles.diffContainer}>
-        {bodyContent}
-        {showJumpToFile ? (
-          <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
-        ) : null}
-      </View>
-
       <ReviewCommentSheet
         enabled={enabled}
         editor={reviewActions.sheetEditor}
@@ -2019,14 +2032,25 @@ export function ChangesSurface({
         onChangeBody={reviewActions.onChangeEditorBody}
       />
 
-      <ChangesCommits
-        presentation={presentation}
-        serverId={serverId}
-        cwd={cwd}
-        onCommitPress={handleCommitPress}
-        collapsed={instanceState.commitsCollapsed}
-        onCollapsedChange={handleCommitsCollapsedChange}
-      />
+      {resolveChangesBodyLayout(presentation) === "direct" ? (
+        <View style={styles.diffContainer}>{bodyContent}</View>
+      ) : (
+        <ChangesCommits
+          presentation={presentation}
+          serverId={serverId}
+          cwd={cwd}
+          onCommitPress={handleCommitPress}
+          collapsed={instanceState.commitsCollapsed}
+          onCollapsedChange={handleCommitsCollapsedChange}
+          ratio={instanceState.commitsSplitRatio}
+          onRatioCommit={handleCommitsSplitRatioChange}
+        >
+          {bodyContent}
+          {showJumpToFile ? (
+            <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
+          ) : null}
+        </ChangesCommits>
+      )}
     </View>
   );
 }
@@ -2067,6 +2091,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.destructive,
   },
+  diffContainer: {
+    flex: 1,
+    minHeight: 0,
+    position: "relative",
+  },
   forgeSetupCallout: {
     marginHorizontal: theme.spacing[3],
     marginBottom: theme.spacing[2],
@@ -2080,11 +2109,6 @@ const styles = StyleSheet.create((theme) => ({
   forgeSetupCalloutText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
-  },
-  diffContainer: {
-    flex: 1,
-    minHeight: 0,
-    position: "relative",
   },
   scrollContainer: {
     flex: 1,
