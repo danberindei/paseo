@@ -109,6 +109,53 @@ function scheduleFailedStartup(child: MockChildProcess): void {
   });
 }
 
+interface FakeDaemonCli {
+  statusCalls: number;
+  stopCalls: number;
+  spawnCalls: number;
+}
+
+// A daemon lifecycle that answers from recorded state rather than a fixed queue of
+// responses, so a duplicated start sequence shows up as extra stops and spawns instead of
+// running out of responses. The daemon already running is one version behind the app, so a
+// start has to stop it and spawn a replacement.
+function installFakeDaemonCli(): FakeDaemonCli {
+  const calls: FakeDaemonCli = { statusCalls: 0, stopCalls: 0, spawnCalls: 0 };
+  let running: { serverId: string; version: string } | null = {
+    serverId: "server-1",
+    version: "1.2.2",
+  };
+
+  mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
+    if (args[1] === "stop") {
+      calls.stopCalls += 1;
+      running = null;
+      return { action: "stopped" };
+    }
+    calls.statusCalls += 1;
+    if (!running) {
+      return { localDaemon: "stopped", connectedDaemon: "unreachable", serverId: "" };
+    }
+    return {
+      localDaemon: "running",
+      connectedDaemon: "reachable",
+      serverId: running.serverId,
+      pid: 7675,
+      listen: "127.0.0.1:6767",
+      hostname: "dev-host",
+      daemonVersion: running.version,
+      desktopManaged: true,
+    };
+  });
+  mocks.spawnProcess.mockImplementation(() => {
+    calls.spawnCalls += 1;
+    running = { serverId: `server-${calls.spawnCalls + 1}`, version: "1.2.3" };
+    return createMockChildProcess();
+  });
+
+  return calls;
+}
+
 describe("daemon-manager commands", () => {
   beforeEach(() => {
     mocks.settings = DEFAULT_DESKTOP_SETTINGS;
@@ -499,6 +546,81 @@ describe("daemon-manager commands", () => {
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ args: [] }),
     );
+  });
+
+  // Regression: each renderer window mounts its own copy of the app and asks main to start
+  // the daemon, so two windows ran the version-mismatch restart at once, stopped the same
+  // daemon twice, and spawned two replacements that raced for the port.
+  it("stops and spawns once when two renderer windows request a start at the same time", async () => {
+    const cli = installFakeDaemonCli();
+    const windowA = createDaemonCommandHandlers();
+    const windowB = createDaemonCommandHandlers();
+
+    const [first, second] = await Promise.all([
+      windowA.start_desktop_daemon(),
+      windowB.start_desktop_daemon(),
+    ]);
+
+    expect(first).toEqual(
+      expect.objectContaining({ status: "running", serverId: "server-2", version: "1.2.3" }),
+    );
+    expect(second).toBe(first);
+    expect(cli.stopCalls).toBe(1);
+    expect(cli.spawnCalls).toBe(1);
+  });
+
+  it("re-checks the daemon for a start requested after the first start finished", async () => {
+    const cli = installFakeDaemonCli();
+
+    const first = await createDaemonCommandHandlers().start_desktop_daemon();
+    const statusCallsAfterFirst = cli.statusCalls;
+    const second = await createDaemonCommandHandlers().start_desktop_daemon();
+
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
+    expect(cli.statusCalls).toBeGreaterThan(statusCallsAfterFirst);
+    expect(cli.spawnCalls).toBe(1);
+  });
+
+  it("retries a failed start for the next window instead of replaying the failure", async () => {
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      localDaemon: "stopped",
+      connectedDaemon: "unreachable",
+      serverId: "",
+    });
+    let spawnCalls = 0;
+    mocks.spawnProcess.mockImplementation(() => {
+      spawnCalls += 1;
+      const child = createMockChildProcess();
+      scheduleFailedStartup(child);
+      return child;
+    });
+
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
+      "Daemon failed to start: exit code 1",
+    );
+
+    expect(spawnCalls).toBe(2);
+  });
+
+  it("does not let a restart join an in-flight start", async () => {
+    const cli = installFakeDaemonCli();
+    const windowA = createDaemonCommandHandlers();
+    const windowB = createDaemonCommandHandlers();
+
+    const start = windowA.start_desktop_daemon();
+    const restart = windowB.restart_desktop_daemon();
+    const [started, restarted] = await Promise.all([start, restart]);
+
+    expect(started).toEqual(expect.objectContaining({ serverId: "server-2" }));
+    expect(restarted).toEqual(expect.objectContaining({ serverId: "server-3" }));
+    // The start stops the mismatched daemon and spawns a replacement; the restart then
+    // stops that replacement and spawns its own.
+    expect(cli.stopCalls).toBe(2);
+    expect(cli.spawnCalls).toBe(2);
   });
 
   it("returns the Electron main-process log tail from electron-log", () => {

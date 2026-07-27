@@ -459,6 +459,40 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   return pollForRunningDaemon();
 }
 
+// Every renderer window mounts its own copy of the app and asks the main process to start
+// the daemon, so a start request is not one per launch but one per window. Without
+// coalescing here each window runs the whole check/stop/spawn sequence: both see the same
+// version mismatch, both stop the same daemon, and both spawn a replacement that races for
+// the port, and the losing window reports a start failure for a daemon that is running. A
+// renderer-side singleton cannot fix this because it cannot see the other window.
+let inFlightDaemonStart: Promise<DesktopDaemonStatus> | null = null;
+
+function startDaemonOnce(): Promise<DesktopDaemonStatus> {
+  const joined = inFlightDaemonStart;
+  if (joined) {
+    logDesktopDaemonLifecycle("joining in-flight daemon start");
+    return joined;
+  }
+
+  const request = startDaemon();
+  inFlightDaemonStart = request;
+  // Cleared on failure too, so a later request retries instead of replaying the failure.
+  return request.finally(() => {
+    if (inFlightDaemonStart === request) {
+      inFlightDaemonStart = null;
+    }
+  });
+}
+
+// A restart stops the daemon first, so the start it needs is a fresh one and must not join
+// an in-flight start: that start's result describes a daemon the restart is about to kill.
+// Waiting for it to settle also keeps the two spawn sequences from interleaving.
+async function settleInFlightDaemonStart(): Promise<void> {
+  const pending = inFlightDaemonStart;
+  if (!pending) return;
+  await pending.catch(() => {});
+}
+
 export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
 ): Promise<DesktopDaemonStatus> {
@@ -481,8 +515,9 @@ export async function stopDesktopDaemon(
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
   assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
+  await settleInFlightDaemonStart();
   await stopDesktopDaemon("restart");
-  return startDaemon();
+  return startDaemonOnce();
 }
 
 function getDaemonLogs(): DesktopDaemonLogs {
@@ -526,7 +561,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
     }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
-    start_desktop_daemon: () => startDaemon(),
+    start_desktop_daemon: () => startDaemonOnce(),
     stop_desktop_daemon: (args) => stopDesktopDaemon(parseDesktopDaemonStopReason(args)),
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
