@@ -2,10 +2,13 @@ import { discoverOmp, piAuthPath, readHarness, readJson, type StoreLookup } from
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   balanceToneFromRemaining,
   hashAccountKey,
   unavailable,
   type UsageAccount,
+  type UsageProviderScope,
   type UsageScope,
   toneFromUsedPct,
   windowFromReportedDuration,
@@ -58,6 +61,13 @@ interface Auth {
   expires?: number;
 }
 
+interface Candidate {
+  input: CodexUsageInput;
+  /** Set for a configured provider's own store, so the daemon reports it as that provider's entry. */
+  providerId?: string;
+  label?: string;
+}
+
 export async function discover(
   scope: UsageScope,
   lookup: StoreLookup = {},
@@ -68,36 +78,70 @@ export async function discover(
       env: scope.env,
       home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
     };
-  const candidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
+  const candidates: Candidate[] =
+    scope.kind === "global"
+      ? globalRoutes(lookup, scope.providers ?? [])
+      : sessionRoutes(scope, lookup).map((input) => {
+          const candidate: Candidate = { input };
+          if (scope.configuredProvider?.custom) {
+            candidate.providerId = scope.configuredProvider.id;
+            candidate.label = scope.configuredProvider.label;
+          }
+          return candidate;
+        });
   const present: UsageAccount[] = [];
-  for (const input of candidates) {
-    const auth = await readAuth(input, lookup);
-    if (auth)
-      present.push({ ...accountIdentity(auth, input), harness: harnessLabel(input), input });
+  for (const candidate of candidates) {
+    const auth = await readAuth(candidate.input, lookup);
+    if (!auth) continue;
+    present.push({
+      ...accountIdentity(auth, candidate.input),
+      harness: harnessLabel(candidate.input),
+      input: candidate.input,
+      ...(candidate.providerId ? { providerId: candidate.providerId } : {}),
+      ...(candidate.label ? { label: candidate.label } : {}),
+    });
   }
   return present;
 }
 
-function globalRoutes(lookup: StoreLookup): CodexUsageInput[] {
+function globalRoutes(lookup: StoreLookup, providers: readonly UsageProviderScope[]): Candidate[] {
   const env = lookup.env ?? process.env;
+  const candidates: Candidate[] = [];
+  const seen = new Set<string>();
+  const add = (candidate: Candidate): void => {
+    const key = JSON.stringify([candidate.providerId ?? null, candidate.input.route]);
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(candidate);
+  };
+  for (const provider of providers) {
+    if (provider.baseProviderId !== "codex") continue;
+    const providerEnv = { ...env, ...provider.env };
+    if (providerEnv.OPENAI_BASE_URL) continue;
+    const providerHome = providerEnv.HOME || providerEnv.USERPROFILE || lookup.home || homedir();
+    const codexHome = providerEnv.CODEX_HOME || join(providerHome, ".codex");
+    // The built-in provider keeps the plain store entry; a custom provider reports its own.
+    add({
+      input: { route: { store: "codex", path: join(codexHome, "auth.json") } },
+      ...(provider.custom ? { providerId: provider.id, label: provider.label } : {}),
+    });
+  }
   const home = lookup.home ?? homedir();
   const paths = [
     ...(env.CODEX_HOME ? [join(env.CODEX_HOME, "auth.json")] : []),
     join(home, ".codex", "auth.json"),
   ];
-  const candidates: CodexUsageInput[] = [...new Set(paths)].map((path) => ({
-    route: { store: "codex", path },
-  }));
-  candidates.push(
-    {
+  for (const path of paths) add({ input: { route: { store: "codex", path } } });
+  add({
+    input: {
       route: {
         store: "opencode",
         path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
       },
     },
-    { route: { store: "pi", path: piAuthPath(lookup) } },
-    ...discoverOmp(lookup).map((route) => ({ route })),
-  );
+  });
+  add({ input: { route: { store: "pi", path: piAuthPath(lookup) } } });
+  for (const route of discoverOmp(lookup)) add({ input: { route } });
   return candidates;
 }
 
@@ -208,9 +252,9 @@ export async function fetchUsage(
     headers,
     signal: AbortSignal.timeout(15_000),
   });
-  if (response.status === 401 || response.status === 403)
+  if (isExpectedAuthFailureStatus(response.status))
     return unavailable({ kind: "rejected", status: response.status, refreshedBy });
-  if (!response.ok) throw new Error(`Codex usage API returned ${response.status}`);
+  if (!response.ok) throw providerApiHttpError({ displayName: "Codex" }, response);
   const text = await response.text();
   if (text.trim().startsWith("<")) throw new Error("Codex usage API returned HTML");
   const usage = responseSchema.parse(JSON.parse(text));

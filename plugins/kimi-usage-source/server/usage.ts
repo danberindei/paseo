@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   toneFromUsedPct,
   unavailable,
   type UsageAccount,
@@ -276,9 +278,9 @@ export async function fetchUsage(
 
   const res = await callUsageApi(credentials.access_token);
 
-  if (res.status === 401 || res.status === 403)
+  if (isExpectedAuthFailureStatus(res.status))
     return unavailable({ kind: "rejected", status: res.status });
-  if (!res.ok) throw new Error(`Kimi usage API returned ${res.status}`);
+  if (!res.ok) throw providerApiHttpError({ displayName: "Kimi" }, res);
 
   const windows = kimiUsageWindowsFromPayload(await res.json());
 

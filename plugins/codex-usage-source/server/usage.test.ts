@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { fetchUsage, discover } from "./usage.js";
+import { UsageScopeSchema } from "@getpaseo/plugin/server/usage";
 
 import { inputSchema, type CodexUsageInput } from "../shared/input.js";
 
@@ -263,6 +264,100 @@ test.each(["empty home", "unrelated files"])(
   },
 );
 
+test("global discovery reads a custom provider's own store as its own entry", async () => {
+  const home = await mkdtemp(join(tmpdir(), "codex-provider-scope-"));
+  const engHome = join(home, ".codex-eng");
+  try {
+    await mkdir(engHome, { recursive: true });
+    await writeFile(
+      join(engHome, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "eng-token", account_id: "shared-account" } }),
+    );
+    const accounts = await discover(
+      {
+        kind: "global",
+        providers: [
+          { id: "codex", baseProviderId: "codex", label: "Codex", custom: false },
+          {
+            id: "codex-eng",
+            baseProviderId: "codex",
+            label: "Codex Eng",
+            custom: true,
+            env: { CODEX_HOME: engHome },
+          },
+        ],
+      },
+      { home, env: {}, platform: "linux" },
+    );
+    expect(accounts).toEqual([
+      {
+        key: "shared-account",
+        harness: "Codex",
+        providerId: "codex-eng",
+        label: "Codex Eng",
+        input: { route: { store: "codex", path: join(engHome, "auth.json") } },
+      },
+    ]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test.each([undefined, { OTHER_SETTING: "value" }])(
+  "global discovery inherits CODEX_HOME before applying provider env %j",
+  async (env) => {
+    await writeAuth("fixture-inherited", "inherited-account");
+    const accounts = await discover(
+      {
+        kind: "global",
+        providers: [
+          { id: "codex-eng", baseProviderId: "codex", label: "Codex Eng", custom: true, env },
+        ],
+      },
+      { home: fixtureHome, env: { CODEX_HOME: fixtureHome }, platform: "linux" },
+    );
+    expect(accounts.filter((account) => account.providerId === "codex-eng")).toEqual([
+      {
+        key: "inherited-account",
+        harness: "Codex",
+        providerId: "codex-eng",
+        label: "Codex Eng",
+        input: authInput(fixtureHome),
+      },
+    ]);
+  },
+);
+
+test.each(["inherited", "provider"])(
+  "global discovery excludes custom API endpoints from %s env",
+  async (scenario) => {
+    await writeAuth("fixture-oauth", "oauth-account");
+    const apiEnv = { OPENAI_BASE_URL: "https://other.test", OPENAI_API_KEY: "fixture-api-key" };
+    const accounts = await discover(
+      {
+        kind: "global",
+        providers: [
+          {
+            id: "custom-api",
+            baseProviderId: "codex",
+            label: "Custom API",
+            custom: true,
+            env: scenario === "provider" ? apiEnv : {},
+          },
+        ],
+      },
+      {
+        home: fixtureHome,
+        env: { CODEX_HOME: fixtureHome, ...(scenario === "inherited" ? apiEnv : {}) },
+        platform: "linux",
+      },
+    );
+    expect(accounts).toEqual([
+      { key: "oauth-account", harness: "Codex", input: authInput(fixtureHome) },
+    ]);
+  },
+);
+
 test.each([401, 403])("reports a Codex login rejected with HTTP %i", async (status) => {
   expect(
     await fetchUsage(authInput(fixtureHome), async () => new Response(null, { status })),
@@ -412,6 +507,57 @@ test("session discovery isolates CODEX_HOME and excludes foreign routes", async 
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("custom provider session and global discovery share one report and fetch", async () => {
+  const providerHome = join(fixtureHome, ".codex-eng");
+  await mkdir(providerHome);
+  await writeFile(
+    join(providerHome, "auth.json"),
+    JSON.stringify({ tokens: { access_token: "fixture-eng", account_id: "eng-account" } }),
+  );
+  const provider = {
+    id: "codex-eng",
+    baseProviderId: "codex",
+    label: "Codex Eng",
+    custom: true,
+    env: { CODEX_HOME: providerHome },
+  };
+  let fetches = 0;
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    undefined,
+    {
+      hasAgent: (id) => id === "agent",
+      usageSession: () => ({
+        provider: "codex-eng",
+        env: { HOME: fixtureHome, CODEX_HOME: providerHome },
+        sessionKey: "launch",
+      }),
+    },
+    20_000,
+    () => [provider],
+  );
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: (scope) =>
+      discover(UsageScopeSchema.parse(scope), { home: fixtureHome, env: {}, platform: "linux" }),
+    fetch: async (input) => {
+      fetches++;
+      expect(input).toEqual(authInput(providerHome));
+      return fetchUsage(inputSchema.parse(input), (_url, init) =>
+        response(init?.headers ?? {}, "eng-account"),
+      );
+    },
+  });
+  const sessionReports = await registry.listReports({ agentId: "agent" });
+  expect(sessionReports.map((report) => report.id)).toEqual(["codex:codex-eng:eng-account"]);
+  expect(sessionReports[0]?.account.label).toBe("Codex Eng");
+  expect(await registry.listReports()).toEqual(sessionReports);
+  expect(await registry.listReports({ agentId: "agent" })).toEqual(sessionReports);
+  expect(fetches).toBe(1);
 });
 
 test("#6155: real Codex and OpenCode stores share an account but keep agent failures separate", async () => {

@@ -151,6 +151,7 @@ describe("grok usage source", () => {
           remaining: 112114,
           limit: 150000,
           unit: "credits",
+          resetsAt: "2026-08-01T00:00:00+00:00",
         }),
       ],
     });

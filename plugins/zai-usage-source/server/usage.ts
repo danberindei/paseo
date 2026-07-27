@@ -1,6 +1,8 @@
 import type { UsageInput } from "../shared/input.js";
 import { z } from "zod";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   unavailable,
   type UsageAccount,
   type UsageReport,
@@ -40,9 +42,9 @@ export async function fetchUsage(
     },
   });
 
-  if (res.status === 401 || res.status === 403)
+  if (isExpectedAuthFailureStatus(res.status))
     return unavailable({ kind: "rejected", status: res.status });
-  if (!res.ok) throw new Error(`Z.ai usage API returned ${res.status}`);
+  if (!res.ok) throw providerApiHttpError({ displayName: "Z.ai" }, res);
 
   const resp = ZaiUsageResponseSchema.parse(await res.json());
   const sub = resp.data?.[0];

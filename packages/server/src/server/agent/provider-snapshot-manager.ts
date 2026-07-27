@@ -50,6 +50,7 @@ import {
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { UsageProviderScope } from "@getpaseo/plugin/server/usage";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import { convertLegacyClaudeUltracode, resolveAdapter } from "./option-controls.js";
 import { ProviderInstallations } from "./provider-installation/provider-installations.js";
@@ -366,6 +367,38 @@ export class ProviderSnapshotManager {
 
   getProviderLabel(provider: AgentProvider): string {
     return this.generation.definitions[provider]?.label ?? provider;
+  }
+
+  /**
+   * Enabled providers for usage discovery. A custom provider reads its own credential store, so it
+   * reports usage as its own entry rather than merging into the built-in provider it extends.
+   */
+  listUsageProviders(): UsageProviderScope[] {
+    const providers: UsageProviderScope[] = [];
+    for (const [provider, definition] of Object.entries(this.generation.definitions)) {
+      if (!definition.enabled) continue;
+      const env = definition.configuration?.runtimeSettings?.env;
+      providers.push({
+        id: provider,
+        baseProviderId: this.resolveBaseProviderId(provider),
+        label: definition.label ?? provider,
+        custom: !BUILTIN_PROVIDER_IDS.includes(provider),
+        ...(env && Object.keys(env).length > 0 ? { env } : {}),
+      });
+    }
+    return providers;
+  }
+
+  private resolveBaseProviderId(provider: AgentProvider): AgentProvider {
+    let current = provider;
+    const seen = new Set<string>();
+    while (!seen.has(current)) {
+      seen.add(current);
+      const parent = this.generation.definitions[current]?.derivedFromProviderId;
+      if (!parent) return current;
+      current = parent;
+    }
+    return current;
   }
 
   getAgentManagerProviderState(): AgentManagerProviderState {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
+import { createPaseoApi, type UsageReportEntry } from "./index";
 import {
   DaemonClient,
   DaemonConnectionError,
@@ -8059,11 +8060,17 @@ test.each([
     const connected = client.connect();
     mock.triggerOpen({ features: { providerUsageList: true } });
     await connected;
-    const result = client.listUsageReports({
-      requestId: "legacy-usage",
-      reportIds: ["claude"],
-      forceRefresh: true,
-    });
+    const updates: UsageReportEntry[] = [];
+    const streamed: UsageReportEntry[] = [];
+    const unsubscribe = client.subscribeUsageReports((entry) => updates.push(entry));
+    const result = client.listUsageReports(
+      {
+        requestId: "legacy-usage",
+        reportIds: ["claude"],
+        forceRefresh: true,
+      },
+      (entry) => streamed.push(entry),
+    );
     expect(parseSentFrame(mock.sent[0])).toEqual({
       type: "provider.usage.list.request",
       requestId: "legacy-usage",
@@ -8087,7 +8094,8 @@ test.each([
         },
       }),
     );
-    expect(await result).toStrictEqual({
+    const response = await result;
+    expect(response).toStrictEqual({
       requestId: "legacy-usage",
       reports: [
         {
@@ -8104,6 +8112,9 @@ test.each([
         },
       ],
     });
+    expect(updates).toEqual(response.reports);
+    expect(streamed).toEqual(response.reports);
+    unsubscribe();
   },
 );
 
@@ -8717,6 +8728,67 @@ test("uses modern usage RPC when both capabilities are advertised", async () => 
   );
   expect(await result).toStrictEqual(payload);
   expect(updates).toEqual([report]);
+});
+
+test("shares host usage refreshes across borrowed APIs and releases listeners", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "usage-refresh",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { usageSources: true } });
+  await connected;
+  const api = createPaseoApi(client);
+  const otherApi = createPaseoApi(client);
+  const updates: UsageReportEntry[] = [];
+  const otherUpdates: UsageReportEntry[] = [];
+  const unsubscribe = api.usage.subscribeReports((report) => updates.push(report));
+  otherApi.usage.subscribeReports((report) => otherUpdates.push(report));
+  const report: UsageReportEntry = {
+    id: "claude:work",
+    sourceId: "claude",
+    sourceLabel: "Claude",
+    account: { label: "Work" },
+    fetchedAt: "2026-10-08T12:00:00.000Z",
+    report: { status: "available", windows: [] },
+  };
+  async function refresh(options: Parameters<DaemonClient["listUsageReports"]>[0]) {
+    const pending = client.listUsageReports(options);
+    const request = parseSentFrame(mock.sent.at(-1));
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "usage.list_reports.update",
+        payload: { requestId: request.requestId, report },
+      }),
+    );
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "usage.list_reports.response",
+        payload: { requestId: request.requestId, error: null },
+      }),
+    );
+    await pending;
+  }
+  await refresh({ reportIds: [report.id], forceRefresh: true });
+  expect(updates).toEqual([report]);
+  expect(otherUpdates).toEqual([report]);
+  await refresh({ agentId: "agent-work", forceRefresh: true });
+  expect(updates).toEqual([report]);
+  expect(otherUpdates).toEqual([report]);
+  unsubscribe();
+  await refresh({});
+  expect(updates).toEqual([report]);
+  expect(otherUpdates).toEqual([report, report]);
+  await otherApi.dispose();
+  await refresh({});
+  expect(otherUpdates).toEqual([report, report]);
+  expect(() => otherApi.usage.subscribeReports(() => {})).toThrow("Paseo API is disposed");
+  await api.dispose();
 });
 
 test("rejects usage requests when the host has neither capability", async () => {

@@ -8,6 +8,7 @@ export type { PaseoHostActions } from "./hosts/index.js";
 export type { HostAdd, HostUpdate, HostSummary, HostDirectory } from "@getpaseo/protocol/hosts";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
+export type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse, JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
@@ -596,7 +597,16 @@ export interface PaseoApi {
   readonly projects: PaseoProjectActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
+  readonly usage: PaseoUsageActions;
   readonly config: PaseoConfigActions;
+}
+
+export interface PaseoUsageActions {
+  subscribeReports: DaemonClient["subscribeUsageReports"];
+  listReports(
+    options?: Parameters<DaemonClient["listUsageReports"]>[0],
+    onReport?: Parameters<DaemonClient["listUsageReports"]>[1],
+  ): ReturnType<DaemonClient["listUsageReports"]>;
 }
 
 export interface PaseoClient extends PaseoApi {
@@ -869,6 +879,18 @@ export function createPaseoApi(
       ref: (agent) => createAgentHandle(agent),
       create: (options) => createAgent(options),
       subscribe: listenAgents,
+    },
+    usage: {
+      listReports: (options, onReport) => daemonClient.listUsageReports(options, onReport),
+      subscribeReports: (listener) => {
+        const handle = own(() => {
+          const unsubscribe = daemonClient.subscribeUsageReports(listener);
+          return { release: async () => unsubscribe() };
+        });
+        return () => {
+          void handle.release();
+        };
+      },
     },
     providers: {
       listModels: (provider, options) => daemonClient.listProviderModels(provider, options),

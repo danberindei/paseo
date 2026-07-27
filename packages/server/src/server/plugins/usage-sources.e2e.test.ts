@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { expect, test } from "vitest";
+import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "./builtin/index.js";
@@ -23,12 +24,13 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
     builtinPlugins: new BuiltinPluginLoader(fixtureRoot, ["usage-source"]),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
+  const paseo = createPaseoApi(client);
   try {
     await client.connect();
     const updates: string[] = [];
-    const first = await client.listUsageReports({}, (report) => updates.push(report.id));
+    const first = await paseo.usage.listReports({}, (report) => updates.push(report.id));
     expect(updates).toEqual(first.reports.map((report) => report.id));
-    await expect(client.listUsageReports({ agentId: "missing-agent" })).rejects.toThrow(
+    await expect(paseo.usage.listReports({ agentId: "missing-agent" })).rejects.toThrow(
       "Unknown agent",
     );
     expect(first.reports).toHaveLength(4);
@@ -39,16 +41,16 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
     ).toBe(1);
     expect(first.reports.filter((entry) => entry.report.status === "error")).toHaveLength(2);
     expect(
-      (await client.listUsageReports()).reports.find((entry) => entry.id === "fixture:one")?.report
+      (await paseo.usage.listReports()).reports.find((entry) => entry.id === "fixture:one")?.report
         .windows[0]?.usedPct,
     ).toBe(1);
     expect(
       (
-        await client.listUsageReports({ reportIds: ["fixture:one"], forceRefresh: true })
+        await paseo.usage.listReports({ reportIds: ["fixture:one"], forceRefresh: true })
       ).reports.find((entry) => entry.id === "fixture:one")?.report.windows[0]?.usedPct,
     ).toBe(2);
     expect(
-      (await client.listUsageReports({ reportIds: ["fixture:throws"] })).reports[0]?.report.status,
+      (await paseo.usage.listReports({ reportIds: ["fixture:throws"] })).reports[0]?.report.status,
     ).toBe("error");
     const expired = first.reports.find((entry) => entry.id === "fixture:expired");
     expect(expired?.report).toEqual({
@@ -64,7 +66,7 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
     );
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(subprocessDirectory, "fixture-directory");
-    const both = await client.listUsageReports({ forceRefresh: true });
+    const both = await paseo.usage.listReports({ forceRefresh: true });
     expect(both.reports).toHaveLength(8);
     for (const id of ["fixture:one", "fixture-directory:one"]) {
       expect(both.reports.find((entry) => entry.id === id)?.report.windows[0]).toMatchObject({
@@ -74,7 +76,7 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
       });
     }
     await client.patchDaemonConfig({ pluginsEnabled: false });
-    await expect.poll(async () => (await client.listUsageReports()).reports.length).toBe(4);
+    await expect.poll(async () => (await paseo.usage.listReports()).reports.length).toBe(4);
   } finally {
     await client.close();
     await daemon.close();
@@ -255,6 +257,27 @@ export default function contribute(server) {
       first.find((entry) => entry.id === "claude:claude-two.org-two")?.report.windows[0]?.usedPct,
     ).toBe(77);
     expect(JSON.stringify(first)).not.toContain("fixture-");
+    await client.patchDaemonConfig({
+      providers: {
+        "my-codex": { extends: "codex", label: "My Codex", env: { CODEX_HOME: codexHome } },
+      },
+    });
+    const agent = await client.createAgent({ provider: "my-codex", cwd: root });
+    const sessionReports = (await client.listUsageReports({ agentId: agent.id })).reports;
+    expect(sessionReports).toContainEqual(
+      expect.objectContaining({
+        id: "codex:my-codex:chatgpt-one",
+        providerId: "my-codex",
+        account: { label: "My Codex" },
+      }),
+    );
+    expect((await client.listUsageReports({ forceRefresh: true })).reports).toContainEqual(
+      expect.objectContaining({
+        id: "codex:my-codex:chatgpt-one",
+        providerId: "my-codex",
+        account: { label: "My Codex" },
+      }),
+    );
     await json(path.join(home, ".claude", ".credentials.json"), {
       claudeAiOauth: { accessToken: "fixture-revoked" },
     });

@@ -536,14 +536,24 @@ interface UsageAccount {
   key: string;
   label?: string;
   harness?: string;
+  providerId?: string;
   input: JsonValue;
 }
 
+interface UsageProviderScope {
+  id: string;
+  baseProviderId: string;
+  label: string;
+  custom: boolean;
+  env?: Record<string, string>;
+}
+
 type UsageScope =
-  | { kind: "global"; launch?: ProviderLaunch }
+  | { kind: "global"; launch?: ProviderLaunch; providers?: UsageProviderScope[] }
   | {
       kind: "session";
       provider: string;
+      configuredProvider?: UsageProviderScope;
       model?: string;
       env: Record<string, string>;
       launch?: ProviderLaunch;
@@ -580,6 +590,16 @@ Session discovery returns only the login that agent runs on. The agent popover u
 inputs; it never tries logins from global discovery or other agents. For any other provider,
 return `[]`. Global discovery lists every account, including expired logins.
 
+A global scope lists the host's enabled providers with their env. Read the store each provider's
+agents run on and return one entry per login per provider. Set `providerId` and `label` on an entry
+whose store belongs to a custom provider, so the same account logged in through two providers shows
+as two entries rather than one. `baseProviderId` is the built-in provider a derived provider
+extends, and `custom` says whether the provider is user-defined. Apply each provider's env overrides
+to the inherited environment before resolving its store. An entry without `providerId`
+belongs to the source's own store and keeps the source label.
+
+Session `provider` names the base provider. For a custom provider, `configuredProvider` identifies
+the configured provider; use its `id` and `label` on the returned entry, matching global discovery.
 Resolve the session account from that session's launch environment. Return `[]` when no login exists.
 Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
 lifecycle hooks. Closed agents have no session scope until resumed.
@@ -700,9 +720,12 @@ metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP 
 
 `usage.list_reports` discovers accounts for the requested agent. A host-wide request discovers
 the defaults and revisits the agents whose usage Paseo has already queried. A request with report
-IDs fetches known reports using their existing discovery inputs. Reports are cached for five minutes.
-Set `forceRefresh` to bypass that cache. Entries carry `id`, `account.label`, and `fetchedAt`.
-Failed accounts also carry optional
+IDs fetches known reports using their existing discovery inputs. If a store switches accounts, the
+existing card shows the new login's quota until the next discovery. Reports are cached for five
+minutes. Set `forceRefresh` to bypass that cache. Entries carry `id`, `account.label`, and
+`fetchedAt`. An entry discovered with a configured `providerId` retains it in the report; entries
+without it are shared source accounts. Match configured provider colors by `providerId`, rather
+than combining all entries with the same `sourceId`. Failed accounts also carry optional
 `loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.

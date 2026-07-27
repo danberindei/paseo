@@ -101,12 +101,15 @@ describe("claude usage source", () => {
       keychain?: () => Promise<unknown | null>;
       cursorHomeDir?: string;
       kimiHomeDir?: string;
+      now?: () => number;
     } = {},
   ) {
     return {
       listUsage: async () => {
-        const report = await fetchUsage(credentialInput(claudeHome), (url, init) =>
-          fetchApi(url, init),
+        const report = await fetchUsage(
+          credentialInput(claudeHome),
+          (url, init) => fetchApi(url, init),
+          { now: _options.now ?? (() => Date.parse("2026-06-19T00:00:00.000Z")) },
         );
         return {
           providers: [
@@ -199,6 +202,192 @@ describe("claude usage source", () => {
       ).toEqual([]);
     },
   );
+
+  it("surfaces the Claude usage-credits balance from the spend object", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: null,
+              seven_day: null,
+              limits: [],
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 50000,
+                used_credits: 3460,
+                decimal_places: 2,
+                currency: "USD",
+              },
+              spend: {
+                used: { amount_minor: 3460, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 50000, currency: "USD", exponent: 2 },
+                enabled: true,
+                resets_at: null,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude.balances).toEqual([
+      expect.objectContaining({
+        id: "usage_credits",
+        label: "Extra usage",
+        used: 34.6,
+        remaining: 465.4,
+        limit: 500,
+        unit: "usd",
+        resetsAt: "2026-07-01T00:00:00.000Z",
+        tone: "ok",
+      }),
+    ]);
+  });
+
+  it("prefers an API-supplied resets_at over the end-of-month fallback for Claude credits", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              spend: {
+                used: { amount_minor: 3460, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 50000, currency: "USD", exponent: 2 },
+                enabled: true,
+                resets_at: "2026-07-15T00:00:00Z",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude.balances).toEqual([
+      expect.objectContaining({ id: "usage_credits", resetsAt: "2026-07-15T00:00:00Z" }),
+    ]);
+  });
+
+  it("falls back to the legacy extra_usage object when spend is absent", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 50000,
+                used_credits: 3460,
+                decimal_places: 2,
+                currency: "USD",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude.balances).toEqual([
+      expect.objectContaining({ id: "usage_credits", used: 34.6, limit: 500, unit: "usd" }),
+    ]);
+  });
+
+  it("omits the Claude usage-credits balance when the credits pool is disabled", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () => jsonResponse({ spend: { used: null, limit: null, enabled: false } }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude.balances).toEqual([]);
+  });
+
+  it("keeps Claude windows and falls back to extra_usage when spend is malformed", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: { utilization: 40, resets_at: "2026-09-24T15:00:00Z" },
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 50000,
+                used_credits: 3460,
+                decimal_places: 2,
+                currency: "USD",
+              },
+              spend: {
+                used: { amount_minor: 3460, currency: null },
+                enabled: true,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude.status).toBe("available");
+    expect(claude.windows).toEqual([expect.objectContaining({ id: "five_hour", usedPct: 40 })]);
+    expect(claude.balances).toEqual([
+      expect.objectContaining({ id: "usage_credits", used: 34.6, limit: 500 }),
+    ]);
+  });
+
+  it("surfaces only the used amount when the Claude credits pool has no limit", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              spend: {
+                used: { amount_minor: 3460, currency: "USD", exponent: 2 },
+                limit: null,
+                enabled: true,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude.balances).toEqual([
+      expect.objectContaining({
+        id: "usage_credits",
+        used: 34.6,
+        remaining: null,
+        limit: null,
+        unit: "usd",
+        tone: "default",
+      }),
+    ]);
+  });
 
   it("returns unavailable on 401 without refreshing or rewriting credentials", async () => {
     writeClaudeCredentials(claudeHome, "at_expired", "rt_valid");

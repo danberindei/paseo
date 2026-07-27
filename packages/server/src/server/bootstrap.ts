@@ -688,6 +688,7 @@ export async function createPaseoDaemon(
       usageSession: (id) => agentManager.usageSession(id),
       resolveLaunch: (provider) => providerSnapshotManager.resolveUsageLaunch(provider),
     },
+    usageProviders: () => providerSnapshotManager.listUsageProviders(),
     managedSources: new ManagedPluginSources(config.paseoHome, {
       registries: config.pluginRegistries,
       defaultUrl: config.pluginRegistryUrl,

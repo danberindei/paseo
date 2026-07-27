@@ -7084,6 +7084,8 @@ export const UsageReportSchema = z.discriminatedUnion("status", [
 ]);
 export const UsageReportEntrySchema = z.object({
   id: z.string(),
+  /** Configured provider owning this entry; absent for a shared source account. */
+  providerId: z.string().optional(),
   account: z.object({ label: z.string().optional() }),
   fetchedAt: z.string(),
   sourceId: z.string(),

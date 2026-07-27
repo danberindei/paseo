@@ -461,7 +461,10 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get openOptionsPatch() {
       return inner.openOptionsPatch;
     },
-    usageSession: inner.usageSession?.bind(inner),
+    usageSession() {
+      const session = inner.usageSession?.();
+      return session ? { ...session, provider } : null;
+    },
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
     steerActiveTurn: inner.steerActiveTurn?.bind(inner),

@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   toneFromUsedPct,
   usedPctOf,
   unavailable,
@@ -176,9 +178,9 @@ export async function fetchUsage(
     },
   );
 
-  if (res.status === 401 || res.status === 403)
+  if (isExpectedAuthFailureStatus(res.status))
     return unavailable({ kind: "rejected", status: res.status });
-  if (!res.ok) throw new Error(`Cursor usage API returned ${res.status}`);
+  if (!res.ok) throw providerApiHttpError({ displayName: "Cursor" }, res);
 
   const resp = CursorUsageResponseSchema.parse(await res.json());
   const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);

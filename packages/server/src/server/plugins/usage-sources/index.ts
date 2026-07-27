@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentUsageSession } from "../../agent/agent-sdk-types.js";
-import type { UsageScope } from "@getpaseo/plugin/server/usage";
+import type { UsageProviderScope, UsageScope } from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
 import type { Logger } from "pino";
 import {
@@ -26,6 +26,7 @@ interface Login {
 
 interface KnownReport {
   source: UsageSource;
+  providerId?: string;
   logins: [Login, ...Login[]];
   label?: string;
 }
@@ -61,6 +62,7 @@ export class UsageSourceRegistry {
     private readonly logger: Pick<Logger, "warn"> = { warn: console.warn },
     private readonly agents: AgentUsageLookup = { hasAgent: () => false, usageSession: () => null },
     private readonly deadlineMs = 20_000,
+    private readonly usageProviders: () => UsageProviderScope[] = () => [],
   ) {}
 
   register(source: UsageSource): void {
@@ -97,7 +99,7 @@ export class UsageSourceRegistry {
       ids = options.reportIds;
     } else {
       const [defaults] = await Promise.all([
-        this.discover({ kind: "global" }, this.defaults),
+        this.discover({ kind: "global", providers: this.usageProviders() }, this.defaults),
         ...[...this.byAgent.keys()].map((agentId) => this.discoverAgent(agentId)),
       ]);
       this.defaults = defaults;
@@ -132,9 +134,13 @@ export class UsageSourceRegistry {
       return new Map();
     }
     const previous = this.byAgent.get(agentId);
+    const configuredProvider = this.usageProviders().find(
+      (provider) => provider.id === session.provider,
+    );
     const reports = await this.discover({
       kind: "session",
-      provider: session.provider,
+      provider: configuredProvider?.baseProviderId ?? session.provider,
+      ...(configuredProvider?.custom ? { configuredProvider } : {}),
       model: session.model,
       env: session.env,
       launch: session.launch,
@@ -195,6 +201,10 @@ export class UsageSourceRegistry {
             .array(
               z.object({
                 key: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+                providerId: z
+                  .string()
+                  .regex(/^[A-Za-z0-9._-]{1,128}$/)
+                  .optional(),
                 label: z.string().optional(),
                 harness: z.string().min(1).optional(),
                 input: z.json(),
@@ -202,14 +212,23 @@ export class UsageSourceRegistry {
             )
             .parse(await source.discover(scope));
           for (const account of accounts) {
-            const id = `${source.id}:${account.key}`;
+            const id = [source.id, account.providerId, account.key]
+              .filter((part) => part !== undefined)
+              .join(":");
             const known = reports.get(id);
             // COMPAT(usageLoginHarness): added in v0.11.0, remove after 2027-04-05 once plugin floor >= v0.11.0.
             const login = { input: account.input, harness: account.harness ?? source.label };
             if (known) {
               if (!known.logins.some((existing) => loginKey(existing) === loginKey(login)))
                 known.logins.push(login);
-            } else reports.set(id, { source, logins: [login], label: account.label });
+            } else {
+              reports.set(id, {
+                source,
+                providerId: account.providerId,
+                logins: [login],
+                label: account.label,
+              });
+            }
           }
         } catch (error) {
           this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
@@ -270,6 +289,7 @@ export class UsageSourceRegistry {
         id,
         sourceId: known.source.id,
         sourceLabel: known.source.label,
+        ...(known.providerId === undefined ? {} : { providerId: known.providerId }),
         icon: known.source.icon,
         account: { label: known.label },
         fetchedAt,

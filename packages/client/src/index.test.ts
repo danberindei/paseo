@@ -272,6 +272,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "projects",
     "providers",
     "terminals",
+    "usage",
     "workspaces",
   ]);
   expect("connect" in paseo).toBe(false);

@@ -204,6 +204,24 @@ Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options
 | `listUsage(options?)`            | `PaseoProviderUsageResult`    | Returns normalized subscription windows, balances, and provider details. Rejects with an update-host error when unsupported. Options: `requestId`.       |
 | `subscribe(handler)`             | Unsubscribe function          | Requests future catalog updates; unsubscribe releases demand.                                                                                            |
 
+## `client.usage`
+
+`usage.listReports(options?, onReport?)` returns `{ requestId, reports }` with account-aware
+`UsageReportEntry` values, including source IDs, labels, SVG icons, account metadata, fetch times,
+and reports. Import the entry type from `@getpaseo/client`.
+
+Options are `requestId`, `agentId`, `reportIds`, and `forceRefresh`. Use `agentId` for the logins
+an agent runs under, or `reportIds` for selected host reports; combining them rejects the request.
+Omit both to list host reports. The daemon caches fetches; `forceRefresh: true` fetches again.
+`onReport` receives individual entries as sources finish, before the returned list completes.
+Unsupported hosts reject with update-host guidance.
+
+`usage.subscribeReports(handler)` receives host report entries fetched by any request on the
+same client connection, including Refresh in Paseo's usage screen. Agent-scoped requests do not
+publish here because their logins can differ from the host's. This subscription starts no fetch;
+call `listReports` for the initial list. The returned function unsubscribes, and disposing the
+API removes its listeners.
+
 ## `client.config`
 
 `config.get(requestId?)` returns the daemon's mutable configuration.

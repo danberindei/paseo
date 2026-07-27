@@ -1023,7 +1023,7 @@ process.stdin.on("data", (chunk) => {
 
   try {
     expect(session.usageSession?.()).toMatchObject({
-      provider: "codex",
+      provider: "profile-codex",
       env: { CODEX_HOME: providerCodexHome },
     });
     expect(session.usageSession?.()?.sessionKey).toBe(session.usageSession?.()?.sessionKey);

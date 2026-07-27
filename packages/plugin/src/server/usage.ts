@@ -65,15 +65,40 @@ export interface UsageAccount {
   label?: string;
   /** Harness owning this login, e.g. Codex, OpenCode, Pi or OMP. */
   harness?: string;
+  /**
+   * Configured provider whose store this login came from. Entries are per provider, so one
+   * account logged in through two providers is two entries rather than one shared entry.
+   */
+  providerId?: string;
   /** Store locator, opaque to the daemon. */
   input: JsonValue;
 }
 
+/**
+ * An enabled provider, so global discovery can read the stores its agents run on. Derived
+ * providers resolve to the built-in provider they extend. Provider env overrides the inherited
+ * environment when resolving its store.
+ */
+export const UsageProviderScopeSchema = z.object({
+  id: z.string(),
+  baseProviderId: z.string(),
+  label: z.string(),
+  custom: z.boolean(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+export type UsageProviderScope = z.infer<typeof UsageProviderScopeSchema>;
+
 export const UsageScopeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("global"), launch: ProviderLaunchSchema.optional() }),
+  z.object({
+    kind: z.literal("global"),
+    launch: ProviderLaunchSchema.optional(),
+    /** Every enabled provider on the host. Absent against a daemon that does not send them. */
+    providers: z.array(UsageProviderScopeSchema).optional(),
+  }),
   z.object({
     kind: z.literal("session"),
     provider: z.string(),
+    configuredProvider: UsageProviderScopeSchema.optional(),
     model: z.string().optional(),
     env: z.record(z.string(), z.string()),
     launch: ProviderLaunchSchema.optional(),
@@ -211,4 +236,65 @@ export function hashAccountKey(value: string): string {
 
 export function unavailable(problem: UsageProblem): UsageReport {
   return { status: "unavailable", problem };
+}
+
+export function isExpectedAuthFailureStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+/**
+ * A provider usage API answered with a failing HTTP status.
+ *
+ * Carries the status and `Retry-After` so the failure stays diagnosable after it leaves
+ * the provider: a 429 is the one failure a user has no other way to see, and the daemon
+ * that catches this is the only place that knows whether cached data still covers it.
+ */
+export class ProviderApiHttpError extends Error {
+  readonly status: number;
+  readonly retryAfter: string | null;
+
+  constructor(input: { displayName: string; status: number; retryAfter: string | null }) {
+    super(`${input.displayName} usage API returned ${input.status}`);
+    this.name = "ProviderApiHttpError";
+    this.status = input.status;
+    this.retryAfter = input.retryAfter;
+  }
+}
+
+export function providerApiHttpError(
+  provider: { displayName: string },
+  res: Response,
+): ProviderApiHttpError {
+  return new ProviderApiHttpError({
+    displayName: provider.displayName,
+    status: res.status,
+    retryAfter: res.headers.get("retry-after"),
+  });
+}
+
+/**
+ * Log a failed provider usage response and return the quiet `unavailable` result, for
+ * providers that absorb an HTTP failure rather than throwing it.
+ *
+ * Expected authentication failures stay at `debug`; anything else warns with the provider,
+ * the status, and `Retry-After`. Plugins have no logger of their own, so this writes
+ * through `console`: the runtime captures the plugin's output into the plugin log and the
+ * daemon log.
+ */
+export function logUnavailableHttpFailure(
+  provider: { providerId: string; displayName: string },
+  res: Response,
+): UsageReport {
+  const details = {
+    providerId: provider.providerId,
+    status: res.status,
+    retryAfter: res.headers.get("retry-after"),
+  };
+  const message = `${provider.displayName} usage fetch failed`;
+  if (isExpectedAuthFailureStatus(res.status)) {
+    console.debug(details, message);
+  } else {
+    console.warn(details, message);
+  }
+  return unavailable({ kind: "rejected", status: res.status });
 }

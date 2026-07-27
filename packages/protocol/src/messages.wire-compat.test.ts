@@ -645,3 +645,18 @@ test("speech config reads remain compatible with clients before features and fut
     }).features?.voiceMode?.stt,
   ).toEqual({ provider: "future", region: "eu" });
 });
+
+test("usage entries preserve optional provider identity and remain readable by older clients", () => {
+  const shared = {
+    id: "codex:account",
+    sourceId: "codex",
+    sourceLabel: "Codex",
+    account: {},
+    fetchedAt: "2026-10-29T10:00:00Z",
+    report: { status: "available", windows: [] },
+  };
+  const configured = { ...shared, providerId: "codex-eng" };
+  expect(UsageReportEntrySchema.parse(shared)).toEqual(shared);
+  expect(UsageReportEntrySchema.parse(configured)).toEqual(configured);
+  expect(UsageReportEntrySchema.omit({ providerId: true }).parse(configured)).toEqual(shared);
+});

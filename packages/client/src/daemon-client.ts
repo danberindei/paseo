@@ -1454,6 +1454,7 @@ export class DaemonClient {
   private waiters: Set<Waiter<unknown>> = new Set();
   private checkoutStatusInFlight: Map<string, Promise<CheckoutStatusPayload>> = new Map();
   private connectionListeners: Set<(status: ConnectionState) => void> = new Set();
+  private usageReportListeners = new Set<(report: UsageReportEntry) => void>();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private connectTimeout: ReturnType<typeof setTimeout> | null = null;
   private pendingGenericTransportErrorTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -6342,6 +6343,13 @@ export class DaemonClient {
     });
   }
 
+  subscribeUsageReports(listener: (report: UsageReportEntry) => void): () => void {
+    this.usageReportListeners.add(listener);
+    return () => {
+      this.usageReportListeners.delete(listener);
+    };
+  }
+
   async listUsageReports(
     options?: {
       agentId?: string;
@@ -6363,7 +6371,7 @@ export class DaemonClient {
         return { requestId: this.createRequestId(options.requestId), reports: [] };
       // Released hosts serve a five-minute cache and have no forceRefresh option.
       const payload = await this.listProviderUsage({ requestId: options?.requestId });
-      return {
+      const result: UsageListReportsPayload = {
         requestId: payload.requestId,
         reports: payload.providers
           .filter(
@@ -6400,6 +6408,11 @@ export class DaemonClient {
             };
           }),
       };
+      for (const report of result.reports) {
+        for (const listener of this.usageReportListeners) listener(report);
+        onReport?.(report);
+      }
+      return result;
     }
     const requestId = this.createRequestId(options?.requestId);
     const reports: UsageReportEntry[] = [];
@@ -6418,6 +6431,10 @@ export class DaemonClient {
       }
       if (message.type !== "usage.list_reports.update") return;
       reports.push(message.payload.report);
+      // Agent-scoped requests can use a different login from the host account.
+      if (options?.agentId === undefined) {
+        for (const listener of this.usageReportListeners) listener(message.payload.report);
+      }
       onReport?.(message.payload.report);
     });
     try {

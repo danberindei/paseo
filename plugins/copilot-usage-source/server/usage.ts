@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   unavailable,
   windowFromUsedPct,
   type UsageWindow,
@@ -78,9 +80,9 @@ export async function fetchUsage(
     },
   });
 
-  if (res.status === 401 || res.status === 403)
+  if (isExpectedAuthFailureStatus(res.status))
     return unavailable({ kind: "rejected", status: res.status });
-  if (!res.ok) throw new Error(`Copilot usage API returned ${res.status}`);
+  if (!res.ok) throw providerApiHttpError({ displayName: "Copilot" }, res);
 
   const resp = CopilotUsageResponseSchema.parse(await res.json());
   const details: UsageDetail[] = resp.quota_reset_date

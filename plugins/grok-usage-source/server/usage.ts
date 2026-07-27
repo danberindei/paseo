@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   toneFromUsedPct,
   usedPctOf,
   unavailable,
@@ -34,6 +36,7 @@ const GrokUsageResponseSchema = z.object({
         })
         .nullish(),
       creditUsagePercent: ApiNumberSchema.optional(),
+      billingPeriodEnd: ApiOptionalStringSchema,
       currentPeriod: z
         .object({
           type: ApiOptionalStringSchema,
@@ -86,6 +89,7 @@ function grokCreditBalance(response: z.infer<typeof GrokUsageResponseSchema>): U
     remaining: limit !== null && used !== null ? Math.max(0, limit - used) : null,
     limit,
     unit: "credits",
+    resetsAt: response.config?.billingPeriodEnd ?? null,
     tone: toneFromUsedPct(usedPctOf(used, limit)),
   };
 }
@@ -130,9 +134,9 @@ export async function fetchUsage(
     },
   });
 
-  if (res.status === 401 || res.status === 403)
+  if (isExpectedAuthFailureStatus(res.status))
     return unavailable({ kind: "rejected", status: res.status });
-  if (!res.ok) throw new Error(`Grok usage API returned ${res.status}`);
+  if (!res.ok) throw providerApiHttpError({ displayName: "Grok" }, res);
 
   const resp = GrokUsageResponseSchema.parse(await res.json());
   const balance = grokCreditBalance(resp);

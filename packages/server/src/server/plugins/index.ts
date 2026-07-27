@@ -4,6 +4,7 @@ import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
 import type { ProviderInstallation, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { UsageProviderScope } from "@getpaseo/plugin/server/usage";
 import {
   PluginIdSchema,
   type PluginLogEntry,
@@ -80,6 +81,7 @@ interface PluginRuntimePort {
 
 interface PluginServiceDependencies {
   usageAgents?: AgentUsageLookup;
+  usageProviders?: () => UsageProviderScope[];
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
@@ -129,6 +131,8 @@ export class PluginService {
       300_000,
       this.logger,
       dependencies.usageAgents,
+      undefined,
+      dependencies.usageProviders ?? (() => []),
     );
     this.runtime =
       dependencies.runtime ??
@@ -719,12 +723,7 @@ export class PluginService {
                 : undefined;
             const scoped =
               scope.kind === "session" && source.provider !== scope.provider
-                ? {
-                    kind: "session" as const,
-                    provider: scope.provider,
-                    model: scope.model,
-                    env: scope.env,
-                  }
+                ? { ...scope, launch: undefined }
                 : scope;
             const result = await this.runtime.discoverUsage(
               pluginId,

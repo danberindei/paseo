@@ -510,6 +510,7 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   buildProviderRegistry,
   createAllClients,
+  wrapSessionProvider,
 } from "./provider-registry.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
@@ -610,6 +611,26 @@ test("OMP can be enabled without custom provider boilerplate", () => {
   });
 
   expect(registry.omp.enabled).toBe(true);
+});
+
+test("derived usage sessions retain the configured provider identity", async () => {
+  const registry = buildProviderRegistry(logger, {
+    ompRuntime: new FakeOmp(),
+  });
+  const inner = await registry.omp.createClient(logger).createSession({
+    provider: "omp",
+    cwd: "/tmp/registry-omp-work",
+  });
+  const session = wrapSessionProvider("omp-work", inner);
+  try {
+    expect(session.usageSession?.()).toMatchObject({
+      provider: "omp-work",
+      sessionKey: expect.any(String),
+    });
+  } finally {
+    await session.close();
+  }
+  expect(session.usageSession?.()).toBeNull();
 });
 
 test("new provider extending claude appears in registry", () => {

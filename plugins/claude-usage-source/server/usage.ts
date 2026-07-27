@@ -7,12 +7,16 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import {
+  isExpectedAuthFailureStatus,
+  providerApiHttpError,
   hashAccountKey,
   toneFromUsedPct,
   unavailable,
+  usedPctOf,
   type UsageAccount,
   type UsageScope,
   windowFromUsedPct,
+  type UsageBalance,
   type UsageReport,
   type UsageWindow,
   type UsageDetail,
@@ -57,23 +61,54 @@ const ClaudeLimitSchema = z.object({
   scope: z.object({ model: ClaudeScopeLabelSchema, surface: ClaudeScopeLabelSchema }).nullish(),
 });
 
+// The API describes the usage-credits balance two ways: the legacy `extra_usage` object
+// (amounts in whole "credits", scaled by decimal_places) and the newer `spend` object
+// (amounts as minor-unit money, scaled by exponent). Both are read; `spend` wins when
+// both are present. Neither has been observed carrying a reset date - `resets_at` is
+// still checked on both so one is picked up automatically if the API starts sending it.
+// When it stays absent, the pool is assumed to reset at the start of the next calendar
+// month (UTC): the spend-limit endpoint reports `period: "monthly"`.
+const ClaudeMoneySchema = z.object({
+  amount_minor: ApiNumberSchema,
+  currency: z.string(),
+  exponent: ApiNumberSchema,
+});
+
+const ClaudeSpendSchema = z.object({
+  used: ClaudeMoneySchema.nullish(),
+  limit: ClaudeMoneySchema.nullish(),
+  enabled: z.boolean().optional(),
+  resets_at: z.string().nullish(),
+});
+
+const ClaudeExtraUsageSchema = z.object({
+  is_enabled: z.boolean().optional(),
+  monthly_limit: ApiNumberSchema.nullish(),
+  used_credits: ApiNumberSchema.nullish(),
+  decimal_places: ApiNumberSchema.nullish(),
+  currency: z.string().nullish(),
+  resets_at: z.string().nullish(),
+});
+
 const ClaudeUsageResponseSchema = z.object({
   five_hour: ClaudeUsageWindowSchema.nullish(),
   seven_day: ClaudeUsageWindowSchema.nullish(),
   seven_day_opus: ClaudeUsageWindowSchema.nullish(),
   seven_day_omelette: ClaudeUsageWindowSchema.nullish(),
   // Deliberately permissive: an additive section must never regress the top-level
-  // windows, so shape validation happens per entry rather than here.
+  // windows, so shape validation happens per entry or per section rather than here.
   limits: z.array(z.unknown()).nullish(),
-  extra_usage: z
-    .object({
-      is_enabled: z.boolean().optional(),
-    })
-    .nullish(),
+  extra_usage: z.unknown().nullish(),
+  spend: z.unknown().nullish(),
 });
 
 type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>;
 type ClaudeUsageResponse = z.infer<typeof ClaudeUsageResponseSchema>;
+
+interface ClaudeCreditSources {
+  spend: z.infer<typeof ClaudeSpendSchema> | null;
+  extraUsage: z.infer<typeof ClaudeExtraUsageSchema> | null;
+}
 type ClaudeLimit = z.infer<typeof ClaudeLimitSchema>;
 
 const SCOPED_WEEKLY_KIND = "weekly_scoped";
@@ -270,6 +305,69 @@ function unscopedWindows(resp: ClaudeUsageResponse): UsageWindow[] {
     );
   }
   return windows;
+}
+
+function moneyToDollars(
+  money: z.infer<typeof ClaudeMoneySchema> | null | undefined,
+): number | null {
+  return money ? money.amount_minor / 10 ** money.exponent : null;
+}
+
+function creditsToDollars(
+  credits: number | null | undefined,
+  decimalPlaces: number | null | undefined,
+): number | null {
+  return typeof credits === "number" && typeof decimalPlaces === "number"
+    ? credits / 10 ** decimalPlaces
+    : null;
+}
+
+function claudeCreditsEnabled({ spend, extraUsage }: ClaudeCreditSources): boolean {
+  return Boolean(spend?.enabled ?? extraUsage?.is_enabled);
+}
+
+function claudeCreditsCurrencyIsUsd({ spend, extraUsage }: ClaudeCreditSources): boolean {
+  const currency = spend?.used?.currency ?? spend?.limit?.currency ?? extraUsage?.currency;
+  return !currency || currency.toUpperCase() === "USD";
+}
+
+function claudeCreditsUsed({ spend, extraUsage }: ClaudeCreditSources): number | null {
+  return (
+    moneyToDollars(spend?.used) ??
+    creditsToDollars(extraUsage?.used_credits, extraUsage?.decimal_places)
+  );
+}
+
+function claudeCreditsLimit({ spend, extraUsage }: ClaudeCreditSources): number | null {
+  return (
+    moneyToDollars(spend?.limit) ??
+    creditsToDollars(extraUsage?.monthly_limit, extraUsage?.decimal_places)
+  );
+}
+
+function endOfMonthIso(now: Date): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+}
+
+function creditBalance(sources: ClaudeCreditSources, nowMs: number): UsageBalance | null {
+  if (!claudeCreditsEnabled(sources) || !claudeCreditsCurrencyIsUsd(sources)) return null;
+
+  const used = claudeCreditsUsed(sources);
+  if (used === null) return null;
+  const rawLimit = claudeCreditsLimit(sources);
+  const limit = rawLimit !== null && rawLimit > 0 ? rawLimit : null;
+
+  return {
+    id: "usage_credits",
+    label: "Extra usage",
+    used,
+    remaining: limit !== null ? limit - used : null,
+    limit,
+    unit: "usd",
+    resetsAt:
+      sources.spend?.resets_at ?? sources.extraUsage?.resets_at ?? endOfMonthIso(new Date(nowMs)),
+    tone: toneFromUsedPct(usedPctOf(used, limit)),
+  };
 }
 
 function scopedWindows(limits: ScopedLimit[]): UsageWindow[] {
@@ -548,14 +646,38 @@ export async function fetchUsage(
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    if (res.status === 401 || res.status === 403) return res.status;
+    if (isExpectedAuthFailureStatus(res.status)) return res.status;
     if (res.status === 429) {
       const waitMs = retryAfterMs(res.headers.get("retry-after"), now);
       if (waitMs !== null) rateLimitedUntil.set(tokenKey, now + waitMs);
       throw rateLimitedError(waitMs);
     }
-    if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
+    if (!res.ok) throw providerApiHttpError({ displayName: "Claude" }, res);
     return ClaudeUsageResponseSchema.parse(await res.json());
+  }
+
+  function creditSourcesFromResponse(resp: ClaudeUsageResponse): ClaudeCreditSources {
+    return {
+      spend: parseCreditSection(ClaudeSpendSchema, resp.spend, "spend"),
+      extraUsage: parseCreditSection(ClaudeExtraUsageSchema, resp.extra_usage, "extra_usage"),
+    };
+  }
+
+  function parseCreditSection<S extends z.ZodType>(
+    schema: S,
+    value: unknown,
+    section: string,
+  ): z.output<S> | null {
+    if (value == null) return null;
+    const result = schema.safeParse(value);
+    if (!result.success) {
+      console.warn(
+        { err: result.error, section },
+        "Skipping unparseable Claude usage credits section",
+      );
+      return null;
+    }
+    return result.data;
   }
 
   const credentials = await resolveClaudeCredentials(input, credentialLookup);
@@ -598,20 +720,18 @@ export async function fetchUsage(
   }
 
   const details: UsageDetail[] = [];
-  const extraUsageEnabled = resp.extra_usage?.is_enabled;
-  if (extraUsageEnabled !== undefined) {
-    details.push({
-      id: "extra_usage",
-      label: "Extra usage",
-      value: extraUsageEnabled ? "Enabled" : "Disabled",
-    });
-  }
+  const balances: UsageBalance[] = [];
+  const credit = creditBalance(
+    creditSourcesFromResponse(resp),
+    (credentialLookup.now ?? Date.now)(),
+  );
+  if (credit) balances.push(credit);
 
   return {
     status: "available",
     planLabel: plan ?? undefined,
     windows,
-    balances: [],
+    balances,
     details,
   };
 }

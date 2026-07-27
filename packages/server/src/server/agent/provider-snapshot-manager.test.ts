@@ -391,6 +391,40 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("listUsageProviders reports enabled providers with their base and store env", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "codex-eng": {
+          extends: "codex",
+          label: "Codex Eng",
+          enabled: true,
+          env: { CODEX_HOME: "/home/user/.codex-eng" },
+        },
+        "claude-off": { extends: "claude", label: "Claude Off", enabled: false },
+      },
+    });
+    try {
+      const providers = manager.listUsageProviders();
+      expect(providers).toContainEqual({
+        id: "codex-eng",
+        baseProviderId: "codex",
+        label: "Codex Eng",
+        custom: true,
+        env: { CODEX_HOME: "/home/user/.codex-eng" },
+      });
+      expect(providers).toContainEqual({
+        id: "codex",
+        baseProviderId: "codex",
+        label: "Codex",
+        custom: false,
+      });
+      expect(providers.some((provider) => provider.id === "claude-off")).toBe(false);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("getSnapshot returns loading entries with provider metadata before warmup", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

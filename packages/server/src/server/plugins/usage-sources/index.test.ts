@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import { UsageSourceRegistry } from "./index.js";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -71,17 +72,15 @@ test("switching a shared Claude home replaces the account without borrowing its 
       fetch: (input) => fetchClaudeUsage(claudeInputSchema.parse(input), fetchApi),
     });
     const usage = (reports: Awaited<ReturnType<typeof registry.listReports>>) =>
-      Object.fromEntries(
-        reports.map((entry) => [entry.account.label, entry.report.windows?.[0]?.usedPct]),
-      );
+      Object.fromEntries(reports.map((entry) => [entry.id, entry.report.windows?.[0]?.usedPct]));
 
     expect(usage(await registry.listReports({ agentId: "default" }))).toEqual({
-      "old@example.com": 100,
+      "claude:old.org": 100,
     });
     await login(defaultHome, "rotated");
     expect(
       usage(await registry.listReports({ reportIds: ["claude:old.org"], forceRefresh: true })),
-    ).toEqual({ "old@example.com": 100 });
+    ).toEqual({ "claude:old.org": 100 });
     expect(usageTokens).toContain("rotated");
     await login(defaultHome, "new");
     usageTokens.length = 0;
@@ -97,10 +96,10 @@ test("switching a shared Claude home replaces the account without borrowing its 
     expect.soft(usageTokens).toEqual([]);
 
     const host = await registry.listReports({ forceRefresh: true });
-    expect.soft(usage(host)).toEqual({ "new@example.com": 17 });
+    expect.soft(usage(host)).toEqual({ "claude:new.org": 17 });
     expect
       .soft(usage(await registry.listReports({ agentId: "default" })))
-      .toEqual({ "new@example.com": 17 });
+      .toEqual({ "claude:new.org": 17 });
 
     await login(otherHome, "old");
     sessions.set("other", {
@@ -110,8 +109,8 @@ test("switching a shared Claude home replaces the account without borrowing its 
     });
     await registry.listReports({ agentId: "other" });
     expect(usage(await registry.listReports({ forceRefresh: true }))).toEqual({
-      "new@example.com": 17,
-      "old@example.com": 100,
+      "claude:new.org": 17,
+      "claude:old.org": 100,
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -179,7 +178,9 @@ test("#7142: host usage retains distinct Cursor accounts after their individual 
 
 function source(input: {
   id: string;
-  discover?: () => Promise<Array<{ key: string; label?: string; input: unknown }>>;
+  discover?: (
+    scope: UsageScope,
+  ) => Promise<Array<{ key: string; label?: string; providerId?: string; input: unknown }>>;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
@@ -189,6 +190,57 @@ function source(input: {
     fetch: input.fetch ?? (async () => ({ status: "available", windows: [] })),
   };
 }
+
+test("scopes an account to its provider and sends the host's providers on the global scope", async () => {
+  const discovered: UsageScope[] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, undefined, 20_000, () => [
+    {
+      id: "codex-eng",
+      baseProviderId: "codex",
+      label: "Codex Eng",
+      custom: true,
+      env: { CODEX_HOME: "/home/user/.codex-eng" },
+    },
+  ]);
+  registry.register(
+    source({
+      id: "codex",
+      discover: async (scope) => {
+        discovered.push(scope);
+        return [
+          { key: "shared", input: { route: "builtin" } },
+          {
+            key: "shared",
+            providerId: "codex-eng",
+            label: "Codex Eng",
+            input: { route: "custom" },
+          },
+        ];
+      },
+    }),
+  );
+
+  const reports = await registry.listReports();
+  expect(discovered).toEqual([
+    {
+      kind: "global",
+      providers: [
+        {
+          id: "codex-eng",
+          baseProviderId: "codex",
+          label: "Codex Eng",
+          custom: true,
+          env: { CODEX_HOME: "/home/user/.codex-eng" },
+        },
+      ],
+    },
+  ]);
+  // One account, one entry per provider it is logged in through.
+  expect(reports.map((entry) => entry.id)).toEqual(["codex:shared", "codex:codex-eng:shared"]);
+  expect(reports.map((entry) => entry.account.label)).toEqual([undefined, "Codex Eng"]);
+  expect(reports[1]?.sourceId).toBe("codex");
+  expect(reports.map((entry) => entry.providerId)).toEqual([undefined, "codex-eng"]);
+});
 
 test("discovery preserves account IDs and updates input after token rotation", async () => {
   const registry = new UsageSourceRegistry();
