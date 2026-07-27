@@ -330,6 +330,32 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   return resolveDesktopDaemonStatus();
 }
 
+// Every renderer window asks the main process to start the daemon. Keep the whole status and
+// start sequence single-flight across windows.
+let inFlightDaemonStart: Promise<DesktopDaemonStatus> | null = null;
+
+function startDaemonOnce(): Promise<DesktopDaemonStatus> {
+  const joined = inFlightDaemonStart;
+  if (joined) {
+    logDesktopDaemonLifecycle("joining in-flight daemon start");
+    return joined;
+  }
+
+  const request = startDaemon();
+  inFlightDaemonStart = request;
+  return request.finally(() => {
+    if (inFlightDaemonStart === request) {
+      inFlightDaemonStart = null;
+    }
+  });
+}
+
+async function settleInFlightDaemonStart(): Promise<void> {
+  const pending = inFlightDaemonStart;
+  if (!pending) return;
+  await pending.catch(() => {});
+}
+
 export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
   confirmedInstance?: { pid: number; startedAt: string },
@@ -451,6 +477,7 @@ export function keepsTerminalsOnStop(
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
+  await settleInFlightDaemonStart();
   await runExternalCliJsonCommand(["daemon", "restart", "--home", getPaseoHome(), "--json"]);
   return resolveDesktopDaemonStatus();
 }
@@ -501,7 +528,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       if (!instance?.desktopManaged || typeof args?.listen !== "string") return null;
       return readLocalCredentialForTarget(getPaseoHome(), args.listen);
     },
-    start_desktop_daemon: () => startDaemon(),
+    start_desktop_daemon: () => startDaemonOnce(),
     stop_desktop_daemon: (args) =>
       stopDesktopDaemon(
         parseDesktopDaemonStopReason(args),
