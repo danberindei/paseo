@@ -313,7 +313,7 @@ interface HydrateTimelineOptions {
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
   /**
    * When set, only providers in this set are scanned, in addition to the
-   * built-in importable allowlist + enabled + non-derived rules.
+   * built-in importable allowlist + enabled rules.
    */
   providerFilter?: ReadonlySet<string>;
 };
@@ -1293,7 +1293,9 @@ export class AgentManager {
         }
       }),
     );
-    const sessions = providerResults.flatMap((result) => result.sessions);
+    const sessions = this.dedupeImportableSessions(
+      providerResults.flatMap((result) => result.sessions),
+    );
 
     const limit = options?.limit ?? 20;
     return {
@@ -1302,6 +1304,44 @@ export class AgentManager {
         .slice(0, limit),
       providerErrors: providerResults.flatMap((result) => (result.error ? [result.error] : [])),
     };
+  }
+
+  private dedupeImportableSessions(
+    sessions: ManagedImportableProviderSession[],
+  ): ManagedImportableProviderSession[] {
+    const byIdentity = new Map<string, ManagedImportableProviderSession>();
+    // Derived providers can list sessions from the same directory as their base.
+    for (const session of sessions) {
+      const key = JSON.stringify([
+        this.providerAncestry(session.provider).root,
+        session.cwd,
+        session.providerHandleId,
+      ]);
+      const existing = byIdentity.get(key);
+      if (
+        !existing ||
+        this.providerAncestry(session.provider).depth <
+          this.providerAncestry(existing.provider).depth
+      ) {
+        byIdentity.set(key, session);
+      }
+    }
+    return Array.from(byIdentity.values());
+  }
+
+  private providerAncestry(provider: AgentProvider): { root: AgentProvider; depth: number } {
+    let current: AgentProvider = provider;
+    const seen = new Set<AgentProvider>([current]);
+    let depth = 0;
+    for (;;) {
+      const parent = this.providerDerivedFrom.get(current);
+      if (!parent || seen.has(parent)) {
+        return { root: current, depth };
+      }
+      seen.add(parent);
+      current = parent;
+      depth += 1;
+    }
   }
 
   private isProviderImportable(
