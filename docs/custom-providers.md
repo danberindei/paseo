@@ -406,6 +406,8 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 
 `params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `params.rpcTimeoutMs` overrides both deadlines.
 
+A derived provider that does not set `params` inherits the base provider's `params`, including `sessionDir`. Both then list the same sessions, and the import picker shows each shared session once, attributed to the base provider. Set `params.sessionDir` when you want the derived provider's own sessions to be importable under its own label.
+
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
 ```json

@@ -10098,7 +10098,10 @@ class RecordingPersistedAgentsClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;
   calls = 0;
 
-  constructor(public readonly provider: AgentProvider) {}
+  constructor(
+    public readonly provider: AgentProvider,
+    private readonly handleId?: string,
+  ) {}
 
   async isAvailable(): Promise<boolean> {
     return true;
@@ -10120,7 +10123,7 @@ class RecordingPersistedAgentsClient implements AgentClient {
     this.calls += 1;
     return [
       {
-        providerHandleId: `${this.provider}-session`,
+        providerHandleId: this.handleId ?? `${this.provider}-session`,
         cwd: "/tmp/recent",
         title: null,
         lastActivityAt: new Date("2026-01-01T00:00:00Z"),
@@ -10177,6 +10180,44 @@ test("listImportableSessions includes derived providers that list persisted agen
   expect(claudeClient.calls).toBe(1);
   expect(ompClient.calls).toBe(1);
   expect(result.sessions.map((d) => d.provider).sort()).toEqual(["claude", "omp"]);
+});
+
+test("listImportableSessions attributes a session shared with a base provider to the base", async () => {
+  const ompClient = new RecordingPersistedAgentsClient("omp", "shared-session");
+  const piClient = new RecordingPersistedAgentsClient("pi", "shared-session");
+  const manager = new AgentManager({
+    clients: { omp: ompClient, pi: piClient },
+    providerDefinitions: {
+      omp: { enabled: true, derivedFromProviderId: "pi" },
+      pi: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listImportableSessions();
+
+  expect(result.sessions).toHaveLength(1);
+  expect(result.sessions[0]?.provider).toBe("pi");
+  expect(result.sessions[0]?.providerHandleId).toBe("shared-session");
+});
+
+test("listImportableSessions keeps a derived provider's session when its base is disabled", async () => {
+  const ompClient = new RecordingPersistedAgentsClient("omp", "shared-session");
+  const piClient = new RecordingPersistedAgentsClient("pi", "shared-session");
+  const manager = new AgentManager({
+    clients: { omp: ompClient, pi: piClient },
+    providerDefinitions: {
+      omp: { enabled: true, derivedFromProviderId: "pi" },
+      pi: { enabled: false, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listImportableSessions();
+
+  expect(piClient.calls).toBe(0);
+  expect(result.sessions).toHaveLength(1);
+  expect(result.sessions[0]?.provider).toBe("omp");
 });
 
 test("listImportableSessions narrows to the providerFilter when supplied", async () => {

@@ -209,7 +209,7 @@ interface HydrateTimelineOptions {
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
   /**
    * When set, only providers in this set are scanned, in addition to the
-   * built-in importable allowlist + enabled + non-derived rules.
+   * built-in importable allowlist + enabled rules.
    */
   providerFilter?: ReadonlySet<string>;
 };
@@ -998,7 +998,9 @@ export class AgentManager {
         }
       }),
     );
-    const sessions = providerResults.flatMap((result) => result.sessions);
+    const sessions = this.dedupeImportableSessions(
+      providerResults.flatMap((result) => result.sessions),
+    );
 
     const limit = options?.limit ?? 20;
     return {
@@ -1007,6 +1009,40 @@ export class AgentManager {
         .slice(0, limit),
       providerErrors: providerResults.flatMap((result) => (result.error ? [result.error] : [])),
     };
+  }
+
+  private dedupeImportableSessions(
+    sessions: ManagedImportableProviderSession[],
+  ): ManagedImportableProviderSession[] {
+    const byIdentity = new Map<string, ManagedImportableProviderSession>();
+    // A derived provider inherits its base's providerParams, so both list the same session dir.
+    for (const session of sessions) {
+      const key = `${session.cwd}\u0000${session.providerHandleId}`;
+      const existing = byIdentity.get(key);
+      if (
+        !existing ||
+        this.providerDerivationDepth(session.provider) <
+          this.providerDerivationDepth(existing.provider)
+      ) {
+        byIdentity.set(key, session);
+      }
+    }
+    return Array.from(byIdentity.values());
+  }
+
+  private providerDerivationDepth(provider: AgentProvider): number {
+    let current: AgentProvider = provider;
+    const seen = new Set<AgentProvider>([current]);
+    let depth = 0;
+    for (;;) {
+      const parent = this.providerDerivedFrom.get(current);
+      if (!parent || seen.has(parent)) {
+        return depth;
+      }
+      seen.add(parent);
+      current = parent;
+      depth += 1;
+    }
   }
 
   private isProviderImportable(
