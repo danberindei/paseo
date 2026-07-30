@@ -364,7 +364,7 @@ function SessionRow({
         ) : null}
       </View>
       {!isMobile ? (
-        <View style={styles.rowColumns}>
+        <View style={[styles.rowColumns, showHostColumn ? styles.rowColumnsWithHost : null]}>
           <HighlightedText
             text={projectName}
             ranges={rangesFor("project")}
@@ -664,7 +664,9 @@ const styles = StyleSheet.create((theme) => ({
     },
   },
   rowContent: {
-    flex: 1,
+    flexGrow: 3,
+    flexShrink: 1,
+    flexBasis: 0,
     minWidth: 0,
     overflow: "hidden",
   },
@@ -729,14 +731,21 @@ const styles = StyleSheet.create((theme) => ({
   rowColumns: {
     flexDirection: "row",
     alignItems: "center",
+    flexGrow: 1,
     flexShrink: 0,
+    // sum of the column flexBasis values plus the gaps between them
+    flexBasis: 132 + 132 + 72 + 2 * theme.spacing[3],
     gap: theme.spacing[3],
+  },
+  rowColumnsWithHost: {
+    flexBasis: 132 + 120 + 132 + 72 + 3 * theme.spacing[3] + theme.spacing[4],
   },
   columnMeta: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+    flexGrow: 1,
     flexShrink: 0,
-    width: 132,
+    flexBasis: 132,
   },
   columnMetaFixed: {
     fontSize: theme.fontSize.base,
@@ -748,8 +757,9 @@ const styles = StyleSheet.create((theme) => ({
   columnMetaHost: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+    flexGrow: 1,
     flexShrink: 0,
-    width: 120,
+    flexBasis: 120,
     marginLeft: theme.spacing[4],
     textAlign: "right" as const,
   },
