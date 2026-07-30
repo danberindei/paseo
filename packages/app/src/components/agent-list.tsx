@@ -25,6 +25,7 @@ import { HighlightedText } from "@/components/ui/highlighted-text";
 import { ArchivedBadge } from "@/components/archived-badge";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { findHighlightRanges } from "@/components/ui/highlighted-text-segments";
+import type { MatchRange } from "@getpaseo/protocol/search/text-match";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -178,6 +179,85 @@ function statusBadgeTone(status: AggregatedAgent["status"]): "neutral" | "danger
   return status === "error" ? "danger" : "neutral";
 }
 
+interface SessionRowMetaProps {
+  agent: AggregatedAgent;
+  ranges: { branch: readonly MatchRange[]; project: readonly MatchRange[] };
+  branch: string;
+  projectName: string;
+  showHostColumn: boolean;
+}
+
+function SessionRowMobileMeta({
+  agent,
+  ranges,
+  branch,
+  projectName,
+  showHostColumn,
+}: SessionRowMetaProps) {
+  return (
+    <View style={styles.rowMetaRow}>
+      <HighlightedText
+        text={projectName}
+        ranges={ranges.project}
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={`agent-row-project-${agent.serverId}-${agent.id}`}
+      />
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <HighlightedText
+        text={branch}
+        ranges={ranges.branch}
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+      />
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <AgentActivityTime date={agent.lastActivityAt} isMobile />
+      {showHostColumn && agent.serverLabel ? (
+        <>
+          <Text style={styles.sessionMetaSeparator}>·</Text>
+          <Text style={styles.sessionMetaText} numberOfLines={1}>
+            {agent.serverLabel}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function SessionRowColumns({
+  agent,
+  ranges,
+  branch,
+  projectName,
+  showHostColumn,
+}: SessionRowMetaProps) {
+  return (
+    <View style={[styles.rowColumns, showHostColumn ? styles.rowColumnsWithHost : null]}>
+      <HighlightedText
+        text={projectName}
+        ranges={ranges.project}
+        style={styles.columnMeta}
+        numberOfLines={1}
+        testID={`agent-row-project-${agent.serverId}-${agent.id}`}
+      />
+      {showHostColumn ? (
+        <Text style={styles.columnMetaHost} numberOfLines={1}>
+          {agent.serverLabel}
+        </Text>
+      ) : null}
+      <HighlightedText
+        text={branch}
+        ranges={ranges.branch}
+        style={styles.columnMeta}
+        numberOfLines={1}
+        testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+      />
+      <AgentActivityTime date={agent.lastActivityAt} isMobile={false} />
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   search,
@@ -285,58 +365,23 @@ function SessionRow({
         </View>
         {isMobile ? agentTitle : null}
         {isMobile ? (
-          <View style={styles.rowMetaRow}>
-            <HighlightedText
-              text={projectName}
-              ranges={ranges.project}
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-project-${agent.serverId}-${agent.id}`}
-            />
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <HighlightedText
-              text={branch}
-              ranges={ranges.branch}
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
-            />
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <AgentActivityTime date={agent.lastActivityAt} isMobile />
-            {showHostColumn && agent.serverLabel ? (
-              <>
-                <Text style={styles.sessionMetaSeparator}>·</Text>
-                <Text style={styles.sessionMetaText} numberOfLines={1}>
-                  {agent.serverLabel}
-                </Text>
-              </>
-            ) : null}
-          </View>
+          <SessionRowMobileMeta
+            agent={agent}
+            ranges={ranges}
+            branch={branch}
+            projectName={projectName}
+            showHostColumn={showHostColumn}
+          />
         ) : null}
       </View>
       {!isMobile ? (
-        <View style={styles.rowColumns}>
-          <HighlightedText
-            text={projectName}
-            ranges={ranges.project}
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-project-${agent.serverId}-${agent.id}`}
-          />
-          {showHostColumn ? (
-            <Text style={styles.columnMetaHost} numberOfLines={1}>
-              {agent.serverLabel}
-            </Text>
-          ) : null}
-          <HighlightedText
-            text={branch}
-            ranges={ranges.branch}
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
-          />
-          <AgentActivityTime date={agent.lastActivityAt} isMobile={false} />
-        </View>
+        <SessionRowColumns
+          agent={agent}
+          ranges={ranges}
+          branch={branch}
+          projectName={projectName}
+          showHostColumn={showHostColumn}
+        />
       ) : null}
       <SessionRowTrailingAttention
         isMobile={isMobile}
@@ -613,7 +658,9 @@ const styles = StyleSheet.create((theme) => ({
     },
   },
   rowContent: {
-    flex: 1,
+    flexGrow: 3,
+    flexShrink: 1,
+    flexBasis: 0,
     minWidth: 0,
     overflow: "hidden",
   },
@@ -679,14 +726,21 @@ const styles = StyleSheet.create((theme) => ({
   rowColumns: {
     flexDirection: "row",
     alignItems: "center",
+    flexGrow: 1,
     flexShrink: 0,
+    // sum of the column flexBasis values plus the gaps between them
+    flexBasis: 132 + 132 + 72 + 2 * theme.spacing[3],
     gap: theme.spacing[3],
+  },
+  rowColumnsWithHost: {
+    flexBasis: 132 + 120 + 132 + 72 + 3 * theme.spacing[3] + theme.spacing[4],
   },
   columnMeta: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+    flexGrow: 1,
     flexShrink: 0,
-    width: 132,
+    flexBasis: 132,
   },
   columnMetaFixed: {
     fontSize: theme.fontSize.base,
@@ -698,8 +752,9 @@ const styles = StyleSheet.create((theme) => ({
   columnMetaHost: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
+    flexGrow: 1,
     flexShrink: 0,
-    width: 120,
+    flexBasis: 120,
     marginLeft: theme.spacing[4],
     textAlign: "right" as const,
   },
