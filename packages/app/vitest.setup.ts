@@ -6,6 +6,10 @@ const globalWithTestShims = globalThis as typeof globalThis & Record<string, unk
 
 globalWithTestShims.__DEV__ = false;
 
+// tsconfig sets jsx: "react-native", so esbuild emits the classic React.createElement
+// transform and modules with JSX outside a component need React in global scope.
+globalWithTestShims.React = React;
+
 if (typeof globalThis.self === "undefined") {
   globalWithTestShims.self = globalThis;
 }

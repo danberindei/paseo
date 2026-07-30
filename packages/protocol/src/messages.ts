@@ -4597,6 +4597,7 @@ export const AgentForkContextResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     agentId: z.string(),
+    agentTitle: z.string().nullable().optional(),
     attachment: TextAttachmentSchema.nullable(),
     itemCount: z.number().int().nonnegative(),
     boundaryMessageId: z.string().nullable(),

@@ -7502,6 +7502,7 @@ export class Session {
         payload: {
           requestId: msg.requestId,
           agentId: msg.agentId,
+          agentTitle: agentPayload.title ?? null,
           attachment: forkContext.attachment,
           itemCount: forkContext.itemCount,
           boundaryCursor: forkContext.boundaryCursor,
