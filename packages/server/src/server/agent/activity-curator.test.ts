@@ -351,16 +351,19 @@ second line'`,
     expect(curateAgentActivity([])).toBe("No activity to display.");
   });
 
-  it("builds fork context from user messages, assistant messages, and tool summaries", () => {
+  it("carries every user message and the boundary turn's assistant and tool summaries", () => {
     const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
       agentTitle: "Source Agent",
       cwd: "/repo",
-      boundaryMessageId: "assistant-1",
+      boundaryMessageId: "assistant-2",
       rows: [
-        row(1, { type: "user_message", text: "Ship the thing", messageId: "user-1" }),
-        row(2, { type: "reasoning", text: "private chain of thought" }),
+        row(1, { type: "user_message", text: "Earlier task", messageId: "user-0" }),
+        row(2, { type: "assistant_message", text: "Earlier answer.", messageId: "assistant-1" }),
+        row(3, { type: "user_message", text: "Ship the thing", messageId: "user-1" }),
+        row(4, { type: "reasoning", text: "private chain of thought" }),
         row(
-          3,
+          5,
           toolCallItem({
             callId: "read-1",
             name: "read_file",
@@ -372,59 +375,278 @@ second line'`,
           }),
         ),
         row(
-          4,
+          6,
           toolCallItem({
             callId: "external-1",
             name: "paseo__create_agent",
             input: { initialPrompt: "do not include raw external tool input" },
           }),
         ),
-        row(5, {
+        row(7, {
           type: "assistant_message",
           text: "Done.",
-          messageId: "assistant-1",
+          messageId: "assistant-2",
         }),
-        row(6, {
+        row(8, {
           type: "assistant_message",
           text: "Later answer.",
-          messageId: "assistant-2",
+          messageId: "assistant-3",
         }),
       ],
     });
 
-    expect(result.boundaryMessageId).toBe("assistant-1");
+    expect(result.boundaryMessageId).toBe("assistant-2");
     expect(result.attachment).toMatchObject({
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
-      title: "Chat history",
+      title: "Source Agent",
     });
     expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
     expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
     expect(result.attachment.text).toContain("Source agent: Source Agent");
+    expect(result.attachment.text).toContain("Source agent id: agent-1234");
     expect(result.attachment.text).toContain("Source directory: /repo");
-    expect(result.attachment.text).toContain("[User] Ship the thing");
     expect(result.attachment.text).toContain("[Read] src/index.ts");
     expect(result.attachment.text).toContain("[paseo__create_agent]");
     expect(result.attachment.text).toContain("[Assistant] Done.");
+    expect(result.attachment.text).toContain("[User] Earlier task");
+    expect(result.attachment.text).toContain("[User] Ship the thing");
+    expect(result.attachment.text).not.toContain("Earlier answer.");
     expect(result.attachment.text).not.toContain("private chain of thought");
     expect(result.attachment.text).not.toContain("do not include raw external tool input");
     expect(result.attachment.text).not.toContain("Later answer.");
   });
 
-  it("does not cap fork context to the generic recent activity limit", () => {
-    const messageRows = Array.from({ length: 25 }, (_, index) =>
-      row(index + 1, {
-        type: "user_message",
-        text: `Message ${index + 1}`,
-        messageId: `user-${index + 1}`,
+  it("points the fork target at the source transcript when a path is given", () => {
+    const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
+      cwd: "/repo",
+      transcriptPath: "/home/dev/.claude/projects/-repo/session-1.jsonl",
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Done.", messageId: "assistant-1" }),
+        row(3, { type: "user_message", text: "Later task", messageId: "user-2" }),
+        row(4, { type: "assistant_message", text: "Later answer.", messageId: "assistant-2" }),
+      ],
+    });
+
+    expect(result.attachment.text).toContain(
+      "The source agent's full session transcript is at /home/dev/.claude/projects/-repo/session-1.jsonl.",
+    );
+    expect(result.attachment.text).toContain(
+      "Read only through assistant message ID assistant-1. Do not read or use transcript entries after that message.",
+    );
+    expect(result.attachment.text).toContain("Read within that boundary");
+    expect(result.attachment.text).not.toContain("Later task");
+    expect(result.attachment.text).not.toContain("Later answer.");
+    expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+  });
+
+  it("bounds fork history while preserving recent messages and transcript guidance", () => {
+    const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
+      agentTitle: "Source Agent",
+      cwd: "/repo",
+      transcriptPath: "/home/dev/.codex/sessions/rollout-session-1.jsonl",
+      boundaryMessageId: "checkpoint",
+      rows: [
+        row(1, { type: "user_message", text: "Old task " + "x".repeat(1_100_000) }),
+        row(2, { type: "assistant_message", text: "Old answer." }),
+        row(3, { type: "user_message", text: "Recent task" }),
+        row(4, { type: "assistant_message", text: "Recent answer." }),
+        row(5, { type: "user_message", text: "Continue the task" }),
+        row(6, { type: "assistant_message", text: "Latest answer.", messageId: "checkpoint" }),
+        row(7, { type: "user_message", text: "Beyond the selected checkpoint." }),
+      ],
+    });
+
+    expect(result.attachment.text.length).toBeLessThanOrEqual(100_000);
+    expect(result.attachment.text).toContain(
+      "[Earlier chat history omitted]\n[User] Recent task\n[User] Continue the task\n[Assistant] Latest answer.",
+    );
+    expect(result.attachment.text).not.toContain("Old task");
+    expect(result.attachment.text).not.toContain("Beyond the selected checkpoint.");
+    expect(result.attachment.text).toContain(
+      "The source agent's full session transcript is at /home/dev/.codex/sessions/rollout-session-1.jsonl.",
+    );
+    expect(result.attachment.text).toContain(
+      "Read only through assistant message ID checkpoint. Do not read or use transcript entries after that message.",
+    );
+    expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
+    expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+    expect(result.boundaryMessageId).toBe("checkpoint");
+  });
+
+  it("bounds one oversized fork message and display metadata while retaining its beginning and end", () => {
+    const result = buildAgentForkContextAttachment({
+      agentTitle: "T".repeat(200_000),
+      cwd: "/" + "p".repeat(200_000),
+      transcriptPath: "/home/dev/.codex/sessions/rollout-session-1.jsonl",
+      rows: [
+        row(1, {
+          type: "assistant_message",
+          text: "Beginning. " + "x".repeat(1_100_000) + " The end.",
+        }),
+      ],
+    });
+
+    expect(result.attachment.text.length).toBe(100_000);
+    expect(result.attachment.title).toBe("T".repeat(1_000));
+    expect(result.attachment.text).toContain("Source directory: /" + "p".repeat(999) + "\n");
+    expect(result.attachment.text).toContain("[Assistant] Beginning.");
+    expect(result.attachment.text).toContain("\n[Message truncated]\n");
+    expect(result.attachment.text).toContain("The end.");
+    expect(result.attachment.text).toContain(
+      "The source agent's full session transcript is at /home/dev/.codex/sessions/rollout-session-1.jsonl.",
+    );
+    expect(result.attachment.text).toContain(
+      "Read only transcript content represented by the summary above. Do not read or use later content, including anything appended after this fork context was created.",
+    );
+    expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
+    expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+  });
+
+  it("bounds accumulated user prompts even when each prompt fits individually", () => {
+    const oldest = "Old task " + "x".repeat(60_000);
+    const recent = "Recent task " + "y".repeat(60_000);
+    const result = buildAgentForkContextAttachment({
+      rows: [
+        row(1, { type: "user_message", text: oldest }),
+        row(2, { type: "assistant_message", text: "Old answer." }),
+        row(3, { type: "user_message", text: recent }),
+        row(4, { type: "assistant_message", text: "Latest answer." }),
+      ],
+    });
+
+    expect(result.attachment.text).toBe(
+      `<chat-history-summary>\nChat history from a previous Paseo agent.\n\n[Earlier chat history omitted]\n[User] ${recent}\n[Assistant] Latest answer.\n</chat-history-summary>`,
+    );
+    expect(result.attachment.text.length).toBeLessThanOrEqual(100_000);
+  });
+
+  it("preserves fork history that exactly fits the character budget", () => {
+    const prefix = "<chat-history-summary>\nChat history from a previous Paseo agent.\n\n[User] ";
+    const suffix = "\n</chat-history-summary>";
+    const text = "x".repeat(100_000 - prefix.length - suffix.length);
+    const result = buildAgentForkContextAttachment({
+      rows: [row(1, { type: "user_message", text })],
+    });
+
+    expect(result.attachment.text).toBe(prefix + text + suffix);
+    expect(result.attachment.text.length).toBe(100_000);
+  });
+
+  it("preserves transcript paths and boundary identifiers longer than the display metadata limit", () => {
+    const transcriptPath = "/sessions/" + "segment/".repeat(150) + "rollout.jsonl";
+    const boundaryMessageId = "message-" + "x".repeat(1_100);
+    const result = buildAgentForkContextAttachment({
+      transcriptPath,
+      boundaryMessageId,
+      rows: [
+        row(1, {
+          type: "assistant_message",
+          text: "Beginning. " + "x".repeat(200_000) + " The end.",
+          messageId: boundaryMessageId,
+        }),
+      ],
+    });
+
+    expect(result.attachment.text.length).toBe(100_000);
+    expect(result.attachment.text).toContain(
+      `The source agent's full session transcript is at ${transcriptPath}.`,
+    );
+    expect(result.attachment.text).toContain(
+      `Read only through assistant message ID ${boundaryMessageId}. Do not read or use transcript entries after that message.`,
+    );
+    expect(result.boundaryMessageId).toBe(boundaryMessageId);
+  });
+
+  it("rejects metadata that cannot fit without truncating the transcript path", () => {
+    expect(() =>
+      buildAgentForkContextAttachment({
+        transcriptPath: "/sessions/" + "segment/".repeat(12_500) + "rollout.jsonl",
+        rows: [],
+      }),
+    ).toThrow("Fork context metadata exceeds the character limit.");
+  });
+
+  it("limits an in-flight fork to transcript content represented by the summary", () => {
+    const result = buildAgentForkContextAttachment({
+      transcriptPath: "/home/dev/.codex/sessions/rollout-session-1.jsonl",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Still working" }),
+      ],
+    });
+
+    expect(result.attachment.text).toContain(
+      "Read only transcript content represented by the summary above. Do not read or use later content, including anything appended after this fork context was created.",
+    );
+  });
+
+  it("omits the transcript guidance when no path is given", () => {
+    const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
+      cwd: "/repo",
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Done.", messageId: "assistant-1" }),
+      ],
+    });
+
+    expect(result.attachment.text).not.toContain("full session transcript");
+  });
+
+  it("keeps the sub-agent launch marker of the forked turn", () => {
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Investigate", messageId: "user-1" }),
+        row(
+          2,
+          toolCallItem({
+            callId: "task-1",
+            name: "Task",
+            detail: {
+              type: "sub_agent",
+              subAgentType: "Explore",
+              description: "Investigate repository",
+              log: "",
+            },
+          }),
+        ),
+        row(3, { type: "assistant_message", text: "Done.", messageId: "assistant-1" }),
+      ],
+    });
+
+    expect(result.attachment.title).toBe("Chat history");
+    expect(result.attachment.text).toContain("[Explore] Investigate repository");
+    expect(result.attachment.text).toContain("[Assistant] Done.");
+  });
+
+  it("does not cap a long turn to the generic recent activity limit", () => {
+    const toolRows = Array.from({ length: 30 }, (_, index) =>
+      row(index + 2, {
+        ...toolCallItem({
+          callId: `read-${index}`,
+          name: "read_file",
+          detail: {
+            type: "read",
+            filePath: `file-${index}.ts`,
+            content: "x",
+          },
+        }),
       }),
     );
     const result = buildAgentForkContextAttachment({
       boundaryMessageId: "assistant-1",
       rows: [
-        ...messageRows,
-        row(26, {
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        ...toolRows,
+        row(32, {
           type: "assistant_message",
           text: "Done.",
           messageId: "assistant-1",
@@ -432,9 +654,10 @@ second line'`,
       ],
     });
 
-    expect(result.itemCount).toBe(26);
-    expect(result.attachment.text).toContain("[User] Message 1");
-    expect(result.attachment.text).toContain("[User] Message 25");
+    expect(result.itemCount).toBe(32);
+    expect(result.attachment.text).toContain("[User] Go");
+    expect(result.attachment.text).toContain("[Read] file-0.ts");
+    expect(result.attachment.text).toContain("[Read] file-29.ts");
     expect(result.attachment.text).toContain("[Assistant] Done.");
   });
 
@@ -533,6 +756,50 @@ second line'`,
     expect(result.attachment.text).not.toContain("This belongs to a later turn.");
   });
 
+  it("rejects a transcript message id that is later than the selected timeline cursor", () => {
+    expect(() =>
+      buildAgentForkContextAttachment({
+        transcriptPath: "/home/dev/.codex/sessions/rollout-session-1.jsonl",
+        cursorBoundary: {
+          timelineEpoch: "timeline-1",
+          cursor: { epoch: "timeline-1", seq: 2 },
+        },
+        boundaryMessageId: "assistant-2",
+        rows: [
+          row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+          row(2, { type: "assistant_message", text: "Selected answer.", messageId: "assistant-1" }),
+          row(3, { type: "user_message", text: "Later task", messageId: "user-2" }),
+          row(4, { type: "assistant_message", text: "Later answer.", messageId: "assistant-2" }),
+        ],
+      }),
+    ).toThrow("Selected assistant message does not match timeline position.");
+  });
+
+  it("uses a matching transcript message id with its timeline cursor", () => {
+    const result = buildAgentForkContextAttachment({
+      transcriptPath: "/home/dev/.codex/sessions/rollout-session-1.jsonl",
+      cursorBoundary: {
+        timelineEpoch: "timeline-1",
+        cursor: { epoch: "timeline-1", seq: 2 },
+      },
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Selected answer.", messageId: "assistant-1" }),
+        row(3, { type: "user_message", text: "Later task", messageId: "user-2" }),
+        row(4, { type: "assistant_message", text: "Later answer.", messageId: "assistant-2" }),
+      ],
+    });
+
+    expect(result.boundaryCursor).toEqual({ epoch: "timeline-1", seq: 2 });
+    expect(result.boundaryMessageId).toBe("assistant-1");
+    expect(result.attachment.text).toContain(
+      "Read only through assistant message ID assistant-1. Do not read or use transcript entries after that message.",
+    );
+    expect(result.attachment.text).not.toContain("Later task");
+    expect(result.attachment.text).not.toContain("Later answer.");
+  });
+
   it("rejects a cursor from a previous timeline epoch", () => {
     expect(() =>
       buildAgentForkContextAttachment({
@@ -552,6 +819,40 @@ second line'`,
         rows: [row(1, { type: "assistant_message", text: "Done.", messageId: "assistant-1" })],
       }),
     ).toThrow("Selected assistant message is no longer available.");
+  });
+
+  it("returns an empty context for an empty timeline with no boundary", () => {
+    const result = buildAgentForkContextAttachment({ rows: [] });
+
+    expect(result.itemCount).toBe(0);
+    expect(result.boundaryCursor).toBeNull();
+    expect(result.boundaryMessageId).toBeNull();
+    expect(result.attachment.text).toContain("No chat history to display.");
+  });
+
+  it("strips a nested chat-history-summary from a preceding user message", () => {
+    const nested = [
+      "<chat-history-summary>",
+      "Chat history from a previous Paseo agent.",
+      "Source agent id: old-agent-id",
+      "Source directory: /home/user/worklog",
+      "",
+      "[Read] docs/old.md",
+      "</chat-history-summary>",
+    ].join("\n");
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: nested, messageId: "user-1" }),
+        row(2, { type: "user_message", text: "Continue the work", messageId: "user-2" }),
+        row(3, { type: "assistant_message", text: "Working.", messageId: "assistant-1" }),
+      ],
+    });
+
+    expect((result.attachment.text.match(/<chat-history-summary>/g) ?? []).length).toBe(1);
+    expect(result.attachment.text).toContain("[User] Continue the work");
+    expect(result.attachment.text).not.toContain("old-agent-id");
+    expect(result.attachment.text).not.toContain("[Read] docs/old.md");
   });
 });
 

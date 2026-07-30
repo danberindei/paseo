@@ -4995,6 +4995,7 @@ export class Session {
       const { provisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
+        attachments,
       });
 
       const firstAgentContext: FirstAgentContext = {
@@ -9063,14 +9064,17 @@ export class Session {
         direction: "tail",
         limit: 0,
       });
+      const transcriptPath = await this.agentManager.resolveAgentTranscriptPath(msg.agentId);
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
           ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
           : null,
         boundaryMessageId: msg.boundaryMessageId,
+        agentId: msg.agentId,
         agentTitle: agentPayload.title,
         cwd: snapshot.cwd,
+        transcriptPath,
       });
 
       this.emit({
@@ -9078,6 +9082,7 @@ export class Session {
         payload: {
           requestId: msg.requestId,
           agentId: msg.agentId,
+          agentTitle: agentPayload.title ?? null,
           attachment: forkContext.attachment,
           itemCount: forkContext.itemCount,
           boundaryCursor: forkContext.boundaryCursor,

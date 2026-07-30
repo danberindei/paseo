@@ -1970,6 +1970,20 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
+  async resolveSessionTranscriptPath(input: {
+    handle: AgentPersistenceHandle;
+    cwd: string;
+  }): Promise<string | null> {
+    const sessionId = input.handle.sessionId?.trim();
+    if (!sessionId) {
+      return null;
+    }
+    const configDir = claudeConfigDir(this.buildProviderEnv());
+    const projectDir = claudeProjectDirSync(input.cwd, { configDir });
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+    return (await pathExists(transcriptPath)) ? transcriptPath : null;
+  }
+
   async isAvailable(): Promise<boolean> {
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,

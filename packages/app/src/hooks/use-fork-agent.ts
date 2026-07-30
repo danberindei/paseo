@@ -41,10 +41,10 @@ export type ForkAgentSource = Pick<
 >;
 
 /**
- * Boundary marking where the forked context should stop. Omit it entirely to
- * fork the whole timeline *up to now* — including a partially streamed
- * in-flight turn. `selectForkContextRows` projects the full timeline when
- * neither field is present, which is what makes mid-run forking work.
+ * Boundary marking which turn the forked context copies. The fork always takes
+ * a single turn: the messages since the last user message up to the boundary.
+ * Omit both fields to fork the last turn up to now, including a partially
+ * streamed in-flight turn, which is what makes mid-run forking work.
  */
 export type ForkAgentBoundary = Pick<
   AgentForkContextOptions,
@@ -83,6 +83,7 @@ function buildChatHistoryAttachment(input: {
     source: {
       serverId: input.serverId,
       agentId: input.agentId,
+      agentTitle: input.payload.agentTitle ?? null,
       boundaryMessageId: input.payload.boundaryMessageId,
       boundaryCursor: input.payload.boundaryCursor,
       itemCount: input.payload.itemCount,

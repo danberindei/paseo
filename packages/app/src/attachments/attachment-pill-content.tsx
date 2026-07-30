@@ -49,7 +49,7 @@ function getTextAttachmentSubtitle(
   t: TFunction,
 ): string {
   if (attachment.contextKind === "chat_history") {
-    return "Previous conversation";
+    return "From previous conversation";
   }
   return t("message.attachments.text");
 }

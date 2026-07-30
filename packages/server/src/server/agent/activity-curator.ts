@@ -5,7 +5,11 @@ import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
-import { projectTimelineRows, selectItemsByProjectedLimit } from "./timeline-projection.js";
+import {
+  projectTimelineRows,
+  selectItemsByProjectedLimit,
+  type TimelineProjectionEntry,
+} from "./timeline-projection.js";
 
 const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
@@ -13,12 +17,9 @@ const MAX_TOOL_SUMMARY_CHARS = 200;
 const MAX_FORK_CONTEXT_CHARS = 100_000;
 const MAX_FORK_METADATA_CHARS = 1_000;
 const FORK_HISTORY_OMITTED = "[Earlier chat history omitted]\n";
-// A fork copies only these kinds.
-const FORK_CONTEXT_KINDS: readonly AgentTimelineItem["type"][] = [
-  "user_message",
-  "assistant_message",
-  "tool_call",
-];
+const FORK_MESSAGE_TRUNCATED = "\n[Message truncated]\n";
+const FORK_USER_KINDS: readonly AgentTimelineItem["type"][] = ["user_message"];
+const FORK_TURN_KINDS: readonly AgentTimelineItem["type"][] = ["assistant_message", "tool_call"];
 
 interface ActivityCuratorOptions {
   maxItems?: number;
@@ -236,11 +237,21 @@ interface ForkCursorBoundary {
   cursor: { epoch: string; seq: number };
 }
 
+function findTurnStartIndex(rows: readonly TimelineProjectionEntry[], endIndex: number): number {
+  for (let index = endIndex; index >= 0; index--) {
+    if (rows[index].item.type === "user_message") {
+      return index + 1;
+    }
+  }
+  return 0;
+}
+
 function selectForkContextRows(input: {
   rows: readonly AgentTimelineRow[];
   cursorBoundary?: ForkCursorBoundary | null;
   boundaryMessageId?: string | null;
 }): {
+  precedingUserItems: AgentTimelineItem[];
   items: AgentTimelineItem[];
   boundaryCursor: { epoch: string; seq: number } | null;
   boundaryMessageId: string | null;
@@ -248,43 +259,65 @@ function selectForkContextRows(input: {
   const projectedRows = projectTimelineRows({ rows: input.rows, mode: "projected" });
   const boundaryCursor = input.cursorBoundary?.cursor ?? null;
   const boundaryMessageId = input.boundaryMessageId?.trim() || null;
-  if (!boundaryCursor && !boundaryMessageId) {
-    return {
-      items: projectedRows.map((entry) => entry.item),
-      boundaryCursor: null,
-      boundaryMessageId: null,
-    };
-  }
-
-  if (
-    input.cursorBoundary &&
-    input.cursorBoundary.cursor.epoch !== input.cursorBoundary.timelineEpoch
-  ) {
-    throw new Error("Selected timeline position is no longer available.");
-  }
-  const boundaryIndex = boundaryCursor
-    ? projectedRows.findIndex((row) => row.seqEnd === boundaryCursor.seq)
-    : projectedRows.findLastIndex(
+  const resolveBoundaryIndex = (): number => {
+    if (boundaryCursor) {
+      if (
+        input.cursorBoundary &&
+        input.cursorBoundary.cursor.epoch !== input.cursorBoundary.timelineEpoch
+      ) {
+        throw new Error("Selected timeline position is no longer available.");
+      }
+      const index = projectedRows.findIndex((row) => row.seqEnd === boundaryCursor.seq);
+      if (index < 0) {
+        throw new Error("Selected timeline position is no longer available.");
+      }
+      return index;
+    }
+    if (boundaryMessageId) {
+      const index = projectedRows.findLastIndex(
         (row) => row.item.type === "assistant_message" && row.item.messageId === boundaryMessageId,
       );
+      if (index < 0) {
+        throw new Error("Selected assistant message is no longer available.");
+      }
+      return index;
+    }
+    return projectedRows.length - 1;
+  };
+
+  const boundaryIndex = resolveBoundaryIndex();
   if (boundaryIndex < 0) {
-    throw new Error(
-      boundaryCursor
-        ? "Selected timeline position is no longer available."
-        : "Selected assistant message is no longer available.",
-    );
+    return { precedingUserItems: [], items: [], boundaryCursor: null, boundaryMessageId: null };
   }
-  const boundarySeq = projectedRows[boundaryIndex].seqEnd;
+  const boundaryRow = projectedRows[boundaryIndex];
+  if (boundaryCursor && boundaryMessageId) {
+    const selectedMessageId =
+      boundaryRow.item.type === "assistant_message" ? boundaryRow.item.messageId : undefined;
+    if (selectedMessageId !== boundaryMessageId) {
+      throw new Error("Selected assistant message does not match timeline position.");
+    }
+  }
+  const boundarySeq = boundaryRow.seqEnd;
+  const turnStartIndex = findTurnStartIndex(projectedRows, boundaryIndex);
+  const precedingUserItems = projectedRows
+    .slice(0, turnStartIndex)
+    .map((entry) => entry.item)
+    .filter((item) => item.type === "user_message");
   // Only tool calls and plugin cards fold later updates into an earlier row, and a fork doesn't
   // copy plugin cards. So the only row that spans the checkpoint and still reaches the fork is a
   // tool call.
-  const items = projectedRows.flatMap((row) => {
+  const items = projectedRows.slice(turnStartIndex, boundaryIndex + 1).flatMap((row) => {
     if (row.seqEnd <= boundarySeq) return [row.item];
     if (row.seqStart > boundarySeq || row.item.type !== "tool_call") return [];
     return [toolCallAtCheckpoint(row.item)];
   });
 
-  return { items, boundaryCursor, boundaryMessageId };
+  return {
+    precedingUserItems,
+    items,
+    boundaryCursor,
+    boundaryMessageId,
+  };
 }
 
 /**
@@ -296,58 +329,102 @@ function toolCallAtCheckpoint(item: ToolCallTimelineItem): ToolCallTimelineItem 
   return { ...item, status: "running", error: null };
 }
 
-function trimContextMetadata(value: string | null | undefined): string | null {
+function trimContextMetadata(value: string | null | undefined, maxChars?: number): string | null {
   const trimmed = value?.trim();
-  return trimmed ? trimmed.slice(0, MAX_FORK_METADATA_CHARS) : null;
+  return trimmed ? trimmed.slice(0, maxChars) : null;
 }
 
 function buildForkContextText(input: {
   body: string;
+  agentId?: string | null;
   agentTitle?: string | null;
   cwd?: string | null;
+  transcriptPath?: string | null;
+  transcriptBoundaryMessageId?: string | null;
 }): string {
   const header = ["Chat history from a previous Paseo agent."];
-  const agentTitle = trimContextMetadata(input.agentTitle);
-  const cwd = trimContextMetadata(input.cwd);
+  const agentId = trimContextMetadata(input.agentId);
+  const agentTitle = trimContextMetadata(input.agentTitle, MAX_FORK_METADATA_CHARS);
+  const cwd = trimContextMetadata(input.cwd, MAX_FORK_METADATA_CHARS);
   if (agentTitle) {
     header.push(`Source agent: ${agentTitle}`);
+  }
+  if (agentId) {
+    header.push(`Source agent id: ${agentId}`);
   }
   if (cwd) {
     header.push(`Source directory: ${cwd}`);
   }
-  return `<chat-history-summary>\n${header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
+  const sections = [header.join("\n"), input.body];
+  const transcriptPath = trimContextMetadata(input.transcriptPath);
+  if (transcriptPath) {
+    const transcriptBoundaryMessageId = trimContextMetadata(input.transcriptBoundaryMessageId);
+    sections.push(
+      [
+        "This summary is condensed: it drops tool inputs, tool output, reasoning, and earlier-turn assistant messages such as review findings.",
+        `The source agent's full session transcript is at ${transcriptPath}.`,
+        transcriptBoundaryMessageId
+          ? `Read only through assistant message ID ${transcriptBoundaryMessageId}. Do not read or use transcript entries after that message.`
+          : "Read only transcript content represented by the summary above. Do not read or use later content, including anything appended after this fork context was created.",
+        "Read within that boundary when you need detail this summary omits.",
+      ].join("\n"),
+    );
+  }
+  return `<chat-history-summary>\n${sections.join("\n\n")}\n</chat-history-summary>`;
 }
 
 function fitForkContextEntries(entries: ActivityEntry[], budget: number): string {
   const length = entries.reduce((total, entry) => total + entry.text.length + 1, -1);
-  if (length <= budget) return entries.map((entry) => entry.text).join("\n");
+  if (length <= budget) {
+    return entries.map((entry) => entry.text).join("\n");
+  }
 
   const selected: string[] = [];
   let remaining = budget - FORK_HISTORY_OMITTED.length;
   for (let index = entries.length - 1; index >= 0; index--) {
-    const text = entries[index]!.text;
+    const text = entries[index].text;
     const size = text.length + (selected.length > 0 ? 1 : 0);
-    if (size > remaining) {
-      if (selected.length === 0) {
-        const marker = "\n[Message truncated]\n";
-        const available = remaining - marker.length;
-        const head = Math.ceil(available / 2);
-        selected.push(text.slice(0, head) + marker + text.slice(-(available - head)));
-      }
-      break;
+    if (size <= remaining) {
+      selected.push(text);
+      remaining -= size;
+      continue;
     }
-    selected.push(text);
-    remaining -= size;
+    if (selected.length === 0) {
+      const available = remaining - FORK_MESSAGE_TRUNCATED.length;
+      const head = Math.ceil(available / 2);
+      const tail = available - head;
+      selected.push(text.slice(0, head) + FORK_MESSAGE_TRUNCATED + text.slice(text.length - tail));
+    }
+    break;
   }
   return FORK_HISTORY_OMITTED + selected.toReversed().join("\n");
+}
+
+const CHAT_HISTORY_SUMMARY_BLOCK = /<chat-history-summary>[\s\S]*?<\/chat-history-summary>/g;
+
+function stripNestedChatHistorySummaries(items: AgentTimelineItem[]): AgentTimelineItem[] {
+  const result: AgentTimelineItem[] = [];
+  for (const item of items) {
+    if (item.type !== "user_message") {
+      result.push(item);
+      continue;
+    }
+    const stripped = item.text.replace(CHAT_HISTORY_SUMMARY_BLOCK, "").trim();
+    if (stripped) {
+      result.push({ ...item, text: stripped });
+    }
+  }
+  return result;
 }
 
 export function buildAgentForkContextAttachment(input: {
   rows: readonly AgentTimelineRow[];
   cursorBoundary?: ForkCursorBoundary | null;
   boundaryMessageId?: string | null;
+  agentId?: string | null;
   agentTitle?: string | null;
   cwd?: string | null;
+  transcriptPath?: string | null;
 }): {
   attachment: TextAgentAttachment;
   itemCount: number;
@@ -359,14 +436,31 @@ export function buildAgentForkContextAttachment(input: {
     cursorBoundary: input.cursorBoundary,
     boundaryMessageId: input.boundaryMessageId,
   });
-  const entries = curateProjectedActivityEntries(selected.items, {
+  const userEntries = curateProjectedActivityEntries(
+    stripNestedChatHistorySummaries(selected.precedingUserItems),
+    {
+      maxItems: 0,
+      includeKinds: FORK_USER_KINDS,
+    },
+  );
+  const turnEntries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
     labelAssistantMessages: true,
-    includeKinds: FORK_CONTEXT_KINDS,
+    includeKinds: FORK_TURN_KINDS,
     includeExternalToolInput: false,
   });
-  const metadata = { agentTitle: input.agentTitle, cwd: input.cwd };
+  const entries = [...userEntries, ...turnEntries];
+  const metadata = {
+    agentId: input.agentId,
+    agentTitle: input.agentTitle,
+    cwd: input.cwd,
+    transcriptPath: input.transcriptPath,
+    transcriptBoundaryMessageId: selected.boundaryMessageId,
+  };
   const budget = MAX_FORK_CONTEXT_CHARS - buildForkContextText({ body: "", ...metadata }).length;
+  if (budget < FORK_HISTORY_OMITTED.length + FORK_MESSAGE_TRUNCATED.length) {
+    throw new Error("Fork context metadata exceeds the character limit.");
+  }
   const body =
     entries.length > 0 ? fitForkContextEntries(entries, budget) : "No chat history to display.";
   return {
@@ -374,14 +468,10 @@ export function buildAgentForkContextAttachment(input: {
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
-      title: "Chat history",
-      text: buildForkContextText({
-        body,
-        agentTitle: input.agentTitle,
-        cwd: input.cwd,
-      }),
+      title: trimContextMetadata(input.agentTitle, MAX_FORK_METADATA_CHARS) ?? "Chat history",
+      text: buildForkContextText({ body, ...metadata }),
     },
-    itemCount: selected.items.length,
+    itemCount: selected.precedingUserItems.length + selected.items.length,
     boundaryCursor: selected.boundaryCursor,
     boundaryMessageId: selected.boundaryMessageId,
   };

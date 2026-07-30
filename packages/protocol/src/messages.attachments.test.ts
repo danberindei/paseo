@@ -50,6 +50,23 @@ describe("shared messages attachments", () => {
     ).toBeUndefined();
   });
 
+  it("carries the source agent title on fork-context responses", () => {
+    expect(
+      AgentForkContextResponseMessageSchema.parse({
+        type: "agent.fork_context.response",
+        payload: {
+          requestId: "fork-1",
+          agentId: "agent-1",
+          agentTitle: "Fix the sidebar quota",
+          attachment: null,
+          itemCount: 2,
+          boundaryMessageId: null,
+          error: null,
+        },
+      }).payload.agentTitle,
+    ).toBe("Fix the sidebar quota");
+  });
+
   it("keeps valid review attachments", () => {
     const parsed = SendAgentMessageRequestSchema.parse({
       type: "send_agent_message_request",

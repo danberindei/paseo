@@ -24,6 +24,7 @@ interface WorkspaceAttachmentBindingInput {
   normalAttachments: UserComposerAttachment[];
   workspaceAttachments: readonly WorkspaceComposerAttachment[];
   onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
+  onExpandChatHistoryAttachment?: (text: string) => void;
 }
 
 interface RemoveWorkspaceAttachmentInput {
@@ -104,6 +105,7 @@ function useWorkspaceAttachmentBinding({
   normalAttachments,
   workspaceAttachments,
   onOpenWorkspaceAttachment,
+  onExpandChatHistoryAttachment,
 }: WorkspaceAttachmentBindingInput): ComposerWorkspaceAttachmentBinding {
   const clearReviewDraft = useClearReviewDraft();
   const [suppressedKeys, setSuppressedKeys] = useState<readonly string[]>([]);
@@ -184,13 +186,21 @@ function useWorkspaceAttachmentBinding({
 
   const openAttachment = useCallback(
     ({ attachment }: OpenWorkspaceAttachmentInput) => {
-      if (!isWorkspaceAttachment(attachment) || attachment.kind !== "review") {
+      if (!isWorkspaceAttachment(attachment)) {
+        return false;
+      }
+      if (attachment.kind === "chat_history") {
+        onExpandChatHistoryAttachment?.(attachment.attachment.text);
+        removeWorkspaceAttachmentsMatching(getAttachmentKey(attachment));
+        return true;
+      }
+      if (attachment.kind !== "review") {
         return false;
       }
       onOpenWorkspaceAttachment?.(attachment);
       return true;
     },
-    [onOpenWorkspaceAttachment],
+    [onExpandChatHistoryAttachment, onOpenWorkspaceAttachment],
   );
 
   const resetSuppression = useCallback(() => {

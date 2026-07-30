@@ -763,6 +763,43 @@ function resolveCodexHomeDir(env: NodeJS.ProcessEnv): string {
   return env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 }
 
+async function findCodexRolloutPath(input: {
+  sessionsRoot: string;
+  sessionId: string;
+}): Promise<string | null> {
+  const { sessionsRoot, sessionId } = input;
+  const suffix = `-${sessionId}.jsonl`;
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const directories: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile()) {
+      if (entry.name.startsWith("rollout-") && entry.name.endsWith(suffix)) {
+        return path.join(sessionsRoot, entry.name);
+      }
+    } else if (entry.isDirectory()) {
+      directories.push(entry.name);
+    }
+  }
+  // Codex nests rollouts under sessions/YYYY/MM/DD; scan newest dates first so a
+  // recent session resolves without walking the whole tree.
+  directories.sort((a, b) => b.localeCompare(a));
+  for (const name of directories) {
+    const found = await findCodexRolloutPath({
+      sessionsRoot: path.join(sessionsRoot, name),
+      sessionId,
+    });
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
 function decodeEscapedChar(next: string): string {
   if (next === "n") return "\n";
   if (next === "t") return "\t";
@@ -8942,6 +8979,21 @@ export class CodexAppServerAgentClient implements AgentClient {
   async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
     // This client discovers through host configuration, independent of project cwd.
     return "host";
+  }
+
+  async resolveSessionTranscriptPath(input: {
+    handle: AgentPersistenceHandle;
+    cwd: string;
+  }): Promise<string | null> {
+    const sessionId = input.handle.sessionId?.trim();
+    if (!sessionId) {
+      return null;
+    }
+    const sessionsRoot = path.join(
+      resolveCodexHomeDir(buildCodexAppServerEnv(this.runtimeSettings)),
+      "sessions",
+    );
+    return findCodexRolloutPath({ sessionsRoot, sessionId });
   }
 
   async fetchCatalog(

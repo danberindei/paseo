@@ -85,6 +85,7 @@ export interface ChatHistoryContextAttachment {
   source: {
     serverId: string;
     agentId: string;
+    agentTitle?: string | null;
     boundaryMessageId?: string | null;
     boundaryCursor?: { epoch: string; seq: number } | null;
     itemCount?: number;

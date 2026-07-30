@@ -632,6 +632,7 @@ function wrapClientProvider(
       : undefined,
     resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    resolveSessionTranscriptPath: inner.resolveSessionTranscriptPath?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
     installation: inner.installation,
