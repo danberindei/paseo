@@ -70,7 +70,7 @@ export function useComposerHeight({
     [setBoundedHeight, textareaRef],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof document === "undefined") return;
     const mirror = document.createElement("textarea");
     mirror.setAttribute("aria-hidden", "true");
