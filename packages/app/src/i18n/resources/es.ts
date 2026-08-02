@@ -169,6 +169,12 @@ export const es: TranslationResources = {
       title: "Adjuntar problema oPR",
       title_mr: "Adjuntar problema o MR",
     },
+
+    idleMessages: {
+      enable: "Enviar al quedar inactivo",
+      disable: "Cancelar envío por inactividad",
+      hostDisconnected: "Hostno está conectado",
+    },
   },
   agentControls: {
     provider: {
@@ -2421,6 +2427,19 @@ export const es: TranslationResources = {
           sheetTitle: "Agregar mensaje del sistema",
           accessibilityLabel: "Agregar mensaje del sistema",
           placeholder: "Mantenga siempre respuestas concisas.",
+          edit: "Editar",
+          reset: "Restablecer",
+          save: "Guardar",
+          saving: "Guardando...",
+        },
+        idleMessages: {
+          title: "Mensajes de inactividad",
+          hint: "Envía un mensaje al agente después de un tiempo de inactividad",
+          sheetTitle: "Mensajes de inactividad",
+          idleMinutesLabel: "Minutos de inactividad",
+          idleMinutesAccessibilityLabel: "Minutos de inactividad antes del envío",
+          messagesLabel: "Mensajes de inactividad",
+          messagesHint: "Un mensaje por línea, enviado cuando un agente queda inactivo",
           edit: "Editar",
           reset: "Restablecer",
           save: "Guardar",

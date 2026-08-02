@@ -30,7 +30,7 @@ export interface LifecycleAgentManager {
     agentId: string,
     updates: {
       title?: string;
-      labels?: Record<string, string>;
+      labels?: Record<string, string | null>;
     },
   ): Promise<void>;
 }
@@ -161,7 +161,7 @@ export async function updateAgentCommand(
   input: {
     agentId: string;
     name?: string;
-    labels?: Record<string, string>;
+    labels?: Record<string, string | null>;
   },
 ): Promise<UpdateAgentResult> {
   const title = input.name?.trim();

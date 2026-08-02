@@ -169,6 +169,12 @@ export const zhCN: TranslationResources = {
       title: "附加 issue 或 PR",
       title_mr: "附加 issue 或 MR",
     },
+
+    idleMessages: {
+      enable: "闲置时发送",
+      disable: "取消闲置发送",
+      hostDisconnected: "Host 未连接",
+    },
   },
   agentControls: {
     provider: {
@@ -2341,6 +2347,19 @@ export const zhCN: TranslationResources = {
           sheetTitle: "追加 system prompt",
           accessibilityLabel: "追加 system prompt",
           placeholder: "始终保持回复简洁。",
+          edit: "编辑",
+          reset: "重置",
+          save: "保存",
+          saving: "保存中...",
+        },
+        idleMessages: {
+          title: "闲置消息",
+          hint: "Agent 闲置一段时间后向其发送消息",
+          sheetTitle: "闲置消息",
+          idleMinutesLabel: "闲置分钟数",
+          idleMinutesAccessibilityLabel: "发送前的闲置分钟数",
+          messagesLabel: "闲置消息",
+          messagesHint: "每行一条消息，当 Agent 闲置时发送",
           edit: "编辑",
           reset: "重置",
           save: "保存",

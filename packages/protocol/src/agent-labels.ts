@@ -1,4 +1,5 @@
 export const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
+export const IDLE_MESSAGE_LABEL = "paseo.idle-message";
 const OPEN_AGENT_TAB_LABEL_PREFIX = "paseo.open-agent-tab.";
 
 export function getOpenAgentTabLabel(clientId: string): string {
@@ -28,4 +29,11 @@ export function hasOpenAgentTab(labels: Record<string, unknown> | null | undefin
   return Object.entries(labels ?? {}).some(
     ([label, value]) => isOpenAgentTabLabel(label) && value === "true",
   );
+}
+
+export function getIdleMessage(
+  labels: Record<string, string> | Record<string, unknown> | null | undefined,
+): string | null {
+  const value = labels?.[IDLE_MESSAGE_LABEL];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }

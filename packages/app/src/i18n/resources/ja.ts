@@ -169,6 +169,12 @@ export const ja: TranslationResources = {
       title: "イシューまたはPRを添付",
       title_mr: "イシューまたはMRを添付",
     },
+
+    idleMessages: {
+      enable: "アイドル時に送信",
+      disable: "アイドル送信を取り消す",
+      hostDisconnected: "ホストが接続されていません",
+    },
   },
   agentControls: {
     provider: {
@@ -2388,6 +2394,19 @@ export const ja: TranslationResources = {
           sheetTitle: "システムプロンプトを追加",
           accessibilityLabel: "システムプロンプトを追加",
           placeholder: "常に返答を簡潔にしてください。",
+          edit: "編集",
+          reset: "リセット",
+          save: "保存",
+          saving: "保存中...",
+        },
+        idleMessages: {
+          title: "アイドルメッセージ",
+          hint: "エージェントがしばらくアイドル状態になった後にメッセージを送信します",
+          sheetTitle: "アイドルメッセージ",
+          idleMinutesLabel: "アイドル時間（分）",
+          idleMinutesAccessibilityLabel: "送信までのアイドル時間（分）",
+          messagesLabel: "アイドルメッセージ",
+          messagesHint: "エージェントがアイドルになったときに送信される、1行に1つのメッセージ",
           edit: "編集",
           reset: "リセット",
           save: "保存",

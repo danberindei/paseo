@@ -152,6 +152,23 @@ describe("server config", () => {
     expect(config.configReload?.overrideControlledPaths).toEqual(expected);
   });
 
+  test("resolves idleMessages from the persisted messages list", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-idle-message-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        features: {
+          idleMessages: { idleMinutes: 30, messages: ["/a", "/b"] },
+        },
+      }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.idleMessagesConfig?.messages).toEqual(["/a", "/b"]);
+  });
+
   test("resolves bundled web UI path from source-tree modules", () => {
     const root = path.parse(process.cwd()).root;
     expect(

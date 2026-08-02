@@ -17,7 +17,11 @@ import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
-import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import {
+  getOpenAgentTabLabel,
+  IDLE_MESSAGE_LABEL,
+  PARENT_AGENT_ID_LABEL,
+} from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -1189,6 +1193,38 @@ class McpCapableTestAgentClient extends TestAgentClient {
       provider: this.provider,
       cwd: config?.cwd ?? process.cwd(),
     });
+  }
+}
+
+class PromptRecordingAgentSession extends TestAgentSession {
+  constructor(
+    config: AgentSessionConfig,
+    private readonly prompts: string[],
+  ) {
+    super(config);
+  }
+
+  override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+    return super.startTurn();
+  }
+}
+
+class PromptRecordingAgentClient extends TestAgentClient {
+  readonly prompts: string[] = [];
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    return new PromptRecordingAgentSession(config, this.prompts);
+  }
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    return new PromptRecordingAgentSession(
+      { provider: this.provider, cwd: config?.cwd ?? process.cwd() },
+      this.prompts,
+    );
   }
 }
 
@@ -4647,6 +4683,500 @@ test("runAgent persists finished attention and idle status without an external s
   expect(persisted?.requiresAttention).toBe(true);
   expect(persisted?.attentionReason).toBe("finished");
   expect(persisted?.attentionTimestamp).toEqual(expect.any(String));
+});
+
+test("idle messages sends the configured prompt after the agent has been idle long enough", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000200",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+
+    expect(client.prompts).toEqual(["say hello"]);
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("idle messages config changes reschedule idle agents", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-config-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000202",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages config test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+
+    await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+    manager.setIdleMessagesConfig({
+      idleMinutes: 10,
+      messages: ["/session-handoff"],
+    });
+
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(client.prompts).toEqual(["say hello"]);
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("idle messages runs immediately when a config change shortens the threshold below the elapsed idle time", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-expired-config-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000212",
+      idleMessagesConfig: { idleMinutes: 10, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Expired idle messages config test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+
+    manager.setIdleMessagesConfig({
+      idleMinutes: 5,
+      messages: ["/session-handoff"],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reloading an idle agent does not restart its idle-message timer", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-reload-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000203",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages reload test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+
+    await manager.reloadAgentSession(snapshot.id);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+    expect(client.prompts).toEqual(["say hello"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("starting a new turn cancels and reschedules the pending idle-message timer", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-cancel-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000201",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages cancel test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+
+    // 4 minutes in: the original 5-minute timer is still pending.
+    await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+
+    // Mirrors the RPC layer clearing attention when the user sends a new
+    // prompt, which is what allows a running->idle transition to reschedule.
+    await manager.clearAgentAttention(snapshot.id);
+
+    const secondRun = manager.runAgent(snapshot.id, "still working");
+    await vi.advanceTimersByTimeAsync(0);
+    await secondRun;
+
+    // The original timer would have fired at the 5-minute mark; confirm it
+    // was canceled by the second turn instead of firing here.
+    await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "still working"]);
+
+    // The rescheduled timer (5 minutes after the second turn) fires now.
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "still working", "/session-handoff"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("idle messages does not re-fire after its own run completes, even when attention is cleared", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-no-loop-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000210",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages no-loop test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+    expect(client.prompts).toEqual(["say hello"]);
+
+    // The app clears the "finished" badge while the agent sits idle, so the
+    // the idle-message run's own running->idle transition reaches the reschedule path.
+    await manager.clearAgentAttention(snapshot.id);
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+
+    // The idle-message turn does not advance the idle anchor, so its completion is
+    // already past the window and re-arms nothing.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+
+    // The app clears the finished badge when the user sends a prompt, which
+    // lets the user turn's completion re-arm the idle message.
+    await manager.clearAgentAttention(snapshot.id);
+    const secondRun = manager.runAgent(snapshot.id, "still working");
+    await vi.advanceTimersByTimeAsync(0);
+    await secondRun;
+    expect(client.prompts).toEqual(["say hello", "/session-handoff", "still working"]);
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual([
+      "say hello",
+      "/session-handoff",
+      "still working",
+      "/session-handoff",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("changing the idle-message config does not re-arm an agent whose last run was its own idle message", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-config-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000211",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages config test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+    await manager.clearAgentAttention(snapshot.id);
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    await manager.clearAgentAttention(snapshot.id);
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+
+    // A config change re-arms every idle agent from its anchor. This one's
+    // anchor is the pre-idle-message turn, already past the window, so it is skipped.
+    manager.setIdleMessagesConfig({
+      idleMinutes: 5,
+      messages: ["/session-handoff"],
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+
+    // A user turn clears that state, so the next config change re-arms normally.
+    const secondRun = manager.runAgent(snapshot.id, "still working");
+    await vi.advanceTimersByTimeAsync(0);
+    await secondRun;
+    await manager.clearAgentAttention(snapshot.id);
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+    manager.setIdleMessagesConfig({
+      idleMinutes: 5,
+      messages: ["/session-handoff"],
+    });
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual([
+      "say hello",
+      "/session-handoff",
+      "still working",
+      "/session-handoff",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("autonomous re-activation re-arms the idle messages after the follow-up turn goes idle", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-autonomous-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000213",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages autonomous re-activation test" },
+      undefined,
+      { workspaceId: undefined, labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" } },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+    expect(client.prompts).toEqual(["say hello"]);
+
+    // 4 minutes in: the 5-minute idle-message timer is still pending, and the
+    // first turn left the agent idle with "finished" attention.
+    await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+
+    // A background task notification re-activates the agent without a user
+    // prompt, so the RPC layer never clears the "finished" badge. The new
+    // turn cancels the pending idle message but must re-arm it when it ends.
+    const secondRun = manager.runAgent(snapshot.id, "follow-up");
+    await vi.advanceTimersByTimeAsync(0);
+    await secondRun;
+    expect(client.prompts).toEqual(["say hello", "follow-up"]);
+
+    // The follow-up turn went idle at the 4-minute mark. The re-armed idle message
+    // fires 5 minutes later, at the 9-minute mark.
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "follow-up", "/session-handoff"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("an agent restored after a daemon restart does not fire idle messages on a config change until a fresh turn", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-restart-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000214",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    // A daemon restart restores the agent from provider persistence. The restored agent
+    // has no live idle anchor yet.
+    const handle: AgentPersistenceHandle = {
+      provider: "codex",
+      sessionId: "session-restart",
+      metadata: { cwd: workdir },
+    };
+    const snapshot = await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, undefined, {
+      labels: { [IDLE_MESSAGE_LABEL]: "/session-handoff" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A config change re-arms every idle agent. The restored agent has a null anchor, so
+    // it is skipped rather than armed off persisted time.
+    manager.setIdleMessagesConfig({
+      idleMinutes: 5,
+      messages: ["/session-handoff"],
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(client.prompts).toEqual([]);
+
+    // A fresh non-idle-message turn re-establishes the anchor, so idle messages arms normally.
+    const run = manager.runAgent(snapshot.id, "still working");
+    await vi.advanceTimersByTimeAsync(0);
+    await run;
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual(["still working", "/session-handoff"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("an idle agent with no idle-message message label never receives the prompt", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-no-opt-in-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000215",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages no opt-in test" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello"]);
+
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted?.labels[IDLE_MESSAGE_LABEL]).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("setting the idle-message message label re-arms an already-elapsed anchor immediately, clearing it cancels a pending send", async () => {
+  vi.useFakeTimers();
+  try {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-message-rearm-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new PromptRecordingAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000216",
+      idleMessagesConfig: { idleMinutes: 5, messages: ["/session-handoff"] },
+    });
+
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Idle messages rearm test" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const firstRun = manager.runAgent(snapshot.id, "say hello");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+
+    // 6 minutes idle with no opt-in: the 5-minute anchor is already overdue,
+    // but nothing has fired because there is no pending message.
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello"]);
+
+    // Opting in now arms off the existing (already-overdue) anchor, so the
+    // the idle message fires immediately. Wait for the idle-message turn to start before
+    // waiting for it to finish - the label write itself emits an unrelated
+    // "idle" state right before the turn starts. runOnlyPendingTimersAsync
+    // (rather than a fixed count of advanceTimersByTimeAsync(0) calls) drains
+    // the nested zero-delay timer that starting a turn schedules.
+    const idleMessageStarted = waitForAgentLifecycle(manager, snapshot.id, "running");
+    await manager.setLabels(snapshot.id, { [IDLE_MESSAGE_LABEL]: "/session-handoff" });
+    await vi.runOnlyPendingTimersAsync();
+    await idleMessageStarted;
+    const idleMessageSettled = waitForAgentLifecycle(manager, snapshot.id, "idle");
+    await vi.runOnlyPendingTimersAsync();
+    await idleMessageSettled;
+    expect(client.prompts).toEqual(["say hello", "/session-handoff"]);
+
+    // A fresh turn re-establishes the anchor, then clearing the label before
+    // the window elapses cancels the pending send.
+    const secondRun = manager.runAgent(snapshot.id, "still working");
+    await vi.advanceTimersByTimeAsync(0);
+    await secondRun;
+    await manager.setLabels(snapshot.id, { [IDLE_MESSAGE_LABEL]: null });
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(client.prompts).toEqual(["say hello", "/session-handoff", "still working"]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("archiveSnapshot clears persisted attention and normalizes running status", async () => {

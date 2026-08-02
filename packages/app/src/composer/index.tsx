@@ -977,6 +977,8 @@ interface ComposerProps {
   submitLabel?: string;
   /** Overrides the mode's default placeholder, for text only the caller can build. */
   placeholder?: string;
+  /** Extra control rendered in the composer toolbar's right button group. */
+  rightToolbarAccessory?: ReactNode;
 }
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -1077,11 +1079,7 @@ function ComposerRightControlsSlot({
   const showVoiceModeButton =
     showVoice && !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
   if (!showVoiceModeButton) return null;
-  return (
-    <View style={styles.rightControls}>
-      <ComposerVoiceModeButton {...voiceProps} />
-    </View>
-  );
+  return <ComposerVoiceModeButton {...voiceProps} />;
 }
 
 function ComposerVoiceModeButton({
@@ -1182,6 +1180,7 @@ function ComposerContentImpl({
   readOnly = false,
   submitLabel,
   placeholder,
+  rightToolbarAccessory,
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
   const { t } = useTranslation();
@@ -1958,21 +1957,24 @@ function ComposerContentImpl({
 
   const rightContent = useMemo(
     () => (
-      <ComposerRightControlsSlot
-        isVoiceModeForAgent={isVoiceModeForAgent}
-        hasAgent={hasAgent}
-        isAgentRunning={isAgentRunning}
-        hasSendableContent={hasSendableContent}
-        isCompact={isCompactLayout}
-        showVoice={mode.showVoice}
-        buttonIconSize={buttonIconSize}
-        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
-        isConnected={isConnected}
-        isVoiceSwitching={isVoiceSwitching}
-        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
-        voiceToggleKeys={voiceToggleKeys}
-        t={t}
-      />
+      <View style={styles.rightControls}>
+        {rightToolbarAccessory}
+        <ComposerRightControlsSlot
+          isVoiceModeForAgent={isVoiceModeForAgent}
+          hasAgent={hasAgent}
+          isAgentRunning={isAgentRunning}
+          hasSendableContent={hasSendableContent}
+          isCompact={isCompactLayout}
+          showVoice={mode.showVoice}
+          buttonIconSize={buttonIconSize}
+          handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+          isConnected={isConnected}
+          isVoiceSwitching={isVoiceSwitching}
+          realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+          voiceToggleKeys={voiceToggleKeys}
+          t={t}
+        />
+      </View>
     ),
     [
       buttonIconSize,
@@ -1986,6 +1988,7 @@ function ComposerContentImpl({
       isVoiceSwitching,
       mode.showVoice,
       realtimeVoiceButtonStyle,
+      rightToolbarAccessory,
       t,
       voiceToggleKeys,
     ],

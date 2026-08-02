@@ -1,4 +1,11 @@
-import React, { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { TextInput } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import PasteInput, {
@@ -24,16 +31,16 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const isInsideBottomSheet = useIsInsideBottomSheet();
     const {
       initialValue = "",
+      value,
       onChangeText,
       onPasteImages,
       onPasteError,
       variant = isInsideBottomSheet ? "bottom-sheet" : "default",
-      value: _,
-      defaultValue: __,
+      defaultValue: _,
       ...props
     } = allProps as EditingTextInputProps & { value?: unknown; defaultValue?: unknown };
     const inputRef = useRef<NativeInput | null>(null);
-    const initialTextRef = useRef(initialValue);
+    const initialTextRef = useRef(value ?? initialValue);
     const textRef = useRef(initialTextRef.current);
     // Clearing swaps the native input for a fresh instance (see replaceText).
     // Until React commits that swap, `inputRef` still points at the doomed
@@ -54,6 +61,20 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const setReplacementFocus = useCallback((autoFocus: boolean) => {
       setReplacement((current) => ({ ...current, autoFocus }));
     }, []);
+
+    useEffect(() => {
+      if (value === undefined || value === textRef.current) return;
+      textRef.current = value;
+      if (inputRef.current?.replaceText) {
+        inputRef.current.replaceText(value);
+        return;
+      }
+      if (value === "") {
+        inputRef.current?.clear?.();
+      } else {
+        inputRef.current?.setNativeProps?.({ text: value });
+      }
+    }, [value]);
 
     useImperativeHandle(ref, () => ({
       focus: () => {

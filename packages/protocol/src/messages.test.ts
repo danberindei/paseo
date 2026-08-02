@@ -359,6 +359,21 @@ describe("agent detach RPC", () => {
     }
     expect(parsed.features?.importSessionSearch).toBe(true);
   });
+
+  test("parses the idle messages feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        idleMessages: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.idleMessages).toBe(true);
+  });
 });
 
 describe("agent setting action responses", () => {

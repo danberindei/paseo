@@ -12,7 +12,7 @@ export interface EditingTextInputHandle {
 
 export interface EditingTextInputProps extends Omit<
   TextInputProps,
-  "defaultValue" | "onChangeText" | "value"
+  "defaultValue" | "onChangeText"
 > {
   initialValue?: string;
   onChangeText?: (text: string) => void;

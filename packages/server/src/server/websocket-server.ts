@@ -1817,6 +1817,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(idleMessages): added in v0.2.5, remove gate after 2027-02-02.
+        idleMessages: true,
       },
     };
   }

@@ -171,6 +171,12 @@ export const fr: TranslationResources = {
       title: "Joindre le problème ouPR",
       title_mr: "Joindre le problème ou MR",
     },
+
+    idleMessages: {
+      enable: "Envoyer en cas d'inactivité",
+      disable: "Annuler l'envoi d'inactivité",
+      hostDisconnected: "Hostn'est pas connecté",
+    },
   },
   agentControls: {
     provider: {
@@ -2426,6 +2432,19 @@ export const fr: TranslationResources = {
           sheetTitle: "Ajouter une invite système",
           accessibilityLabel: "Ajouter une invite système",
           placeholder: "Gardez toujours des réponses concises.",
+          edit: "Modifier",
+          reset: "Réinitialiser",
+          save: "Sauvegarder",
+          saving: "Sauvegarde...",
+        },
+        idleMessages: {
+          title: "Messages d'inactivité",
+          hint: "Envoie un message à l'agent après une période d'inactivité",
+          sheetTitle: "Messages d'inactivité",
+          idleMinutesLabel: "Minutes d'inactivité",
+          idleMinutesAccessibilityLabel: "Minutes d'inactivité avant l'envoi",
+          messagesLabel: "Messages d'inactivité",
+          messagesHint: "Un message par ligne, envoyé quand un agent devient inactif",
           edit: "Modifier",
           reset: "Réinitialiser",
           save: "Sauvegarder",

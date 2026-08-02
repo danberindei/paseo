@@ -169,6 +169,12 @@ export const ar: TranslationResources = {
       title: "إرفاق المشكلة أو PR",
       title_mr: "إرفاق المشكلة أو MR",
     },
+
+    idleMessages: {
+      enable: "إرسال عند الخمول",
+      disable: "إلغاء الإرسال عند الخمول",
+      hostDisconnected: "Host غير متصل",
+    },
   },
   agentControls: {
     provider: {
@@ -2367,6 +2373,19 @@ export const ar: TranslationResources = {
           sheetTitle: "إلحاق موجه النظام",
           accessibilityLabel: "إلحاق موجه النظام",
           placeholder: "اجعل الردود موجزة دائمًا.",
+          edit: "تحرير",
+          reset: "إعادة ضبط",
+          save: "حفظ",
+          saving: "جارٍ الحفظ...",
+        },
+        idleMessages: {
+          title: "رسائل الخمول",
+          hint: "يرسل رسالة إلى الوكيل بعد بقائه خاملاً لفترة",
+          sheetTitle: "رسائل الخمول",
+          idleMinutesLabel: "دقائق الخمول",
+          idleMinutesAccessibilityLabel: "دقائق الخمول قبل الإرسال",
+          messagesLabel: "رسائل الخمول",
+          messagesHint: "رسالة واحدة في كل سطر، تُرسل عندما يصبح الوكيل خاملاً",
           edit: "تحرير",
           reset: "إعادة ضبط",
           save: "حفظ",

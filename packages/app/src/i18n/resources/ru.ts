@@ -169,6 +169,12 @@ export const ru: TranslationResources = {
       title: "Прикрепить задачу или PR",
       title_mr: "Прикрепить задачу или MR",
     },
+
+    idleMessages: {
+      enable: "Отправить при простое",
+      disable: "Отменить отправку при простое",
+      hostDisconnected: "Host не подключен",
+    },
   },
   agentControls: {
     provider: {
@@ -2410,6 +2416,19 @@ export const ru: TranslationResources = {
           sheetTitle: "Добавить системный промпт",
           accessibilityLabel: "Добавить системный промпт",
           placeholder: "Всегда отвечайте кратко.",
+          edit: "Редактировать",
+          reset: "Сбросить",
+          save: "Сохранить",
+          saving: "Сохранение...",
+        },
+        idleMessages: {
+          title: "Сообщения при простое",
+          hint: "Отправляет агенту сообщение после периода простоя",
+          sheetTitle: "Сообщения при простое",
+          idleMinutesLabel: "Минуты простоя",
+          idleMinutesAccessibilityLabel: "Минуты простоя до отправки",
+          messagesLabel: "Сообщения при простое",
+          messagesHint: "Одно сообщение в строке, отправляется, когда агент бездействует",
           edit: "Редактировать",
           reset: "Сбросить",
           save: "Сохранить",

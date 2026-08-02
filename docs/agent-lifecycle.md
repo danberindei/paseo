@@ -24,6 +24,25 @@ primed.
 Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
 action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 
+### Idle messages
+
+Idle messages are opt-in per agent. The daemon config's `idleMessages.idleMinutes` sets the idle
+window and `idleMessages.messages` is the catalog of message strings the composer offers; none of
+it sends anything by itself. An agent only receives a prompt after it has been idle longer than the
+configured window if it also carries the reserved label `paseo.idle-message` set to the message to
+send. The agent itself is still open and resident while an idle message is armed or fires.
+
+Setting the label arms the timer from the existing idle anchor; setting it to `null` (or deleting
+it) cancels any pending send. The label is read reactively, so toggling it while the agent is
+already idle takes effect immediately.
+
+The catalog is edited on the host settings sheet (Idle messages). There is no default message; the
+list starts empty, so a user must add one before the composer menu has anything to offer.
+
+The composer toolbar's idle-message control is a menu. Picking one of the configured messages arms
+idle messages with that message; a second tap reopens the menu to pick another or to select
+"Disable", which clears the pending message.
+
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
 workflows all live in the CLI process, and the completion notification that would have woken the

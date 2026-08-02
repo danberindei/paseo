@@ -3802,6 +3802,45 @@ describe("workspace-layout-store actions", () => {
     expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
   });
 
+  it("keeps a History archived agent focused after its detail loads", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "archived-agent" },
+      intent: "reveal",
+      pin: true,
+    });
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["workspace-agent"],
+      autoOpenAgentIds: ["workspace-agent"],
+      knownAgentIds: ["workspace-agent", "archived-agent"],
+      standaloneTerminalIds: [],
+    });
+    store.resolvePendingAgent(workspaceKey, "archived-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["workspace-agent"],
+      autoOpenAgentIds: ["workspace-agent"],
+      knownAgentIds: ["workspace-agent", "archived-agent"],
+      standaloneTerminalIds: [],
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(
+      collectAllTabs(layout.root)
+        .filter((tab) => tab.target.kind === "agent")
+        .map((tab) => tab.tabId),
+    ).toEqual(["agent_archived-agent", "agent_workspace-agent"]);
+    expect(findPaneById(layout.root, layout.focusedPaneId)?.focusedTabId).toBe(
+      "agent_archived-agent",
+    );
+  });
+
   it("retargeting a tab to an agent clears hidden intent", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

@@ -6,6 +6,7 @@ import {
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
 import {
+  getIdleMessage,
   getParentAgentIdFromLabels,
   hasOpenAgentTab,
   isDelegatedAgent,
@@ -263,6 +264,11 @@ interface ProviderEnabledFlag {
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
+export interface IdleMessagesConfig {
+  idleMinutes: number;
+  messages: string[];
+}
+
 export interface CreateAgentOptions {
   labels?: Record<string, string>;
   initialPrompt?: string;
@@ -289,6 +295,7 @@ export interface AgentManagerOptions {
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
   appendSystemPrompt?: string;
+  idleMessagesConfig?: IdleMessagesConfig;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
@@ -407,6 +414,11 @@ interface ManagedAgentBase {
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
+  lastRunWasIdleMessage: boolean;
+  // Advanced only when a non-handoff turn ends, so idle time is measured from the
+  // agent's last user-driven turn. A handoff turn leaves it untouched, so its own
+  // completion is already past the idle window and cannot re-arm the next handoff.
+  idleMessageAnchorAt: Date | null;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
   unsubscribeSession: (() => void) | null;
@@ -699,6 +711,7 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly providerDerivedFrom = new Map<AgentProvider, string | null>();
   private readonly agents = new Map<string, LiveManagedAgent>();
+  private readonly idleMessageTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -725,6 +738,7 @@ export class AgentManager {
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
   private appendSystemPrompt: string;
+  private idleMessagesConfig: IdleMessagesConfig;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
@@ -744,6 +758,10 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.idleMessagesConfig = options.idleMessagesConfig ?? {
+      idleMinutes: 59,
+      messages: [],
+    };
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -841,6 +859,19 @@ export class AgentManager {
 
   setAppendSystemPrompt(prompt: string | null | undefined): void {
     this.appendSystemPrompt = prompt ?? "";
+  }
+
+  setIdleMessagesConfig(config: IdleMessagesConfig): void {
+    this.idleMessagesConfig = config;
+    for (const agent of this.agents.values()) {
+      this.cancelIdleMessage(agent.id);
+      // Re-arm only from the live anchor; a config change never arms an idle message off
+      // a persisted timestamp.
+      const idleReference = agent.idleMessageAnchorAt;
+      if (agent.lifecycle === "idle" && idleReference) {
+        this.scheduleIdleMessage(agent, idleReference);
+      }
+    }
   }
 
   public getMetricsSnapshot(): AgentMetricsSnapshot {
@@ -1820,6 +1851,8 @@ export class AgentManager {
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
         attention: { requiresAttention: false },
+        lastRunWasIdleMessage: false,
+        idleMessageAnchorAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         internal: record.internal,
         labels: record.labels,
       },
@@ -1930,10 +1963,17 @@ export class AgentManager {
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
+      const hadPendingMessage = getIdleMessage(liveAgent.labels) !== null;
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      const hasPendingMessage = getIdleMessage(liveAgent.labels) !== null;
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
       this.emitState(liveAgent, { persist: false });
+      if (!hasPendingMessage && hadPendingMessage) {
+        this.cancelIdleMessage(agentId);
+      } else if (hasPendingMessage && !hadPendingMessage && liveAgent.lifecycle === "idle") {
+        this.scheduleIdleMessage(liveAgent, liveAgent.idleMessageAnchorAt ?? new Date());
+      }
       const record = this.registry ? await this.registry.get(agentId) : null;
       return { record, live: true };
     }
@@ -2108,7 +2148,7 @@ export class AgentManager {
     agentId: string,
     updates: {
       title?: string;
-      labels?: Record<string, string>;
+      labels?: Record<string, string | null>;
     },
   ): Promise<void> {
     await this.runLifecycleMutation(agentId, () =>
@@ -2120,7 +2160,7 @@ export class AgentManager {
     agentId: string,
     updates: {
       title?: string;
-      labels?: Record<string, string>;
+      labels?: Record<string, string | null>;
     },
   ): Promise<void> {
     const liveAgent = this.getAgent(agentId);
@@ -2346,6 +2386,7 @@ export class AgentManager {
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
+    agent.lastRunWasIdleMessage = options?.idleMessage === true;
 
     const pendingRun = this.runs.createPendingRun(agentId);
 
@@ -3510,6 +3551,8 @@ export class AgentManager {
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
+      lastRunWasIdleMessage: false,
+      idleMessageAnchorAt: null,
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;
@@ -3535,6 +3578,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.cancelIdleMessage(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -4668,9 +4712,24 @@ export class AgentManager {
     // Track the new status
     this.previousStatuses.set(agent.id, currentStatus);
 
+    if (previousStatus === "running" && currentStatus !== "running") {
+      if (!agent.lastRunWasIdleMessage) {
+        agent.idleMessageAnchorAt = new Date();
+      }
+    }
+
     // Skip attention tracking for internal agents
     if (agent.internal) {
       return;
+    }
+
+    // When a new turn starts, cancel any pending idle message. Clear "finished":
+    // autonomous re-activations skip the clear-attention RPC the user path uses.
+    if (currentStatus === "running") {
+      this.cancelIdleMessage(agent.id);
+      if (agent.attention.requiresAttention && agent.attention.attentionReason === "finished") {
+        agent.attention = { requiresAttention: false };
+      }
     }
 
     // Skip if already requires attention
@@ -4686,6 +4745,7 @@ export class AgentManager {
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "finished");
+      this.scheduleIdleMessage(agent, agent.idleMessageAnchorAt ?? new Date());
       return;
     }
 
@@ -4811,6 +4871,44 @@ export class AgentManager {
       provider: agent.provider,
       reason,
     });
+  }
+
+  private scheduleIdleMessage(agent: ManagedAgent, referenceTime: Date): void {
+    this.cancelIdleMessage(agent.id);
+    const pendingMessage = getIdleMessage(agent.labels);
+    if (agent.internal || pendingMessage === null) {
+      return;
+    }
+    const thresholdMs = this.idleMessagesConfig.idleMinutes * 60 * 1000;
+    const delayMs = referenceTime.getTime() + thresholdMs - Date.now();
+    // A completed idle message retains the prior anchor, so an expired deadline
+    // must not re-arm it until the next user turn advances that anchor.
+    if (delayMs <= 0 && agent.lastRunWasIdleMessage) {
+      return;
+    }
+    const timer = setTimeout(
+      () => {
+        this.idleMessageTimers.delete(agent.id);
+        const live = this.agents.get(agent.id);
+        const message = live ? getIdleMessage(live.labels) : null;
+        if (!live || live.lifecycle !== "idle" || live.internal || message === null) {
+          return;
+        }
+        this.runAgent(live.id, message, { idleMessage: true }).catch((err) => {
+          this.logger.warn({ err, agentId: live.id }, "Idle-message prompt failed");
+        });
+      },
+      Math.max(0, delayMs),
+    );
+    this.idleMessageTimers.set(agent.id, timer);
+  }
+
+  private cancelIdleMessage(agentId: string): void {
+    const timer = this.idleMessageTimers.get(agentId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.idleMessageTimers.delete(agentId);
+    }
   }
 
   private dispatchStream(

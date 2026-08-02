@@ -321,6 +321,7 @@ function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDa
     autoArchiveAfterMerge: false,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",
+    idleMessages: { idleMinutes: 59, messages: [] },
   };
 }
 

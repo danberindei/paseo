@@ -163,6 +163,13 @@ const FeatureWebUiSchema = z
   })
   .strict();
 
+const FeatureIdleMessagesSchema = z
+  .object({
+    idleMinutes: z.number().int().positive().optional(),
+    messages: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
 const StructuredGenerationProviderConfigSchema = z
   .object({
     provider: z.string().min(1),
@@ -327,6 +334,7 @@ export const PersistedConfigSchema = z
         dictation: FeatureDictationSchema.optional(),
         voiceMode: FeatureVoiceModeSchema.optional(),
         webUi: FeatureWebUiSchema.optional(),
+        idleMessages: FeatureIdleMessagesSchema.optional(),
       })
       .strict()
       .optional(),
@@ -383,6 +391,14 @@ function stripRemovedConfigFields(parsed: unknown): unknown {
   }
 
   const root = { ...(parsed as Record<string, unknown>) };
+
+  const features = root.features;
+  if (features && typeof features === "object" && !Array.isArray(features)) {
+    const featuresRecord = { ...(features as Record<string, unknown>) };
+    delete featuresRecord.idleHandoff;
+    root.features = featuresRecord;
+  }
+
   const providers = root.providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
     return root;

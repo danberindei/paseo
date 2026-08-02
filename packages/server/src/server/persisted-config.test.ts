@@ -734,6 +734,34 @@ describe("loadPersistedConfig", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test("loads a config that still uses the removed features.idleHandoff block", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            features: {
+              idleHandoff: { enabled: true, idleMinutes: 30, prompt: "/a" },
+              idleMessages: { idleMinutes: 45, messages: ["/b"] },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.features?.idleMessages).toEqual({ idleMinutes: 45, messages: ["/b"] });
+      expect((config.features as Record<string, unknown>)?.idleHandoff).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {

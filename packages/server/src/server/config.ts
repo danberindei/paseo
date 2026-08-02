@@ -13,6 +13,7 @@ import {
   type PersistedConfig,
 } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
+import type { IdleMessagesConfig } from "./agent/agent-manager.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -503,6 +504,16 @@ function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedCon
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
 
+function resolveIdleMessagesConfig(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): IdleMessagesConfig {
+  const idleMessages = persisted.features?.idleMessages;
+  return {
+    idleMinutes: idleMessages?.idleMinutes ?? 59,
+    messages: idleMessages?.messages ?? [],
+  };
+}
+
 function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
@@ -532,6 +543,7 @@ function resolveStaticLoadConfigSettings(
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
+    idleMessagesConfig: resolveIdleMessagesConfig(persisted),
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
@@ -566,6 +578,7 @@ export function resolveConfigFromPersisted(
     browserToolsEnabled,
     autoArchiveAfterMerge,
     appendSystemPrompt,
+    idleMessagesConfig,
     terminalProfiles,
     agentProfiles,
     hostnames,
@@ -611,6 +624,7 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
+    idleMessagesConfig,
     terminalProfiles,
     agentProfiles,
     skillSelection: persisted.agents?.skills?.selection,

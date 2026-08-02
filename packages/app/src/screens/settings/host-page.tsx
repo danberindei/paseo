@@ -27,6 +27,7 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { EditingTextInput } from "@/components/ui/text-input";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -55,6 +56,7 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
@@ -278,6 +280,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <InjectPaseoToolsCard serverId={serverId} />
           <BrowserToolsOptInCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />
+          <IdleMessagesCard serverId={serverId} />
         </SettingsSection>
       ) : (
         <View style={[settingsStyles.card, styles.emptyCard]}>
@@ -1207,6 +1210,194 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
   );
 }
 
+const DEFAULT_IDLE_MINUTES = 59;
+
+function parseIdleMessageLines(text: string): string[] {
+  return Array.from(
+    new Set(
+      text
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    ),
+  );
+}
+
+function IdleMessagesCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsIdleMessages = useHostFeature(serverId, "idleMessages");
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const persisted = useMemo(
+    () => ({
+      idleMinutes: config?.idleMessages?.idleMinutes ?? DEFAULT_IDLE_MINUTES,
+      messages: config?.idleMessages?.messages ?? [],
+    }),
+    [config?.idleMessages],
+  );
+  const [draftIdleMinutesText, setDraftIdleMinutesText] = useState(String(persisted.idleMinutes));
+  const [draftMessagesText, setDraftMessagesText] = useState(persisted.messages.join("\n"));
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const header = useMemo<SheetHeader>(
+    () => ({ title: t("settings.host.orchestration.idleMessages.sheetTitle") }),
+    [t],
+  );
+
+  useEffect(() => {
+    setDraftIdleMinutesText(String(persisted.idleMinutes));
+    setDraftMessagesText(persisted.messages.join("\n"));
+  }, [persisted]);
+
+  const draftIdleMinutes = Number.parseInt(draftIdleMinutesText, 10);
+  const hasValidIdleMinutes = Number.isInteger(draftIdleMinutes) && draftIdleMinutes > 0;
+  const draftMessages = parseIdleMessageLines(draftMessagesText);
+  const hasChanges =
+    draftIdleMinutes !== persisted.idleMinutes ||
+    JSON.stringify(draftMessages) !== JSON.stringify(persisted.messages);
+
+  const handleOpen = useCallback(() => {
+    setDraftIdleMinutesText(String(persisted.idleMinutes));
+    setDraftMessagesText(persisted.messages.join("\n"));
+    setIsEditing(true);
+  }, [persisted]);
+
+  const handleClose = useCallback(() => {
+    if (isSaving) return;
+    setDraftIdleMinutesText(String(persisted.idleMinutes));
+    setDraftMessagesText(persisted.messages.join("\n"));
+    setIsEditing(false);
+  }, [isSaving, persisted]);
+
+  const handleSave = useCallback(() => {
+    setIsSaving(true);
+    void patchConfig({
+      idleMessages: {
+        idleMinutes: draftIdleMinutes,
+        messages: parseIdleMessageLines(draftMessagesText),
+      },
+    })
+      .then(() => {
+        setIsEditing(false);
+        return;
+      })
+      .catch((error) => {
+        console.error("[HostPage] Failed to save idle messages config", error);
+      })
+      .finally(() => setIsSaving(false));
+  }, [draftIdleMinutes, draftMessagesText, patchConfig]);
+
+  const handleReset = useCallback(() => {
+    setDraftIdleMinutesText(String(persisted.idleMinutes));
+    setDraftMessagesText(persisted.messages.join("\n"));
+  }, [persisted]);
+
+  if (!isConnected) return null;
+
+  if (!supportsIdleMessages) {
+    return (
+      <View style={settingsStyles.card} testID="host-page-idle-messages-host-update">
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.orchestration.idleMessages.title")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>{t("message.actions.forkUnavailable")}</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <View style={settingsStyles.card} testID="host-page-idle-messages-card">
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.orchestration.idleMessages.title")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.host.orchestration.idleMessages.hint")}
+            </Text>
+          </View>
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleOpen}
+            testID="host-page-idle-messages-edit"
+          >
+            {t("settings.host.orchestration.idleMessages.edit")}
+          </Button>
+        </View>
+      </View>
+
+      {isEditing ? (
+        <AdaptiveModalSheet
+          header={header}
+          visible
+          onClose={handleClose}
+          testID="host-page-idle-messages-sheet"
+          desktopMaxWidth={560}
+        >
+          <View style={styles.idleMessageMinutesRow}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.orchestration.idleMessages.idleMinutesLabel")}
+            </Text>
+            <EditingTextInput
+              testID="host-page-idle-messages-minutes-input"
+              accessibilityLabel={t(
+                "settings.host.orchestration.idleMessages.idleMinutesAccessibilityLabel",
+              )}
+              value={draftIdleMinutesText}
+              onChangeText={setDraftIdleMinutesText}
+              keyboardType="numeric"
+              placeholderTextColor={styles.placeholderColor.color}
+              style={styles.idleMessageMinutesInput}
+            />
+          </View>
+          <View style={styles.idleMessageSection}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.orchestration.idleMessages.messagesLabel")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.host.orchestration.idleMessages.messagesHint")}
+            </Text>
+            <SettingsTextAreaCard
+              testID="host-page-idle-messages-input"
+              accessibilityLabel={t("settings.host.orchestration.idleMessages.messagesLabel")}
+              value={draftMessagesText}
+              onChangeText={setDraftMessagesText}
+            />
+          </View>
+          <View style={styles.appendPromptActions}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={handleReset}
+              disabled={!hasChanges || isSaving}
+              testID="host-page-idle-messages-reset"
+            >
+              {t("settings.host.orchestration.idleMessages.reset")}
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onPress={handleSave}
+              disabled={!hasChanges || !hasValidIdleMinutes || isSaving}
+              testID="host-page-idle-messages-save"
+            >
+              {isSaving
+                ? t("settings.host.orchestration.idleMessages.saving")
+                : t("settings.host.orchestration.idleMessages.save")}
+            </Button>
+          </View>
+        </AdaptiveModalSheet>
+      ) : null}
+    </>
+  );
+}
+
 function PairDeviceRow({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -1882,6 +2073,32 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
+  },
+  idleMessageMinutesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  idleMessageMinutesInput: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    width: 64,
+    textAlign: "right",
+  },
+  idleMessageSection: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    gap: theme.spacing[2],
+  },
+  placeholderColor: {
+    color: theme.colors.foregroundMuted,
   },
   emptyCard: {
     padding: theme.spacing[4],

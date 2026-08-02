@@ -166,6 +166,11 @@ export const en = {
       title: "Attach issue or PR",
       title_mr: "Attach issue or MR",
     },
+    idleMessages: {
+      enable: "Send on idle",
+      disable: "Cancel idle send",
+      hostDisconnected: "Host is not connected",
+    },
   },
   agentControls: {
     provider: {
@@ -2469,6 +2474,19 @@ export const en = {
           sheetTitle: "Append system prompt",
           accessibilityLabel: "Append system prompt",
           placeholder: "Always keep replies concise.",
+          edit: "Edit",
+          reset: "Reset",
+          save: "Save",
+          saving: "Saving...",
+        },
+        idleMessages: {
+          title: "Idle messages",
+          hint: "Sends a message to an agent after it has been idle for a while",
+          sheetTitle: "Idle messages",
+          idleMinutesLabel: "Idle minutes",
+          idleMinutesAccessibilityLabel: "Idle minutes before sending",
+          messagesLabel: "Idle messages",
+          messagesHint: "One message per line, sent when an agent goes idle",
           edit: "Edit",
           reset: "Reset",
           save: "Save",

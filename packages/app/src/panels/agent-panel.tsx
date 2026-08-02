@@ -21,6 +21,7 @@ import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import { AgentIdleMessageToggle } from "@/components/agent-idle-message-toggle";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { KeyboardDock } from "@/components/keyboard-dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -1724,6 +1725,11 @@ const ActiveAgentComposer = memo(function ActiveAgentComposer({
     [insets.bottom],
   );
 
+  const rightToolbarAccessory = useMemo(
+    () => <AgentIdleMessageToggle serverId={serverId} agentId={agentId} />,
+    [agentId, serverId],
+  );
+
   return (
     <View style={inputAreaStyle} onLayout={onInputAreaLayout}>
       <Composer
@@ -1751,6 +1757,7 @@ const ActiveAgentComposer = memo(function ActiveAgentComposer({
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
+        rightToolbarAccessory={rightToolbarAccessory}
       />
     </View>
   );

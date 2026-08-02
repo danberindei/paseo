@@ -169,6 +169,12 @@ export const ko: TranslationResources = {
       title: "이슈 또는 PR 첨부",
       title_mr: "이슈 또는 MR 첨부",
     },
+
+    idleMessages: {
+      enable: "유휴 시 전송",
+      disable: "유휴 전송 취소",
+      hostDisconnected: "호스트가 연결되어 있지 않습니다",
+    },
   },
   agentControls: {
     provider: {
@@ -2382,6 +2388,19 @@ export const ko: TranslationResources = {
           reset: "재설정",
           save: "저장",
           saving: "저장하는 중...",
+        },
+        idleMessages: {
+          title: "유휴 메시지",
+          hint: "에이전트가 한동안 유휴 상태가 되면 메시지를 보냅니다",
+          sheetTitle: "유휴 메시지",
+          idleMinutesLabel: "유휴 시간(분)",
+          idleMinutesAccessibilityLabel: "전송 전 유휴 시간(분)",
+          messagesLabel: "유휴 메시지",
+          messagesHint: "에이전트가 유휴 상태가 되면 전송되는, 줄당 하나의 메시지",
+          edit: "Edit",
+          reset: "Reset",
+          save: "Save",
+          saving: "Saving...",
         },
       },
       agents: {

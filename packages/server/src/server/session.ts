@@ -3065,7 +3065,7 @@ export class Session {
   private async handleUpdateAgentRequest(
     agentId: string,
     name: string | undefined,
-    labels: Record<string, string> | undefined,
+    labels: Record<string, string | null> | undefined,
     requestId: string,
   ): Promise<void> {
     this.sessionLogger.info(

@@ -169,6 +169,12 @@ export const ptBR: TranslationResources = {
       title: "Anexar issue ou PR",
       title_mr: "Anexar issue ou MR",
     },
+
+    idleMessages: {
+      enable: "Enviar ao ficar inativo",
+      disable: "Cancelar envio por inatividade",
+      hostDisconnected: "Host não está conectado",
+    },
   },
   agentControls: {
     provider: {
@@ -2404,6 +2410,19 @@ export const ptBR: TranslationResources = {
           sheetTitle: "Acrescentar prompt do sistema",
           accessibilityLabel: "Acrescentar prompt do sistema",
           placeholder: "Mantenha as respostas sempre concisas.",
+          edit: "Editar",
+          reset: "Redefinir",
+          save: "Salvar",
+          saving: "Salvando...",
+        },
+        idleMessages: {
+          title: "Mensagens de inatividade",
+          hint: "Envia uma mensagem ao agente após ele ficar inativo por um tempo",
+          sheetTitle: "Mensagens de inatividade",
+          idleMinutesLabel: "Minutos de inatividade",
+          idleMinutesAccessibilityLabel: "Minutos de inatividade antes do envio",
+          messagesLabel: "Mensagens de inatividade",
+          messagesHint: "Uma mensagem por linha, enviada quando um agente fica ocioso",
           edit: "Editar",
           reset: "Redefinir",
           save: "Salvar",

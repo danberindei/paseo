@@ -214,6 +214,7 @@ export interface AgentRunOptions {
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
   clientMessageId?: string;
+  idleMessage?: boolean;
 }
 
 export interface AgentSteerOptions extends AgentRunOptions {

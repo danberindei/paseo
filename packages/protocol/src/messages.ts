@@ -190,7 +190,6 @@ const MutableRelayConfigSchema = z
     enabled: z.boolean(),
   })
   .passthrough();
-
 export const PluginIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
 
 export const DirectoryPluginSourceSchema = z
@@ -211,6 +210,12 @@ export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
 ]);
 export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
 
+const MutableIdleMessagesConfigSchema = z
+  .object({
+    idleMinutes: z.number().int().positive(),
+    messages: z.array(z.string().min(1)).default([]),
+  })
+  .passthrough();
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -248,6 +253,10 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    idleMessages: MutableIdleMessagesConfigSchema.default({
+      idleMinutes: 59,
+      messages: [],
+    }),
   })
   .passthrough();
 
@@ -268,6 +277,7 @@ export const MutableDaemonConfigPatchSchema = z
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    idleMessages: MutableIdleMessagesConfigSchema.partial().optional(),
   })
   .partial()
   .passthrough();
@@ -991,7 +1001,7 @@ export const UpdateAgentRequestMessageSchema = z.object({
   type: z.literal("update_agent_request"),
   agentId: z.string(),
   name: z.string().optional(),
-  labels: z.record(z.string(), z.string()).optional(),
+  labels: z.record(z.string(), z.string().nullable()).optional(),
   requestId: z.string(),
 });
 
@@ -3567,6 +3577,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(idleMessages): added in v0.2.5, remove gate after 2027-02-02.
+        idleMessages: z.boolean().optional(),
       })
       .optional(),
   })
