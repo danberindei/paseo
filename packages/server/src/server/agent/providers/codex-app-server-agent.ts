@@ -62,6 +62,11 @@ import { composeAgentSystemPrompt } from "../system-prompt.js";
 import { CodexInstructionSnapshot } from "./codex/instruction-snapshot.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
+  CodexHookRunSchema,
+  codexHookFailureMessage,
+  readCodexHookFailures,
+} from "./codex/hook-failures.js";
+import {
   fileChangesToPreview,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
@@ -2486,7 +2491,7 @@ async function loadCodexThreadHistoryTimeline(params: {
     });
     status = history.status;
     await projectCodexThreadHistory(
-      { cwd: params.cwd, rows: history.rows },
+      { cwd: params.cwd, rows: history.rows, rolloutPath: history.rolloutPath },
       {
         timeline,
         subAgentsByThreadId,
@@ -2508,16 +2513,34 @@ async function loadCodexThreadHistoryTimeline(params: {
   return { timeline, subAgentRoutes, status };
 }
 
+function hookFailureEntries(
+  entries: readonly {
+    item: Extract<AgentTimelineItem, { type: "error" }>;
+    timestamp: string | undefined;
+  }[],
+): PersistedTimelineEntry[] {
+  // Rollout text is provider output, so it takes the same cap as any other projected item.
+  return entries.map((entry) => ({ ...entry, item: limitAgentTimelineItemContent(entry.item) }));
+}
+
 async function projectCodexThreadHistory(
-  params: { rows: Iterable<CodexHistoryRow> | AsyncIterable<CodexHistoryRow>; cwd: string | null },
+  params: {
+    rows: Iterable<CodexHistoryRow> | AsyncIterable<CodexHistoryRow>;
+    cwd: string | null;
+    rolloutPath: string | null;
+  },
   projection: {
     timeline: PersistedTimelineEntry[];
     subAgentsByThreadId: Map<string, HistoricalCodexSubAgent>;
   },
 ): Promise<void> {
   const { timeline, subAgentsByThreadId } = projection;
+  // Rollout item boundaries place hook blocks omitted by thread/read in order.
+  const hookFailures = await readCodexHookFailures(params.rolloutPath);
   for await (const row of params.rows) {
+    timeline.push(...hookFailureEntries(hookFailures.entriesBeforeTurn(row.turnId)));
     const { item } = row;
+    timeline.push(...hookFailureEntries(hookFailures.entriesBeforeItem(toObjectRecord(item)?.id)));
     if (updateHistoricalCollabAgentCalls(timeline, subAgentsByThreadId, item)) {
       continue;
     }
@@ -2564,6 +2587,7 @@ async function projectCodexThreadHistory(
       }
     }
   }
+  timeline.push(...hookFailureEntries(hookFailures.entriesAfterTurns()));
 }
 
 export async function forkCodexThread(
@@ -2691,6 +2715,14 @@ const WarningNotificationSchema = z
   .object({
     threadId: z.string().nullable().optional(),
     message: z.string(),
+  })
+  .passthrough();
+
+const HookCompletedNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    turnId: z.string().nullable().default(null),
+    run: CodexHookRunSchema,
   })
   .passthrough();
 
@@ -2985,6 +3017,12 @@ type ParsedCodexNotification =
     }
   | { kind: "warning"; message: string; threadId: string | null }
   | {
+      kind: "hook_completed";
+      run: z.infer<typeof CodexHookRunSchema>;
+      threadId: string;
+      turnId: string | null;
+    }
+  | {
       kind: "plan_updated";
       plan: Array<{ step: string | null; status: string | null }>;
       threadId: string | null;
@@ -3168,6 +3206,23 @@ const CodexNotificationSchema = z.union([
     }),
   ),
   z.object({ method: z.literal("warning"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({ method: z.literal("hook/completed"), params: HookCompletedNotificationSchema })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "hook_completed",
+        run: params.run,
+        threadId: params.threadId,
+        turnId: params.turnId,
+      }),
+    ),
+  z.object({ method: z.literal("hook/completed"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -4000,6 +4055,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emittedExecCommandCompletedCallIds = new Set<string>();
   private emittedItemStartedIds = new Set<string>();
   private emittedItemCompletedIds = new Set<string>();
+  private emittedHookRunIds = new Set<string>();
   private emittedProviderSubagentUserMessageKeys = new Set<string>();
   private subAgentCallsByCallId = new Map<string, CodexSubAgentCallState>();
   private subAgentCallIdByChildThreadId = new Map<string, string>();
@@ -6557,6 +6613,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "reasoning_delta":
       case "item_started":
       case "item_completed":
+      case "hook_completed":
         await this.dispatchParsedNotification(parsed);
         return;
       case "exec_command_output_delta":
@@ -6586,6 +6643,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  // oxlint-disable-next-line complexity -- flat dispatch of one handler per notification kind
   private async dispatchParsedNotification(parsed: ParsedCodexNotification): Promise<void> {
     if (isCodexDeltaNotification(parsed)) {
       this.handleCodexDeltaNotification(parsed);
@@ -6609,6 +6667,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         return;
       case "warning":
         this.handleWarningNotification(parsed);
+        return;
+      case "hook_completed":
+        this.handleHookCompletedNotification(parsed);
         return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
@@ -7345,6 +7406,30 @@ export class CodexAppServerAgentSession implements AgentSession {
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: mapCodexStreamRetryToStatusLine(retry, outcome),
+    });
+  }
+
+  private handleHookCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "hook_completed" }>,
+  ): void {
+    const message = codexHookFailureMessage(parsed.run);
+    const key = `${parsed.threadId}/${parsed.run.id}`;
+    if (!message || this.emittedHookRunIds.has(key)) {
+      return;
+    }
+    this.emittedHookRunIds.add(key);
+    const item: Extract<AgentTimelineItem, { type: "error" }> = { type: "error", message };
+    const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+    if (subAgentCallId) {
+      this.emitProviderSubagentTimeline(parsed.threadId, item);
+      this.emitSubAgentActivityUpdate(subAgentCallId);
+      return;
+    }
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      turnId: this.activeForegroundTurnId ?? undefined,
+      item,
     });
   }
 

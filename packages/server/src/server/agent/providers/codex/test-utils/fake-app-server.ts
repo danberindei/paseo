@@ -825,6 +825,8 @@ export interface FakeCodexHistoryTurn {
 export interface FakeCodexHistoryThread {
   /** Omitted on Codex builds older than 0.143, which only have legacy history. */
   historyMode?: "legacy" | "paginated";
+  /** The thread's rollout file, reported only by the metadata read. */
+  rolloutPath?: string;
   turns: FakeCodexHistoryTurn[];
 }
 
@@ -858,7 +860,11 @@ export function fakeCodexThreadHistory(
       const { id, thread } = readThread(params);
       if (!toJsonObject(params).includeTurns) {
         return {
-          thread: { id, ...(thread.historyMode ? { historyMode: thread.historyMode } : {}) },
+          thread: {
+            id,
+            ...(thread.historyMode ? { historyMode: thread.historyMode } : {}),
+            ...(thread.rolloutPath ? { path: thread.rolloutPath } : {}),
+          },
         };
       }
       if (thread.historyMode === "paginated") {

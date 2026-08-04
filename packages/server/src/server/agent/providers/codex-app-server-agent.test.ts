@@ -3385,6 +3385,228 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("renders blocked user prompt hook feedback in the active turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("hook/completed", {
+      threadId: "test-thread",
+      turnId: "provider-turn",
+      run: {
+        id: "hook-run",
+        eventName: "userPromptSubmit",
+        handlerType: "command",
+        executionMode: "sync",
+        scope: "project",
+        sourcePath: "/workspace/.codex/hooks.json",
+        source: "project",
+        displayOrder: 0,
+        status: "blocked",
+        statusMessage: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+        entries: [
+          { kind: "warning", text: "Hook warning" },
+          { kind: "feedback", text: "Resume or continue the existing task." },
+        ],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "error",
+          message: "Prompt blocked: Resume or continue the existing task.",
+        },
+      },
+    ]);
+  });
+
+  test.each([
+    ["completed", "userPromptSubmit"],
+    ["completed", "preToolUse"],
+  ])("does not render %s %s hook feedback", async (status, eventName) => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("hook/completed", {
+      threadId: "test-thread",
+      turnId: "provider-turn",
+      run: {
+        id: "completed-hook-run",
+        eventName,
+        status,
+        entries: [{ kind: "feedback", text: "Not a rejected prompt" }],
+      },
+    });
+
+    expect(events).toEqual([]);
+  });
+
+  test.each([
+    ["blocked", "feedback", "Command blocked by PreToolUse hook"],
+    ["failed", "error", "preToolUse hook failed"],
+    ["stopped", "stop", "preToolUse hook stopped"],
+  ])(
+    "delivers a %s PreToolUse hook once per run through the live app-server transport",
+    async (status, kind, label) => {
+      const appServer = createFakeCodexAppServer();
+      const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const reason = "Quota pace is red.\nfive_hour: 89% used, red line 88% (resets in 55m).";
+      const notification = {
+        method: "hook/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "native-A",
+          run: {
+            id: "quota-hook-run",
+            eventName: "preToolUse",
+            status,
+            entries: [{ kind, text: reason }],
+          },
+        },
+      };
+      appServer.child.stdout.write(`${JSON.stringify(notification)}\n`);
+      appServer.child.stdout.write(`${JSON.stringify(notification)}\n`);
+      appServer.child.stdout.write(
+        `${JSON.stringify({
+          ...notification,
+          params: {
+            ...notification.params,
+            run: { ...notification.params.run, id: "another-quota-hook-run" },
+          },
+        })}\n`,
+      );
+      appServer.child.stdout.write(
+        `${JSON.stringify({
+          ...notification,
+          params: {
+            ...notification.params,
+            run: { ...notification.params.run, id: "successful-hook", status: "completed" },
+          },
+        })}\n`,
+      );
+      appServer.completesCommand({
+        threadId: "thread-1",
+        callId: "successful-search",
+        command: "rg hook-errors",
+        output: `Script error:\nCommand blocked by PreToolUse hook: ${reason}`,
+      });
+      const finished = waitForNextEvent(
+        session,
+        "timeline",
+        (event) => event.item.type === "assistant_message",
+      );
+      appServer.says({
+        threadId: "thread-1",
+        text: `The hook said: Script error:\nCommand blocked by PreToolUse hook: ${reason}`,
+      });
+      await finished;
+
+      expect(
+        events.filter((event) => event.type === "timeline" && event.item.type === "error"),
+      ).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: paseoTurnId,
+          item: { type: "error", message: `${label}: ${reason}` },
+        },
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: paseoTurnId,
+          item: { type: "error", message: `${label}: ${reason}` },
+        },
+      ]);
+      await session.close();
+      appServer.assertNoErrors();
+    },
+  );
+
+  test.each([
+    ["blocked", "feedback", "Command blocked by PreToolUse hook"],
+    ["failed", "error", "preToolUse hook failed"],
+    ["stopped", "stop", "preToolUse hook stopped"],
+  ])(
+    "preserves %s PreToolUse hook failures in subagents before and after registration",
+    async (status, kind, label) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const notification = {
+        threadId: "child-thread",
+        turnId: "child-turn",
+        run: {
+          id: "buffered-hook-run",
+          eventName: "preToolUse",
+          status,
+          entries: [{ kind, text: "Quota pace is red." }],
+        },
+      };
+      await asInternals(session).handleNotification("hook/completed", notification);
+      await asInternals(session).handleNotification("item/completed", {
+        threadId: "test-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "child-started",
+          kind: "started",
+          agentThreadId: "child-thread",
+          agentPath: "/root/child",
+        },
+      });
+      await asInternals(session).handleNotification("hook/completed", notification);
+      await asInternals(session).handleNotification("turn/completed", {
+        threadId: "child-thread",
+        turn: { status: "completed" },
+      });
+      const lateNotification = {
+        ...notification,
+        run: { ...notification.run, id: "late-hook-run" },
+      };
+      await asInternals(session).handleNotification("hook/completed", lateNotification);
+      await asInternals(session).handleNotification("hook/completed", lateNotification);
+      await asInternals(session).handleNotification("hook/completed", {
+        ...notification,
+        threadId: "test-thread",
+      });
+
+      const item = { type: "error", message: `${label}: Quota pace is red.` };
+      expect(
+        events.filter(
+          (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+        ),
+      ).toEqual([
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          turnId: "test-turn",
+          event: { type: "timeline", id: "child-thread", item },
+        },
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          turnId: "test-turn",
+          event: { type: "timeline", id: "child-thread", item },
+        },
+      ]);
+      expect(
+        events.filter((event) => event.type === "timeline" && event.item.type === "error"),
+      ).toEqual([{ type: "timeline", provider: "codex", turnId: "test-turn", item }]);
+      expect(
+        events.findLast((event) => event.type === "timeline" && event.item.type === "tool_call"),
+      ).toMatchObject({ item: { status: "completed", detail: { type: "sub_agent" } } });
+    },
+  );
+
   test("configures Codex app-server to use a custom provider base URL", async () => {
     const capturedRequests = await runCustomCodexProviderTurn(
       "codex-iisb",
@@ -6016,6 +6238,247 @@ describe("Codex app-server provider", () => {
       },
     ]);
   });
+
+  test.each([
+    ["history", "no script output", []],
+    ["interactive", "no script output", []],
+    ["history", "preceding script output", ["First call completed.", "Second call completed."]],
+    ["interactive", "preceding script output", ["First call completed.", "Second call completed."]],
+  ] as const)(
+    "recovers omitted hook failures once with %s resume and %s on refetch without treating quotes as failures",
+    async (purpose, _description, scriptOutput) => {
+      const home = await mkdtemp(path.join(tmpdir(), "codex-hook-history-"));
+      const rolloutPath = path.join(home, "rollout.jsonl");
+      const message =
+        "Command blocked by PreToolUse hook: Quota pace is red.\nfive_hour: 89% used.";
+      const failure = {
+        timestamp: "2026-10-23T15:37:35.255Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "blocked-call",
+          output: [
+            { type: "input_text", text: "Script failed\nWall time 0.0 seconds\nOutput:\n" },
+            ...scriptOutput.map((text) => ({ type: "input_text", text })),
+            { type: "input_text", text: `Script error:\n${message}` },
+          ],
+          internal_chat_message_metadata_passthrough: { turn_id: "native-A" },
+        },
+      };
+      const assistant = {
+        type: "agentMessage",
+        id: "explanation",
+        text: `The hook said: ${message}`,
+      };
+      const user = {
+        type: "userMessage",
+        id: "prompt",
+        content: [{ type: "text", text: "Work." }],
+      };
+      const records = [
+        { type: "event_msg", payload: { type: "task_started", turn_id: "native-A" } },
+        { type: "event_msg", payload: { type: "item_completed", item: user } },
+        {
+          type: "response_item",
+          payload: { type: "custom_tool_call", name: "exec", call_id: "blocked-call" },
+        },
+        failure,
+        failure,
+        {
+          type: "response_item",
+          payload: { type: "custom_tool_call", name: "exec", call_id: "search-call" },
+        },
+        {
+          ...failure,
+          payload: {
+            ...failure.payload,
+            call_id: "search-call",
+            output: [
+              {
+                type: "input_text",
+                text: `Script completed\nWall time 0.1 seconds\nOutput:\n${message}`,
+              },
+              { type: "input_text", text: `Script error:\n${message}` },
+            ],
+          },
+        },
+        {
+          type: "response_item",
+          payload: { type: "custom_tool_call", name: "exec", call_id: "unrelated-failure" },
+        },
+        {
+          ...failure,
+          payload: {
+            ...failure.payload,
+            call_id: "unrelated-failure",
+            output: [
+              { type: "input_text", text: "Script failed\nWall time 0.0 seconds\nOutput:\n" },
+              {
+                type: "input_text",
+                text: "Script error:\nCommand blocked by PreToolUse hook: Quoted diagnostic.",
+              },
+              { type: "input_text", text: "Script error:\nError: Unrelated runtime failure" },
+            ],
+          },
+        },
+        { type: "event_msg", payload: { type: "item_completed", item: assistant } },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: message }],
+          },
+        },
+      ];
+      writeFileSync(rolloutPath, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+      try {
+        for (const attempt of [1, 2]) {
+          const appServer = createFakeCodexAppServer({
+            "thread/read": () => ({
+              thread: { path: rolloutPath, turns: [{ id: "native-A", items: [user, assistant] }] },
+            }),
+          });
+          const session = new CodexAppServerAgentSession(
+            createConfig(),
+            { sessionId: "thread-1" },
+            createTestLogger(),
+            async () => appServer.child,
+            { codexHome: home },
+            false,
+            false,
+            false,
+            undefined,
+            purpose,
+          );
+          await session.connect();
+          const history: AgentStreamEvent[] = [];
+          for await (const event of session.streamHistory()) history.push(event);
+          expect(
+            history.flatMap((event) => (event.type === "timeline" ? [event.item] : [])),
+            `refetch ${attempt}`,
+          ).toEqual([
+            { type: "user_message", text: "Work.", messageId: "prompt" },
+            { type: "error", message },
+            { type: "assistant_message", text: assistant.text, messageId: "explanation" },
+          ]);
+          expect(history[1]?.timestamp).toBe(failure.timestamp);
+          await session.close();
+          appServer.assertNoErrors();
+        }
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.each([
+    ["legacy", 0],
+    ["paginated", 101],
+  ] as const)(
+    "recovers a blocked hook turn that %s history returns no rows for",
+    async (historyMode, fillerCount) => {
+      const home = await mkdtemp(path.join(tmpdir(), "codex-hook-empty-turn-"));
+      const rolloutPath = path.join(home, "rollout.jsonl");
+      const blocked = (callId: string, turnId: string, reason: string) => [
+        {
+          type: "response_item",
+          payload: { type: "custom_tool_call", name: "exec", call_id: callId },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: callId,
+            output: [
+              { type: "input_text", text: "Script failed\nWall time 0.0 seconds\nOutput:\n" },
+              {
+                type: "input_text",
+                text: `Script error:\nCommand blocked by PreToolUse hook: ${reason}`,
+              },
+            ],
+            internal_chat_message_metadata_passthrough: { turn_id: turnId },
+          },
+        },
+      ];
+      const firstPrompt = {
+        type: "userMessage",
+        id: "prompt-a",
+        content: [{ type: "text", text: "First." }],
+      };
+      const firstAnswer = { type: "agentMessage", id: "answer-a", text: "First done." };
+      const lastPrompt = {
+        type: "userMessage",
+        id: "prompt-c",
+        content: [{ type: "text", text: "Last." }],
+      };
+      const lastAnswer = { type: "agentMessage", id: "answer-c", text: "Last done." };
+      // Enough rows in the first turn to move the empty turn past a page boundary.
+      const filler = Array.from({ length: fillerCount }, (_, index) => ({
+        type: "agentMessage",
+        id: `filler-${index}`,
+        text: `Filler ${index}`,
+      }));
+      const records = [
+        { type: "event_msg", payload: { type: "task_started", turn_id: "turn-a" } },
+        { type: "event_msg", payload: { type: "item_completed", item: firstPrompt } },
+        ...blocked("call-a", "turn-a", "first turn blocked"),
+        { type: "event_msg", payload: { type: "item_completed", item: firstAnswer } },
+        { type: "event_msg", payload: { type: "task_started", turn_id: "turn-b" } },
+        ...blocked("call-b", "turn-b", "empty turn blocked"),
+        { type: "event_msg", payload: { type: "task_started", turn_id: "turn-c" } },
+        ...blocked("call-c", "turn-c", "last turn blocked"),
+        { type: "event_msg", payload: { type: "item_completed", item: lastPrompt } },
+      ];
+      writeFileSync(rolloutPath, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+      const appServer = createFakeCodexAppServer(
+        fakeCodexThreadHistory({
+          "thread-1": {
+            historyMode,
+            rolloutPath,
+            turns: [
+              { id: "turn-a", items: [firstPrompt, ...filler, firstAnswer] },
+              { id: "turn-b", items: [] },
+              { id: "turn-c", items: [lastPrompt, lastAnswer] },
+            ],
+          },
+        }),
+      );
+      try {
+        const session = new CodexAppServerAgentSession(
+          createConfig(),
+          { sessionId: "thread-1" },
+          createTestLogger(),
+          async () => appServer.child,
+          { codexHome: home },
+        );
+        await session.connect();
+        const history: AgentStreamEvent[] = [];
+        for await (const event of session.streamHistory()) history.push(event);
+        expect(history.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual(
+          [
+            { type: "user_message", text: "First.", messageId: "prompt-a" },
+            ...filler.map((item) => ({
+              type: "assistant_message",
+              text: item.text,
+              messageId: item.id,
+            })),
+            { type: "error", message: "Command blocked by PreToolUse hook: first turn blocked" },
+            { type: "assistant_message", text: firstAnswer.text, messageId: firstAnswer.id },
+            // The read returns no row for this turn, so only the rollout places its block.
+            { type: "error", message: "Command blocked by PreToolUse hook: empty turn blocked" },
+            { type: "error", message: "Command blocked by PreToolUse hook: last turn blocked" },
+            { type: "user_message", text: "Last.", messageId: "prompt-c" },
+            { type: "assistant_message", text: lastAnswer.text, messageId: lastAnswer.id },
+          ],
+        );
+        await session.close();
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+      appServer.assertNoErrors();
+    },
+  );
 
   test("retains native turn ids from persisted user messages", async () => {
     const session = createSession();

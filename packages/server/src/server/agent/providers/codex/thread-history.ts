@@ -23,6 +23,8 @@ export interface CodexHistoryRow {
 interface CodexThreadHistoryRead {
   rows: Iterable<CodexHistoryRow> | AsyncIterable<CodexHistoryRow>;
   status: CodexHistoryStatus | null;
+  /** The thread's rollout file; Codex keeps events there that its items omit. */
+  rolloutPath: string | null;
 }
 
 /** A history reply over the line cap; the rows before it were already read. */
@@ -38,6 +40,7 @@ const CodexThreadMetadataSchema = z
     thread: z
       .object({
         historyMode: z.enum(["legacy", "paginated"]).optional(),
+        path: z.string().nullable().optional(),
         status: z.unknown().optional(),
       })
       .passthrough(),
@@ -140,6 +143,7 @@ export async function readCodexThreadHistory(
   if (metadata.historyMode === "paginated") {
     const active = readHistoryStatus(metadata.status);
     return {
+      rolloutPath: metadata.path ?? null,
       rows: readPaginatedHistory(client, threadId),
       status:
         active ?? (options?.readLatestTurn ? await readLatestTurnStatus(client, threadId) : null),
@@ -156,6 +160,7 @@ export async function readCodexThreadHistory(
   );
   const { thread } = CodexLegacyThreadReadSchema.parse(response);
   return {
+    rolloutPath: metadata.path ?? null,
     rows: readLegacyRows(thread.turns),
     status: readHistoryStatus(thread.status, thread.turns.at(-1)?.status),
   };
