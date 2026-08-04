@@ -2286,6 +2286,27 @@ const TurnCompletedNotificationSchema = z
   })
   .passthrough();
 
+const HookCompletedNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    turnId: z.string().nullable(),
+    run: z
+      .object({
+        eventName: z.string(),
+        status: z.string(),
+        entries: z.array(
+          z
+            .object({
+              kind: z.string(),
+              text: z.string(),
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
 const TurnPlanUpdatedNotificationSchema = z
   .object({
     threadId: z.string().optional(),
@@ -2570,6 +2591,14 @@ type ParsedCodexNotification =
       threadId: string | null;
     }
   | {
+      kind: "hook_completed";
+      eventName: string;
+      status: string;
+      entries: Array<{ kind: string; text: string }>;
+      threadId: string;
+      turnId: string | null;
+    }
+  | {
       kind: "plan_updated";
       plan: Array<{ step: string | null; status: string | null }>;
       threadId: string | null;
@@ -2739,6 +2768,25 @@ const CodexNotificationSchema = z.union([
       }),
     ),
   z.object({ method: z.literal("turn/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({ method: z.literal("hook/completed"), params: HookCompletedNotificationSchema })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "hook_completed",
+        eventName: params.run.eventName,
+        status: params.run.status,
+        entries: params.run.entries,
+        threadId: params.threadId,
+        turnId: params.turnId,
+      }),
+    ),
+  z.object({ method: z.literal("hook/completed"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -5558,6 +5606,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "turn_completed":
         this.handleTurnCompletedNotification(parsed);
         return;
+      case "hook_completed":
+        this.handleHookCompletedNotification(parsed);
+        return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
         return;
@@ -6242,6 +6293,30 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification = null;
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.resetTurnTrackingState();
+  }
+
+  private handleHookCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "hook_completed" }>,
+  ): void {
+    if (parsed.eventName !== "userPromptSubmit" || parsed.status !== "blocked") {
+      return;
+    }
+    const feedback = parsed.entries
+      .filter((entry) => entry.kind === "feedback")
+      .map((entry) => entry.text.trim())
+      .filter((text) => text.length > 0);
+    if (feedback.length === 0) {
+      return;
+    }
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      turnId: parsed.turnId ?? undefined,
+      item: {
+        type: "error",
+        message: `Prompt blocked: ${feedback.join("\n")}`,
+      },
+    });
   }
 
   private resetTurnTrackingState(): void {

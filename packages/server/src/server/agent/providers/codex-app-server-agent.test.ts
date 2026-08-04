@@ -1871,6 +1871,69 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("renders blocked user prompt hook feedback in the active turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("hook/completed", {
+      threadId: "test-thread",
+      turnId: "provider-turn",
+      run: {
+        id: "hook-run",
+        eventName: "userPromptSubmit",
+        handlerType: "command",
+        executionMode: "sync",
+        scope: "project",
+        sourcePath: "/workspace/.codex/hooks.json",
+        source: "project",
+        displayOrder: 0,
+        status: "blocked",
+        statusMessage: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+        entries: [
+          { kind: "warning", text: "Hook warning" },
+          { kind: "feedback", text: "Resume or continue the existing task." },
+        ],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "error",
+          message: "Prompt blocked: Resume or continue the existing task.",
+        },
+      },
+    ]);
+  });
+
+  test.each([
+    ["completed", "userPromptSubmit"],
+    ["blocked", "preToolUse"],
+  ])("does not render %s %s hook feedback", (status, eventName) => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("hook/completed", {
+      threadId: "test-thread",
+      turnId: "provider-turn",
+      run: {
+        eventName,
+        status,
+        entries: [{ kind: "feedback", text: "Not a rejected prompt" }],
+      },
+    });
+
+    expect(events).toEqual([]);
+  });
+
   test("configures Codex app-server to use a custom provider base URL", async () => {
     const capturedRequests = await runCustomCodexProviderTurn(
       "codex-iisb",
