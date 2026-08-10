@@ -4,6 +4,7 @@ export interface ChatOutlineRailProps {
   prompts: ChatOutlinePrompt[];
   activePrompt: ActivePromptSource;
   onJumpToPrompt: (seq: number) => void;
+  onVisibilityChange?: (visible: boolean) => void;
 }
 
 // The outline is a wide-layout pointer affordance. Native navigates the transcript by

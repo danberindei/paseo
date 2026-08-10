@@ -69,6 +69,7 @@ import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/vi
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import { RAIL_GUTTER } from "@/agent-stream/chat-outline/layout";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -677,6 +678,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       revealLoadedItem: revealLoadedHistory,
     });
 
+    const [isChatOutlineRailVisible, setIsChatOutlineRailVisible] = useState(false);
+    const listContentContainerStyle = useMemo(
+      () =>
+        isChatOutlineRailVisible
+          ? [stylesheet.listContentContainer, stylesheet.listContentContainerWithRail]
+          : stylesheet.listContentContainer,
+      [isChatOutlineRailVisible],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
@@ -1255,7 +1265,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               olderHistoryProgressKey: progressKey,
               scrollEnabled: streamScrollEnabled,
               listStyle: stylesheet.list,
-              baseListContentContainerStyle: stylesheet.listContentContainer,
+              baseListContentContainerStyle: listContentContainerStyle,
               forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
             })}
           </MessageOuterSpacingProvider>
@@ -1263,6 +1273,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             prompts={chatOutline.prompts}
             activePrompt={chatOutline.activePrompt}
             onJumpToPrompt={chatOutline.jumpToPrompt}
+            onVisibilityChange={setIsChatOutlineRailVisible}
           />
           {(!isNearBottom || isTimelineDetached) && (
             <View style={scrollToBottomContainerStyle} pointerEvents="box-none">
@@ -1880,6 +1891,9 @@ const stylesheet = StyleSheet.create((theme) => ({
       xs: theme.spacing[3],
       md: theme.spacing[4],
     },
+  },
+  listContentContainerWithRail: {
+    paddingLeft: RAIL_GUTTER,
   },
   forwardListContentContainer: {
     paddingTop: theme.spacing[4],

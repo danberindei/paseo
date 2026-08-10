@@ -5,14 +5,13 @@ import { useReducedMotion } from "react-native-reanimated";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { createChatOutlineHoverIntent } from "./hover-intent";
+import { MIN_PANEL_WIDTH, RAIL_WIDTH } from "./layout";
 import { promptTickMagnification } from "./model";
 import type { ChatOutlineRailProps } from "./rail";
 
 // Hover tracking lives on the rail and the slots, never on the Pressable inside them:
 // magnifying a slot must not move the box the pointer is resting on. See docs/hover.md.
-const RAIL_WIDTH = 36;
 const SLOT_HEIGHT = 8;
-const MIN_PANEL_WIDTH = 918;
 const RESTING_PILL_HEIGHT = 2;
 const MAGNIFIED_PILL_HEIGHT = 4;
 const RESTING_PILL_WIDTH = 10;
@@ -26,6 +25,7 @@ export const ChatOutlineRail = memo(function ChatOutlineRail({
   prompts,
   activePrompt,
   onJumpToPrompt,
+  onVisibilityChange,
 }: ChatOutlineRailProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
@@ -63,6 +63,10 @@ export const ChatOutlineRail = memo(function ChatOutlineRail({
   useEffect(() => {
     if (isPanelNarrow) hoverIntent.leave();
   }, [hoverIntent, isPanelNarrow]);
+  const isRailVisible = prompts.length >= 2 && !isPanelNarrow;
+  useEffect(() => {
+    onVisibilityChange?.(isRailVisible);
+  }, [isRailVisible, onVisibilityChange]);
   const handleFocusChange = useCallback((index: number, focused: boolean) => {
     setFocusedIndex((current) => {
       if (focused) return index;
