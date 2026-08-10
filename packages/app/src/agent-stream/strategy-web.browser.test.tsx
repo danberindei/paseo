@@ -2,6 +2,8 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
+import { CHAT_OUTLINE_GUTTER_INSET } from "@/agent-stream/chat-outline/geometry";
+import { CHAT_COLUMN_BASE_GUTTER } from "@/chat-rail/gutters";
 import type { StreamItem } from "@/types/stream";
 import type { DisclosureTriggerEdge, StreamRenderInput, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
@@ -57,11 +59,12 @@ type OlderHistoryInput = Pick<
 interface MountTimelineOptions {
   olderHistory?: OlderHistoryInput;
   isMobileBreakpoint?: boolean;
+  outlineInset?: number;
 }
 
 function mountTimeline(
   historyMounted: StreamItem[],
-  { olderHistory, isMobileBreakpoint = true }: MountTimelineOptions = {},
+  { olderHistory, isMobileBreakpoint = true, outlineInset }: MountTimelineOptions = {},
 ) {
   const strategy = createWebStreamStrategy({ isMobileBreakpoint });
   const viewportRef = React.createRef<StreamViewportHandle>();
@@ -88,6 +91,7 @@ function mountTimeline(
     listStyle: null,
     baseListContentContainerStyle: null,
     forwardListContentContainerStyle: null,
+    outlineInset,
     contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
     ...olderHistory,
   };
@@ -97,6 +101,10 @@ function mountTimeline(
 
   const scrollContainer = host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]');
   if (!scrollContainer) throw new Error("Expected agent chat scroll container");
+  const contentContainer = scrollContainer.firstElementChild;
+  if (!(contentContainer instanceof HTMLElement)) {
+    throw new Error("Expected transcript content container");
+  }
   const rowElement = (id: string) => {
     const element = host.querySelector<HTMLElement>(`[data-history-row-id="${id}"]`);
     if (!element) throw new Error(`Expected row ${id}`);
@@ -111,6 +119,9 @@ function mountTimeline(
       rowElement(id).getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
     rowBottom: (id: string) =>
       rowElement(id).getBoundingClientRect().bottom - scrollContainer.getBoundingClientRect().top,
+    rowLeft: (id: string) =>
+      rowElement(id).getBoundingClientRect().left - scrollContainer.getBoundingClientRect().left,
+    contentPaddingLeft: () => getComputedStyle(contentContainer).paddingLeft,
     scrollTo: (top: number) => {
       scrollContainer.scrollTop = top;
     },
@@ -308,5 +319,26 @@ describe("web history start", () => {
     await timeline.settle();
 
     expect(olderHistoryLoads).toBe(1);
+  });
+});
+
+describe("web transcript gutter", () => {
+  it("moves transcript content past the rail gutter while the rail is visible", () => {
+    const timeline = mountTimeline([row(1), row(2)], {
+      isMobileBreakpoint: false,
+      outlineInset: CHAT_OUTLINE_GUTTER_INSET,
+    });
+
+    expect(timeline.contentPaddingLeft()).toBe(
+      `${CHAT_OUTLINE_GUTTER_INSET + CHAT_COLUMN_BASE_GUTTER}px`,
+    );
+    expect(timeline.rowLeft("message-1")).toBe(CHAT_OUTLINE_GUTTER_INSET + CHAT_COLUMN_BASE_GUTTER);
+  });
+
+  it("keeps the default transcript padding while the rail is hidden", () => {
+    const timeline = mountTimeline([row(1), row(2)], { isMobileBreakpoint: false });
+
+    expect(timeline.contentPaddingLeft()).toBe("16px");
+    expect(timeline.rowLeft("message-1")).toBe(16);
   });
 });

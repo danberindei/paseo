@@ -49,6 +49,11 @@ import {
 // for chrome-width changes elsewhere to stay out of these tests.
 const WIDE_VIEWPORT = { width: 1440, height: 900 };
 const LOADED_TURNS = 16;
+// CHAT_COLUMN_BASE_GUTTER (SPACING[4]) plus CHAT_OUTLINE_GUTTER_INSET (CHAT_OUTLINE_RAIL_LEFT 8 + rail width 36)
+// resolved at runtime from src/chat-rail/gutters.ts and src/agent-stream/chat-outline/geometry.ts, which cannot be
+// imported here because they reach react-native, which Playwright cannot transform.
+const CONTENT_LEFT_WITH_RAIL = 60;
+const CONTENT_LEFT_WITHOUT_RAIL = 16;
 
 test.describe("desktop chat outline", () => {
   test("keeps the prompt marked while reading split Markdown blocks and after completion", async ({
@@ -300,15 +305,34 @@ test.describe("desktop chat outline", () => {
     });
   });
 
-  test("hides the rail when a split makes its panel narrow", async ({ page }) => {
+  test("hides the rail and its gutter when a split makes its panel narrow", async ({ page }) => {
     const agent = await seedLongMockAgentTimeline({ turns: 2 });
     try {
       await page.setViewportSize(WIDE_VIEWPORT);
       await openAgentTimeline(page, agent);
+      await expectChatOutlinePrompts(page, 2);
+
+      const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+      const contentPaddingLeft = () =>
+        timeline.evaluate(
+          (element) => getComputedStyle(element.firstElementChild as HTMLElement).paddingLeft,
+        );
+      await expect.poll(contentPaddingLeft).toBe(`${CONTENT_LEFT_WITH_RAIL}px`);
+
+      const row = timeline.getByTestId("user-message").last();
+      await expect(row).toBeVisible();
+      const [railBox, rowBox] = await Promise.all([
+        chatOutlineRail(page).boundingBox(),
+        row.boundingBox(),
+      ]);
+      expect(railBox).not.toBeNull();
+      expect(rowBox).not.toBeNull();
+      expect(rowBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width);
 
       await splitCurrentPanelRight(page);
 
       await expectNoChatOutline(page);
+      await expect.poll(contentPaddingLeft).toBe(`${CONTENT_LEFT_WITHOUT_RAIL}px`);
     } finally {
       await agent.cleanup();
     }
