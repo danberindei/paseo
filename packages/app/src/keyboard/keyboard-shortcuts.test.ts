@@ -142,6 +142,30 @@ describe("keyboard-shortcuts", () => {
       action: "agent.new",
     },
     {
+      name: "matches Cmd+Shift+X to open in editor on mac",
+      event: { key: "X", code: "KeyX", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+      action: "workspace.open-in-editor",
+    },
+    {
+      name: "matches Ctrl+Shift+X to open in editor on non-mac",
+      event: { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "other" },
+      action: "workspace.open-in-editor",
+    },
+    {
+      name: "matches Cmd+Shift+E to open the files tab on mac",
+      event: { key: "E", code: "KeyE", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+      action: "workspace.tab.target.files",
+    },
+    {
+      name: "matches Ctrl+Shift+E to open the files tab on non-mac",
+      event: { key: "E", code: "KeyE", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "other" },
+      action: "workspace.tab.target.files",
+    },
+    {
       name: "matches Cmd+N to create new workspace on mac",
       event: { key: "n", code: "KeyN", metaKey: true },
       context: { isMac: true, commandCenterOpen: false },

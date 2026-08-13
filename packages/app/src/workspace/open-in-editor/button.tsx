@@ -2,7 +2,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { EditorTargetIcon } from "@/components/icons/editor-target-icon";
@@ -12,29 +11,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useToast } from "@/contexts/toast-context";
-import { useCheckoutStatusQuery } from "@/git/use-status-query";
-import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { openExternalUrl } from "@/utils/open-external-url";
-import { isAbsolutePath } from "@/utils/path";
-import { isWeb } from "@/constants/platform";
-import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
-import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
-import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
 import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
+import type { WorkspaceOpenInEditorTargets } from "@/workspace/open-in-editor/targets";
+import type { PlannedWorkspaceOpenTarget } from "@/workspace/open-in-editor/planner";
 
 interface WorkspaceOpenInEditorButtonProps {
-  serverId: string;
-  cwd: string;
-  projectId: string | null;
-  activeFile?: WorkspaceFileLocation | null;
+  targets: WorkspaceOpenInEditorTargets;
   hideLabels?: boolean;
 }
 
@@ -42,7 +28,6 @@ interface OpenTarget {
   id: string;
   label: string;
   icon: ReactElement;
-  onOpen: () => Promise<void> | void;
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -53,8 +38,17 @@ const ThemedCheckIcon = withUnistyles(Check);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function renderForgeOpenTargetIcon(icon: string): ReactElement {
-  return <ForgeBrandIcon iconKind={icon} size={16} uniProps={mutedColorMapping} />;
+function renderOpenTargetIcon(target: PlannedWorkspaceOpenTarget): ReactElement {
+  if (target.source === "forge") {
+    return (
+      <ForgeBrandIcon
+        iconKind={getForgePresentation(target.forge).icon}
+        size={16}
+        uniProps={mutedColorMapping}
+      />
+    );
+  }
+  return <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />;
 }
 
 interface OpenTargetMenuItemProps {
@@ -82,126 +76,39 @@ function OpenTargetMenuItem({ target, isPreferred, onSelect }: OpenTargetMenuIte
 }
 
 export function WorkspaceOpenInEditorButton({
-  serverId,
-  cwd,
-  projectId,
-  activeFile,
+  targets: controller,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
   const { t } = useTranslation();
-  const toast = useToast();
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const isLocalDaemon = useIsLocalDaemon(serverId);
-  const { preferredEditorId, updatePreferredEditor } = usePreferredEditor({ serverId, projectId });
-  const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
-    useDesktopOpenTargets({
-      isLocalExecution: isLocalDaemon,
-      workspacePath: cwd,
-    });
-
-  const resolvedFile = useMemo(
-    () =>
-      activeFile ? resolveWorkspaceFilePaths({ path: activeFile.path, workspaceRoot: cwd }) : null,
-    [activeFile, cwd],
-  );
-  const activeFileName = useMemo(
-    () => resolvedFile?.absolutePath.split("/").findLast(Boolean) ?? null,
-    [resolvedFile],
-  );
-
-  const canResolveWorkspace = isWeb && cwd.trim().length > 0 && isAbsolutePath(cwd);
-  const shouldQueryCheckout = canResolveWorkspace && isConnected;
-
-  const { status: checkoutStatus } = useCheckoutStatusQuery({
-    serverId,
-    cwd: shouldQueryCheckout ? cwd : "",
-  });
-  const { resolvedForge } = useCheckoutPrStatusQuery({
-    serverId,
-    cwd: shouldQueryCheckout ? cwd : "",
-  });
 
   const targets = useMemo<OpenTarget[]>(
     () =>
-      planWorkspaceOpenTargets({
-        workspaceDirectory: cwd,
-        activeFile,
-        resolvedActiveFile: resolvedFile,
-        desktopTargets: desktopOpenTargets,
-        canUseDesktopBridge: isDesktopOpenAvailable,
-        isLocalExecution: isLocalDaemon,
-        checkoutStatus,
-        forge: resolvedForge,
-      }).map((target) => {
-        if (target.source === "forge") {
-          const presentation = getForgePresentation(target.forge);
-          return {
-            id: target.id,
-            label: target.label,
-            icon: renderForgeOpenTargetIcon(presentation.icon),
-            onOpen: () => openExternalUrl(target.url),
-          };
-        }
-        return {
-          id: target.id,
-          label: target.label,
-          icon: (
-            <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
-          ),
-          onOpen: () => openDesktopTarget(target.openInput),
-        };
-      }),
-    [
-      activeFile,
-      checkoutStatus,
-      cwd,
-      desktopOpenTargets,
-      resolvedForge,
-      isDesktopOpenAvailable,
-      isLocalDaemon,
-      resolvedFile,
-    ],
+      controller.targets.map((plan) => ({
+        id: plan.id,
+        label: plan.label,
+        icon: renderOpenTargetIcon(plan),
+      })),
+    [controller.targets],
   );
-
-  const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
-  const effectivePreferredEditorId = useMemo(
-    () => resolvePreferredEditorId(targetIds, preferredEditorId),
-    [targetIds, preferredEditorId],
-  );
-  const primaryOption = targets.find((target) => target.id === effectivePreferredEditorId) ?? null;
-
-  const openMutation = useMutation({
-    mutationFn: (target: OpenTarget) => Promise.resolve(target.onOpen()),
-    onError: (error: unknown) => {
-      toast.error(
-        error instanceof Error ? error.message : t("workspace.git.openInEditor.failedOpen"),
-      );
-    },
-  });
-
-  const handleOpenTarget = useCallback(
-    (target: OpenTarget) => {
-      openMutation.mutate(target);
-    },
-    [openMutation],
+  const primaryOption = useMemo(
+    () => targets.find((target) => target.id === controller.preferredTargetId) ?? null,
+    [controller.preferredTargetId, targets],
   );
 
   const handleSelectTarget = useCallback(
     (target: OpenTarget) => {
-      void updatePreferredEditor(target.id).catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : t("common.errors.unableToSave"));
-      });
+      controller.selectPreferredTarget(target.id);
     },
-    [updatePreferredEditor, toast, t],
+    [controller],
   );
 
   const primaryPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       hideLabels ? styles.splitButtonPrimaryIconOnly : styles.splitButtonPrimary,
       (Boolean(hovered) || pressed) && styles.splitButtonPrimaryHovered,
-      openMutation.isPending && styles.splitButtonPrimaryDisabled,
+      controller.isOpening && styles.splitButtonPrimaryDisabled,
     ],
-    [hideLabels, openMutation.isPending],
+    [controller.isOpening, hideLabels],
   );
 
   const caretTriggerStyle = useCallback(
@@ -212,13 +119,7 @@ export function WorkspaceOpenInEditorButton({
     [],
   );
 
-  const handlePrimaryPress = useCallback(() => {
-    if (primaryOption) {
-      handleOpenTarget(primaryOption);
-    }
-  }, [primaryOption, handleOpenTarget]);
-
-  if (!canResolveWorkspace || !primaryOption || targets.length === 0) {
+  if (!primaryOption) {
     return null;
   }
 
@@ -228,13 +129,13 @@ export function WorkspaceOpenInEditorButton({
         <Pressable
           testID="workspace-open-in-editor-primary"
           style={primaryPressableStyle}
-          onPress={handlePrimaryPress}
-          disabled={openMutation.isPending}
+          onPress={controller.openPrimary}
+          disabled={controller.isOpening}
           accessibilityRole="button"
           accessibilityLabel={
-            activeFileName
+            controller.activeFileName
               ? t("workspace.git.openInEditor.openFileIn", {
-                  fileName: activeFileName,
+                  fileName: controller.activeFileName,
                   target: primaryOption.label,
                 })
               : t("workspace.git.openInEditor.openIn", {
@@ -242,7 +143,7 @@ export function WorkspaceOpenInEditorButton({
                 })
           }
         >
-          {openMutation.isPending ? (
+          {controller.isOpening ? (
             <ThemedLoadingSpinner
               size="small"
               uniProps={foregroundColorMapping}
@@ -277,7 +178,7 @@ export function WorkspaceOpenInEditorButton({
                 <OpenTargetMenuItem
                   key={target.id}
                   target={target}
-                  isPreferred={target.id === effectivePreferredEditorId}
+                  isPreferred={target.id === controller.preferredTargetId}
                   onSelect={handleSelectTarget}
                 />
               ))}

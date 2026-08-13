@@ -56,6 +56,7 @@ export type KeyboardActionId =
   | "workspace.archive"
   | "workspace.archive.undo"
   | "workspace.pin"
+  | "workspace.open-in-editor"
   | "view.toggle.focus"
   | "theme.cycle"
   | "message-input.action"

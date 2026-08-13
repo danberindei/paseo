@@ -2790,6 +2790,7 @@ export const ar: TranslationResources = {
       },
       help: {
         openProject: "مشروع مفتوح",
+        openInEditor: "فتح في المحرر",
         newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",
         archiveWorkspace: "أرشفة مساحة العمل",

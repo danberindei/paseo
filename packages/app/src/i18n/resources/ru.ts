@@ -2803,6 +2803,7 @@ export const ru: TranslationResources = {
       },
       help: {
         openProject: "Открыть проект",
+        openInEditor: "Открыть в редакторе",
         newWorkspace: "Новое рабочее пространство",
         newWorktree: "Новый worktree",
         archiveWorkspace: "Архивировать рабочее пространство",

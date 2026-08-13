@@ -55,6 +55,7 @@ export type KeyboardActionId =
   | "workspace.archive"
   | "workspace.archive.undo"
   | "workspace.pin"
+  | "workspace.open-in-editor"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
   | "workspace.setup.show"
@@ -122,6 +123,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.pin"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
   | { id: "workspace.setup.show"; scope: KeyboardActionScope }
+  | { id: "workspace.open-in-editor"; scope: KeyboardActionScope }
   | { id: "permission.accept"; scope: KeyboardActionScope }
   | { id: "permission.deny"; scope: KeyboardActionScope }
   | { id: "permission.focus"; scope: KeyboardActionScope };

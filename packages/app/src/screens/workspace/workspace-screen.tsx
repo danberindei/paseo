@@ -66,6 +66,8 @@ import { SplitContainer } from "@/components/split-container";
 import { RetainedPanel } from "@/components/retained-panel";
 import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
+import { useWorkspaceOpenInEditorShortcut } from "@/workspace/open-in-editor/shortcut";
+import { useWorkspaceOpenInEditorTargets } from "@/workspace/open-in-editor/targets";
 import { WorkspaceScriptsButton, useWorkspaceScriptActions } from "@/screens/workspace/scripts";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
@@ -2923,6 +2925,19 @@ function WorkspaceScreenContent({
       }),
     [activeFileLineEnd, activeFileLineStart, activeFilePath],
   );
+  const openInEditorTargets = useWorkspaceOpenInEditorTargets({
+    serverId: normalizedServerId,
+    workspaceDirectory,
+    project: workspaceDescriptor,
+    activeFile: activeFileLocation,
+  });
+  // Registered by the screen, not by the header control: desktop focus mode unmounts the header
+  // and the shortcut still has to open the workspace there.
+  useWorkspaceOpenInEditorShortcut({
+    handlerId: `workspace-open-in-editor:${normalizedServerId}:${normalizedWorkspaceId}`,
+    targets: openInEditorTargets,
+    routeOwned: workspaceActionsEnabled,
+  });
   const shouldRenderDesktopPaneFallback = useMemo(
     () => !isMobile && !canRenderDesktopPaneSplits,
     [isMobile, canRenderDesktopPaneSplits],
@@ -3237,13 +3252,7 @@ function WorkspaceScreenContent({
           />
         ) : null}
         {workspaceDirectory ? (
-          <WorkspaceOpenInEditorButton
-            serverId={normalizedServerId}
-            cwd={workspaceDirectory}
-            projectId={workspaceDescriptor?.projectId ?? null}
-            activeFile={activeFileLocation}
-            hideLabels
-          />
+          <WorkspaceOpenInEditorButton targets={openInEditorTargets} hideLabels />
         ) : null}
         {workspaceDirectory ? (
           <>
@@ -3258,11 +3267,11 @@ function WorkspaceScreenContent({
       normalizedServerId,
       normalizedWorkspaceId,
       workspaceDirectory,
-      activeFileLocation,
       liveTerminalIds,
       scriptActions,
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
+      openInEditorTargets,
       explorerControls.headerAction,
       workspaceActionsInBar,
     ],
