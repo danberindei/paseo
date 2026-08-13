@@ -70,6 +70,7 @@ export function SessionsScreen() {
   return <SessionsScreenContent />;
 }
 
+// oxlint-disable-next-line complexity
 function SessionsScreenContent() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();

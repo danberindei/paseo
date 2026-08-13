@@ -1450,6 +1450,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   if (view.kind === "section" && view.section === "layout") {
     content = isDesktopApp ? <LayoutSection /> : null;
   } else {
+    // oxlint-disable-next-line complexity
     content = (() => {
       if (view.kind === "host") {
         return renderHostSettingsContent(view, handleHostRemoved);
