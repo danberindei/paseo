@@ -162,6 +162,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   ],
   workspaces: [
     "new-agent",
+    "open-in-editor",
     "new-workspace",
     "workspace-jump-index",
     "workspace-prev",
@@ -205,6 +206,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
 
 const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
+  "open-in-editor": "settings.shortcuts.help.openInEditor",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
   "switch-project": "settings.shortcuts.help.switchProject",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
@@ -281,6 +283,29 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-agent",
       section: "workspaces",
       label: "Open project",
+    },
+  },
+
+  {
+    id: "workspace-open-in-editor-cmd-shift-x-mac",
+    action: "workspace.open-in-editor",
+    combo: "Cmd+Shift+X",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "open-in-editor",
+      section: "workspaces",
+      label: "Open in editor",
+    },
+  },
+  {
+    id: "workspace-open-in-editor-ctrl-shift-x-non-mac",
+    action: "workspace.open-in-editor",
+    combo: "Ctrl+Shift+X",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "open-in-editor",
+      section: "workspaces",
+      label: "Open in editor",
     },
   },
 

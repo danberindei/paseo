@@ -2198,6 +2198,7 @@ export const ko: TranslationResources = {
       },
       help: {
         openProject: "프로젝트 열기",
+        openInEditor: "에디터에서 열기",
         newWorkspace: "새 워크스페이스",
         newWorktree: "새 워크트리",
         archiveWorkspace: "워크스페이스 보관",

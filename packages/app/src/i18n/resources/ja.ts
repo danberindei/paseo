@@ -2206,6 +2206,7 @@ export const ja: TranslationResources = {
       },
       help: {
         openProject: "プロジェクトを開く",
+        openInEditor: "エディタで開く",
         newWorkspace: "新しいワークスペース",
         newWorktree: "新しいワークツリー",
         archiveWorkspace: "ワークスペースをアーカイブ",

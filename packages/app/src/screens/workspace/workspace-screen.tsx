@@ -1595,6 +1595,10 @@ function WorkspaceScreenContent({
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
+  const [openInEditorAction, setOpenInEditorAction] = useState<(() => boolean) | null>(null);
+  const handleOpenInEditorActionChange = useCallback((action: (() => boolean) | null) => {
+    setOpenInEditorAction(() => action);
+  }, []);
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
   const openImportSheet = useCallback(() => {
     setIsImportSheetVisible(true);
@@ -3486,6 +3490,15 @@ function WorkspaceScreenContent({
     },
   });
 
+  useKeyboardActionHandler({
+    handlerId: `workspace-open-in-editor:${normalizedServerId}:${normalizedWorkspaceId}`,
+    actions: ["workspace.open-in-editor"] as const,
+    enabled: Boolean(isRouteFocused && openInEditorAction),
+    priority: 100,
+    isActive: () => true,
+    handle: () => openInEditorAction?.() ?? false,
+  });
+
   const activeTabDescriptor = useMemo(() => activeTab?.descriptor ?? null, [activeTab]);
   const activeFileFields = getWorkspaceFileLocationFields(activeTabDescriptor);
   const activeFilePath = activeFileFields.path;
@@ -3793,6 +3806,7 @@ function WorkspaceScreenContent({
           <WorkspaceOpenInEditorButton
             serverId={normalizedServerId}
             cwd={workspaceDirectory}
+            onKeyboardActionChange={handleOpenInEditorActionChange}
             activeFile={activeFileLocation}
             hideLabels
           />
@@ -3834,6 +3848,7 @@ function WorkspaceScreenContent({
       handleScriptTerminalStarted,
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
+      handleOpenInEditorActionChange,
       handleToggleExplorerSidebar,
       explorerSidebarToggleLabel,
       explorerSidebarToggleAccessibilityState,

@@ -2243,6 +2243,7 @@ export const fr: TranslationResources = {
       },
       help: {
         openProject: "Projet ouvert",
+        openInEditor: "Ouvrir dans l'éditeur",
         newWorkspace: "Nouvel espace de travail",
         newWorktree: "Nouvel arbre de travail",
         archiveWorkspace: "Archiver l’espace de travail",

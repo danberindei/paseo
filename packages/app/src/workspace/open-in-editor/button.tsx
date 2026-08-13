@@ -1,5 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { type ReactElement, useCallback, useMemo } from "react";
+import { type ReactElement, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useMutation } from "@tanstack/react-query";
@@ -33,6 +33,7 @@ import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   cwd: string;
+  onKeyboardActionChange: (action: (() => boolean) | null) => void;
   activeFile?: WorkspaceFileLocation | null;
   hideLabels?: boolean;
 }
@@ -83,6 +84,7 @@ function OpenTargetMenuItem({ target, isPreferred, onSelect }: OpenTargetMenuIte
 export function WorkspaceOpenInEditorButton({
   serverId,
   cwd,
+  onKeyboardActionChange,
   activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
@@ -212,6 +214,23 @@ export function WorkspaceOpenInEditorButton({
       handleOpenTarget(primaryOption);
     }
   }, [primaryOption, handleOpenTarget]);
+
+  const handleKeyboardAction = useCallback(() => {
+    if (!canResolveWorkspace || !primaryOption || openMutation.isPending) {
+      return false;
+    }
+    handlePrimaryPress();
+    return true;
+  }, [canResolveWorkspace, handlePrimaryPress, openMutation.isPending, primaryOption]);
+
+  useEffect(() => {
+    if (!canResolveWorkspace || !primaryOption) {
+      onKeyboardActionChange(null);
+      return;
+    }
+    onKeyboardActionChange(handleKeyboardAction);
+    return () => onKeyboardActionChange(null);
+  }, [canResolveWorkspace, handleKeyboardAction, onKeyboardActionChange, primaryOption]);
 
   if (!canResolveWorkspace || !primaryOption || targets.length === 0) {
     return null;

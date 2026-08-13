@@ -2285,6 +2285,7 @@ export const en = {
       },
       help: {
         openProject: "Open project",
+        openInEditor: "Open in editor",
         newWorkspace: "New workspace",
         newWorktree: "New worktree",
         archiveWorkspace: "Archive workspace",
