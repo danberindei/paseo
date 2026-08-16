@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchUsage, discover } from "./usage.js";
 import { inputSchema, type UsageInput } from "../shared/input.js";
 import { hashAccountKey, type UsageReport } from "@getpaseo/plugin/server/usage";
@@ -1320,4 +1320,72 @@ it("session Keychain input retains the selected config-directory locator through
     env: { CLAUDE_CONFIG_DIR: "/somewhere-else" },
   });
   expect(reads).toEqual(Array(3).fill(`${service}:fixture-user`));
+});
+
+// Claude Code resolves ANTHROPIC_BASE_URL from its own settings.json (docs/custom-providers.md),
+// so the usage fetcher has to read the same file to reach the same host.
+describe("Claude usage source base URL resolution", () => {
+  let claudeHome: string;
+
+  // A value in the invoking shell would redirect these tests away from the mocked hosts.
+  let savedAnthropicBaseUrl: string | undefined;
+  beforeAll(() => {
+    savedAnthropicBaseUrl = process.env["ANTHROPIC_BASE_URL"];
+    delete process.env["ANTHROPIC_BASE_URL"];
+  });
+  afterAll(() => {
+    if (savedAnthropicBaseUrl !== undefined)
+      process.env["ANTHROPIC_BASE_URL"] = savedAnthropicBaseUrl;
+  });
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-claude-base-url-"));
+    writeClaudeCredentials(claudeHome, "at_valid");
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+    delete process.env["ANTHROPIC_BASE_URL"];
+  });
+
+  it("falls back to ANTHROPIC_BASE_URL from Claude settings.json when no env override is set", async () => {
+    writeFileSync(
+      join(claudeHome, "settings.json"),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://proxy.example.com/v1" } }),
+    );
+    const fetchApi = mockFetch(
+      new Map([
+        ["https://proxy.example.com/v1/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const usage = await fetchUsage(credentialInput(claudeHome), fetchApi);
+
+    expect(usage.status).toBe("available");
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://proxy.example.com/v1/api/oauth/usage",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("prefers an explicit env override over Claude settings.json", async () => {
+    writeFileSync(
+      join(claudeHome, "settings.json"),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://from-settings.example.com" } }),
+    );
+    process.env["ANTHROPIC_BASE_URL"] = "https://from-env.example.com";
+    const fetchApi = mockFetch(
+      new Map([
+        ["https://from-env.example.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const usage = await fetchUsage(credentialInput(claudeHome), fetchApi);
+
+    expect(usage.status).toBe("available");
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://from-env.example.com/api/oauth/usage",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
 });

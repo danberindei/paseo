@@ -1,9 +1,9 @@
 import { discoverOmp, piAuthPath, readHarness, type StoreLookup } from "./stores.js";
 import type { UsageInput } from "../shared/input.js";
 import { execFile } from "node:child_process";
-import { existsSync, promises as fs } from "node:fs";
+import { existsSync, promises as fs, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import {
@@ -28,6 +28,7 @@ const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+const CLAUDE_DEFAULT_BASE_URL = "https://api.anthropic.com";
 
 const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
@@ -443,11 +444,39 @@ interface ClaudeCredentialLookup extends StoreLookup {
   claudeHome?: string;
 }
 
-function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
+function claudeHomeDir(lookup: ClaudeCredentialLookup): string {
   const home = lookup.home ?? homedir();
   const env = lookup.env ?? process.env;
-  const claudeHome = lookup.claudeHome ?? env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
-  return join(claudeHome, ".credentials.json");
+  return lookup.claudeHome ?? env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
+}
+
+function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
+  return join(claudeHomeDir(lookup), ".credentials.json");
+}
+
+/**
+ * Claude Code resolves `ANTHROPIC_BASE_URL` from its own settings.json `env`
+ * (docs/custom-providers.md), so read the same file to reach the same host.
+ */
+function readClaudeSettingsBaseUrl(claudeHome: string): string | undefined {
+  const settingsPath = join(claudeHome, "settings.json");
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const value = parsed?.env?.ANTHROPIC_BASE_URL;
+    return typeof value === "string" && value.trim() ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveClaudeBaseUrl(input: UsageInput, lookup: ClaudeCredentialLookup): string {
+  const claudeHome =
+    input.route.store === "claude" ? dirname(input.route.path) : claudeHomeDir(lookup);
+  return (
+    process.env["ANTHROPIC_BASE_URL"] ||
+    readClaudeSettingsBaseUrl(claudeHome) ||
+    CLAUDE_DEFAULT_BASE_URL
+  ).replace(/\/+$/, "");
 }
 
 async function keychainCredentialRecord(
@@ -600,6 +629,8 @@ export async function fetchUsage(
   fetchApi: typeof fetch = fetch,
   credentialLookup: ClaudeCredentialLookup = {},
 ): Promise<UsageReport> {
+  const baseUrl = resolveClaudeBaseUrl(input, credentialLookup);
+
   /**
    * Scoped limits carried by `limits[]`.
    *
@@ -638,7 +669,7 @@ export async function fetchUsage(
       throw rateLimitedError(limitedUntil - now);
     rateLimitedUntil.delete(tokenKey);
 
-    const res = await fetchApi("https://api.anthropic.com/api/oauth/usage", {
+    const res = await fetchApi(`${baseUrl}/api/oauth/usage`, {
       signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: `Bearer ${token}`,
