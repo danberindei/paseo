@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, promises as fs } from "node:fs";
+import { existsSync, promises as fs, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -30,6 +30,7 @@ const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+const CLAUDE_DEFAULT_BASE_URL = "https://api.anthropic.com";
 
 const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
@@ -297,6 +298,25 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
   });
 }
 
+/**
+ * `ANTHROPIC_BASE_URL` as configured in Claude Code's own settings.json `env` object
+ * (docs/custom-providers.md), read from the same directory `readClaudeSettingsModels`
+ * (packages/server/src/server/agent/providers/claude/models.ts) uses for model discovery.
+ * The daemon doesn't set this env var when spawning the built-in `claude` provider — the
+ * Claude Code CLI resolves it from settings.json on its own — so the quota fetcher has to
+ * read the same file to reach the same host.
+ */
+function readClaudeSettingsBaseUrl(claudeHome: string): string | undefined {
+  const settingsPath = join(claudeHome, "settings.json");
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const value = parsed?.env?.ANTHROPIC_BASE_URL;
+    return typeof value === "string" && value.trim() ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
 
 // Keep this in sync with Claude Code's Keychain account derivation.
@@ -351,6 +371,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
+  private readonly baseUrl: string;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
@@ -363,6 +384,11 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       options.claudeHome ||
       resolveProviderEnv(options.context?.env, ["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"]) ||
       join(homedir(), ".claude");
+    this.baseUrl = (
+      resolveProviderEnv(options.context?.env, ["ANTHROPIC_BASE_URL"]) ||
+      readClaudeSettingsBaseUrl(this.claudeHome) ||
+      CLAUDE_DEFAULT_BASE_URL
+    ).replace(/\/+$/, "");
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
@@ -478,7 +504,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
-    const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/api/oauth/usage", {
+    const res = await fetchProviderApi(this.fetchApi, `${this.baseUrl}/api/oauth/usage`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

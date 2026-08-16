@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspect } from "node:util";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderUsageFetcher } from "./provider.js";
@@ -17,6 +17,20 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+
+// ClaudeQuotaProvider resolves its base URL from process.env.ANTHROPIC_BASE_URL when no
+// override is passed, so a value in the invoking shell redirects fetches away from the
+// mocked hosts these tests expect.
+let savedAnthropicBaseUrl: string | undefined;
+beforeAll(() => {
+  savedAnthropicBaseUrl = process.env["ANTHROPIC_BASE_URL"];
+  delete process.env["ANTHROPIC_BASE_URL"];
+});
+afterAll(() => {
+  if (savedAnthropicBaseUrl !== undefined) {
+    process.env["ANTHROPIC_BASE_URL"] = savedAnthropicBaseUrl;
+  }
+});
 
 function writeClaudeCredentials(
   dir: string,
@@ -1608,6 +1622,69 @@ describe("usage bars escalate as they fill", () => {
         expect.objectContaining({ id: "weekly", tone: "danger" }),
       ]),
     );
+  });
+});
+
+// The daemon doesn't inject ANTHROPIC_BASE_URL for the built-in `claude` provider — the
+// Claude Code CLI resolves it from its own settings.json — so the quota fetcher has to
+// read the same file to reach the same host (docs/custom-providers.md).
+describe("ClaudeQuotaProvider base URL resolution", () => {
+  let claudeHome: string;
+
+  beforeEach(() => {
+    claudeHome = mkdtempSync(join(tmpdir(), "paseo-claude-base-url-"));
+    writeClaudeCredentials(claudeHome, "at_valid");
+  });
+
+  afterEach(() => {
+    rmSync(claudeHome, { recursive: true, force: true });
+  });
+
+  it("falls back to ANTHROPIC_BASE_URL from Claude settings.json when no env override is set", async () => {
+    writeFileSync(
+      join(claudeHome, "settings.json"),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://proxy.example.com/v1" } }),
+    );
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: async () => null,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://proxy.example.com/v1/api/oauth/usage",
+            () => jsonResponse(makeClaudeResponse()),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+
+    expect(usage.status).toBe("available");
+  });
+
+  it("prefers an explicit env override over Claude settings.json", async () => {
+    writeFileSync(
+      join(claudeHome, "settings.json"),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://from-settings.example.com" } }),
+    );
+
+    const usage = await new ClaudeQuotaProvider({
+      logger: createLogger(),
+      claudeHome,
+      claudeKeychainReader: async () => null,
+      context: { env: { ANTHROPIC_BASE_URL: "https://from-context.example.com" } },
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://from-context.example.com/api/oauth/usage",
+            () => jsonResponse(makeClaudeResponse()),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+
+    expect(usage.status).toBe("available");
   });
 });
 
