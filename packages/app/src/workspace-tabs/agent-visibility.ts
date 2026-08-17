@@ -7,10 +7,28 @@ export interface WorkspaceAgentVisibility {
   activeAgentIds: Set<string>;
   autoOpenAgentIds: Set<string>;
   knownAgentIds: Set<string>;
+  recoverableArchivedAgentIds: Set<string>;
 }
 
 function agentBelongsToWorkspace(agent: Agent, workspaceId: string): boolean {
   return normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId;
+}
+
+function collectKnownAgentDetails(input: {
+  agentDetails: Map<string, Agent> | undefined;
+  workspaceId: string;
+  knownAgentIds: Set<string>;
+  recoverableArchivedAgentIds: Set<string>;
+}): void {
+  for (const agent of input.agentDetails?.values() ?? []) {
+    if (!agentBelongsToWorkspace(agent, input.workspaceId)) {
+      continue;
+    }
+    input.knownAgentIds.add(agent.id);
+    if (agent.archivedAt) {
+      input.recoverableArchivedAgentIds.add(agent.id);
+    }
+  }
 }
 
 export function deriveWorkspaceAgentVisibility(input: {
@@ -25,12 +43,14 @@ export function deriveWorkspaceAgentVisibility(input: {
       activeAgentIds: new Set<string>(),
       autoOpenAgentIds: new Set<string>(),
       knownAgentIds: new Set<string>(),
+      recoverableArchivedAgentIds: new Set<string>(),
     };
   }
 
   const activeAgentIds = new Set<string>();
   const autoOpenAgentIds = new Set<string>();
   const knownAgentIds = new Set<string>();
+  const recoverableArchivedAgentIds = new Set<string>();
   const agentsById = new Map<string, Agent>([
     ...(agentDetails?.entries() ?? []),
     ...(sessionAgents?.entries() ?? []),
@@ -48,14 +68,14 @@ export function deriveWorkspaceAgentVisibility(input: {
       }
     }
   }
-  for (const agent of agentDetails?.values() ?? []) {
-    if (!agentBelongsToWorkspace(agent, workspaceId)) {
-      continue;
-    }
-    knownAgentIds.add(agent.id);
-  }
+  collectKnownAgentDetails({
+    agentDetails,
+    workspaceId,
+    knownAgentIds,
+    recoverableArchivedAgentIds,
+  });
 
-  return { activeAgentIds, autoOpenAgentIds, knownAgentIds };
+  return { activeAgentIds, autoOpenAgentIds, knownAgentIds, recoverableArchivedAgentIds };
 }
 
 export function buildWorkspaceTabSnapshot(input: {
@@ -73,6 +93,7 @@ export function buildWorkspaceTabSnapshot(input: {
     activeAgentIds: input.agentVisibility.activeAgentIds,
     autoOpenAgentIds: input.agentVisibility.autoOpenAgentIds,
     knownAgentIds: input.agentVisibility.knownAgentIds,
+    recoverableArchivedAgentIds: input.agentVisibility.recoverableArchivedAgentIds,
     knownTerminalIds: input.knownTerminalIds,
     standaloneTerminalIds: input.standaloneTerminalIds,
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
@@ -87,7 +108,8 @@ export function workspaceAgentVisibilityEqual(
   return (
     setsEqual(a.activeAgentIds, b.activeAgentIds) &&
     setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds) &&
-    setsEqual(a.knownAgentIds, b.knownAgentIds)
+    setsEqual(a.knownAgentIds, b.knownAgentIds) &&
+    setsEqual(a.recoverableArchivedAgentIds, b.recoverableArchivedAgentIds)
   );
 }
 

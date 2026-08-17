@@ -263,6 +263,7 @@ export interface WorkspaceTabSnapshot {
   activeAgentIds: Iterable<string>;
   autoOpenAgentIds: Iterable<string>;
   knownAgentIds: Iterable<string>;
+  recoverableArchivedAgentIds?: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
   hasActivePendingTerminalCreate?: boolean;
@@ -2241,11 +2242,23 @@ function applyPinnedAndHidden(input: {
   pendingAgentIds: Set<string>;
   hiddenAgentIds: Set<string>;
   knownAgentIds: Set<string>;
+  recoverableArchivedAgentIds: Set<string>;
 }): Set<string> {
-  const { baseAgentIds, pinnedAgentIds, pendingAgentIds, hiddenAgentIds, knownAgentIds } = input;
+  const {
+    baseAgentIds,
+    pinnedAgentIds,
+    pendingAgentIds,
+    hiddenAgentIds,
+    knownAgentIds,
+    recoverableArchivedAgentIds,
+  } = input;
   const result = new Set(baseAgentIds);
   for (const agentId of pinnedAgentIds) {
-    if (knownAgentIds.has(agentId) || pendingAgentIds.has(agentId)) {
+    if (
+      knownAgentIds.has(agentId) ||
+      pendingAgentIds.has(agentId) ||
+      recoverableArchivedAgentIds.has(agentId)
+    ) {
       result.add(agentId);
     }
   }
@@ -2277,6 +2290,46 @@ function buildEntityTabGroups(initialTabs: WorkspaceTab[]): Map<string, EntityTa
     });
   }
   return entityGroups;
+}
+
+function reconcileEntityGroups(input: {
+  layout: WorkspaceLayout;
+  entityGroups: Map<string, EntityTabGroup>;
+  originalFocusedTabId: string | null;
+}): { layout: WorkspaceLayout; reconciledFocusedTabId: string | null } {
+  let nextLayout = input.layout;
+  let reconciledFocusedTabId = input.originalFocusedTabId;
+  for (const [canonicalTabId, group] of input.entityGroups) {
+    const keeper = group.tabs.find((tab) => tab.tabId === canonicalTabId) ?? group.tabs[0] ?? null;
+    if (!keeper) {
+      continue;
+    }
+    if (group.tabs.some((tab) => tab.tabId === input.originalFocusedTabId)) {
+      reconciledFocusedTabId = keeper.tabId;
+    }
+    if (!workspaceTabTargetsEqual(keeper.target, group.target)) {
+      nextLayout = withNormalizedParentTabMap({
+        root: replaceTabInTree(asInternalLayout(nextLayout).root, {
+          tabId: keeper.tabId,
+          nextTabId: keeper.tabId,
+          target: group.target,
+        }),
+        focusedPaneId: nextLayout.focusedPaneId,
+        parentTabIdByTabId: nextLayout.parentTabIdByTabId,
+      });
+    }
+    for (const tab of group.tabs) {
+      if (tab.tabId === keeper.tabId) {
+        continue;
+      }
+      nextLayout =
+        closeTabInLayout({
+          layout: nextLayout,
+          tabId: tab.tabId,
+        }) ?? nextLayout;
+    }
+  }
+  return { layout: nextLayout, reconciledFocusedTabId };
 }
 
 function collapseStaleEntityTabs(input: {
@@ -2420,6 +2473,9 @@ export function reconcileWorkspaceTabs(
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
   const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
+  const recoverableArchivedAgentIds = normalizeStringSet(
+    snapshot.recoverableArchivedAgentIds ?? [],
+  );
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
   const knownTerminalIds = snapshot.knownTerminalIds
     ? normalizeStringSet(snapshot.knownTerminalIds)
@@ -2430,6 +2486,7 @@ export function reconcileWorkspaceTabs(
     pendingAgentIds,
     hiddenAgentIds,
     knownAgentIds,
+    recoverableArchivedAgentIds,
   });
   const autoOpenSet = applyPinnedAndHidden({
     baseAgentIds: autoOpenAgentIds,
@@ -2437,6 +2494,7 @@ export function reconcileWorkspaceTabs(
     pendingAgentIds,
     hiddenAgentIds,
     knownAgentIds,
+    recoverableArchivedAgentIds,
   });
 
   const initialTabs = collectAllTabs(nextLayout.root);
@@ -2446,36 +2504,13 @@ export function reconcileWorkspaceTabs(
 
   const entityGroups = buildEntityTabGroups(initialTabs);
 
-  for (const [canonicalTabId, group] of entityGroups) {
-    const keeper = group.tabs.find((tab) => tab.tabId === canonicalTabId) ?? group.tabs[0] ?? null;
-    if (!keeper) {
-      continue;
-    }
-    if (group.tabs.some((tab) => tab.tabId === originalFocusedTabId)) {
-      reconciledFocusedTabId = keeper.tabId;
-    }
-    if (!workspaceTabTargetsEqual(keeper.target, group.target)) {
-      nextLayout = withNormalizedParentTabMap({
-        root: replaceTabInTree(asInternalLayout(nextLayout).root, {
-          tabId: keeper.tabId,
-          nextTabId: keeper.tabId,
-          target: group.target,
-        }),
-        focusedPaneId: nextLayout.focusedPaneId,
-        parentTabIdByTabId: nextLayout.parentTabIdByTabId,
-      });
-    }
-    for (const tab of group.tabs) {
-      if (tab.tabId === keeper.tabId) {
-        continue;
-      }
-      nextLayout =
-        closeTabInLayout({
-          layout: nextLayout,
-          tabId: tab.tabId,
-        }) ?? nextLayout;
-    }
-  }
+  const reconciled = reconcileEntityGroups({
+    layout: nextLayout,
+    entityGroups,
+    originalFocusedTabId,
+  });
+  nextLayout = reconciled.layout;
+  reconciledFocusedTabId = reconciled.reconciledFocusedTabId;
 
   nextLayout = collapseStaleEntityTabs({
     layout: nextLayout,
