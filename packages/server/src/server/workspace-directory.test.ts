@@ -107,6 +107,10 @@ class WorkspaceStatus {
     this.workspaces.push(this.sameCwdWorkspace);
   }
 
+  updatedAt(timestamp: string): void {
+    this.workspace.updatedAt = timestamp;
+  }
+
   // A root agent owned by a specific workspace, even though both same-cwd
   // workspaces share the directory. Ownership follows workspaceId, and status is
   // computed per id: only the owning workspace reflects this agent's bucket.
@@ -546,6 +550,18 @@ describe("WorkspaceDirectory", () => {
     expect(descriptor.status).toBe("running");
     // terminal timestamp (2027) is newer than agent updatedAt (NOW = 2026-03-01)
     expect(descriptor.statusEnteredAt).toBe("2027-01-01T00:00:00.000Z");
+  });
+
+  test("empty workspace always uses workspace updatedAt as statusEnteredAt", async () => {
+    const workspace = new WorkspaceStatus();
+    const first = await workspace.workspaceDescriptor();
+    expect(first.status).toBe("done");
+    expect(first.statusEnteredAt).toBe(NOW);
+
+    workspace.updatedAt("2026-06-01T12:00:00.000Z");
+    const second = await workspace.workspaceDescriptor();
+    expect(second.status).toBe("done");
+    expect(second.statusEnteredAt).toBe("2026-06-01T12:00:00.000Z");
   });
 });
 

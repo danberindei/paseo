@@ -6362,8 +6362,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
       return descriptor!;
     });
 
-  // 1. Empty workspace — no agents contribute. The workspace entered its
-  // initial "done" bucket when it was created.
+  // 1. Empty workspace — no agents contribute.
   {
     const { session, workspace } = setupSession();
     session.listAgentPayloads = async () => [];
@@ -6612,7 +6611,7 @@ test("same-cwd workspace descriptors compute agent status per workspaceId", asyn
   expect(attentionDescriptors.get(workspaceB.workspaceId)?.status).toBe("attention");
 });
 
-test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents are archived", async () => {
+test("buildWorkspaceDescriptorMap uses workspace updatedAt after its agents are archived", async () => {
   const session = createSessionForWorkspaceTests();
   const project = createPersistedProjectRecord({
     projectId: "proj-archive-status-entered",
@@ -6629,7 +6628,7 @@ test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents
     kind: "worktree",
     displayName: "feature",
     createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-05-12T09:45:00.000Z",
   });
   const doneEnteredAt = "2026-05-12T09:30:00.000Z";
   const archivedAt = "2026-05-12T09:45:00.000Z";
@@ -6666,7 +6665,38 @@ test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents
   const second = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
   expect(second.get(workspace.workspaceId)).toMatchObject({
     status: "done",
-    statusEnteredAt: doneEnteredAt,
+    statusEnteredAt: workspace.updatedAt,
+  });
+});
+
+test("buildWorkspaceDescriptorMap uses workspace updatedAt for an empty workspace", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-updatedat-fallback",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-updatedat-fallback",
+    projectId: project.projectId,
+    cwd: "/tmp/repo/updatedat-fallback",
+    kind: "worktree",
+    displayName: "feature",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-04-01T12:00:00.000Z",
+  });
+
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+  session.listAgentPayloads = async () => [];
+
+  const descriptors = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
+  expect(descriptors.get(workspace.workspaceId)).toMatchObject({
+    status: "done",
+    statusEnteredAt: "2026-04-01T12:00:00.000Z",
   });
 });
 
