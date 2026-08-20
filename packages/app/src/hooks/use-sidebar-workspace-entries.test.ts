@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import {
   areSidebarWorkspaceSessionsEqual,
@@ -15,8 +15,13 @@ function activityMap(): Map<string, WorkspaceAgentActivity> {
   return new Map();
 }
 
+function agentMap(): Map<string, Agent> {
+  return new Map();
+}
+
 function sidebarSession(input?: Partial<Omit<SidebarWorkspaceSession, "serverId">>) {
   return {
+    agents: input?.agents ?? agentMap(),
     workspaces: input?.workspaces ?? workspaceMap(),
     workspaceAgentActivity: input?.workspaceAgentActivity ?? activityMap(),
   };
@@ -40,11 +45,13 @@ describe("sidebar workspace session selection", () => {
     ).toEqual([
       {
         serverId: "host-b",
+        agents: hostB.agents,
         workspaces: hostB.workspaces,
         workspaceAgentActivity: hostB.workspaceAgentActivity,
       },
       {
         serverId: "host-a",
+        agents: hostA.agents,
         workspaces: hostA.workspaces,
         workspaceAgentActivity: hostA.workspaceAgentActivity,
       },
@@ -52,15 +59,16 @@ describe("sidebar workspace session selection", () => {
   });
 
   it("ignores high-frequency session changes outside the sidebar indexes", () => {
+    const agents = agentMap();
     const workspaces = workspaceMap();
     const workspaceAgentActivity = activityMap();
 
     const previous = selectSidebarWorkspaceSessions(
-      { "host-a": sidebarSession({ workspaces, workspaceAgentActivity }) },
+      { "host-a": sidebarSession({ agents, workspaces, workspaceAgentActivity }) },
       ["host-a"],
     );
     const next = selectSidebarWorkspaceSessions(
-      { "host-a": sidebarSession({ workspaces, workspaceAgentActivity }) },
+      { "host-a": sidebarSession({ agents, workspaces, workspaceAgentActivity }) },
       ["host-a"],
     );
 

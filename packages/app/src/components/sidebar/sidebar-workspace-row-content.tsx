@@ -229,6 +229,14 @@ function WorkspaceStatusIndicator({
     );
   }
 
+  if (bucket === "unsent") {
+    return reserveIdleSpace ? (
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-unsent">
+        <View style={styles.idleStatusDot} />
+      </View>
+    ) : null;
+  }
+
   if (bucket === "done") {
     // An idle row still gets a dot rather than an empty slot. Nested rows are marked as
     // workspaces by indentation alone, and with nothing in the leading slot the rail has no
@@ -269,6 +277,8 @@ function getStatusDotColorStyle(bucket: SidebarStateBucket) {
       return styles.statusDotRunning;
     case "attention":
       return styles.statusDotAttention;
+    case "unsent":
+      return null;
     case "done":
       return null;
   }

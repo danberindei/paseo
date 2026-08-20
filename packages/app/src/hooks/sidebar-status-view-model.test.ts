@@ -177,6 +177,7 @@ describe("buildStatusGroups", () => {
         statusBucket: "running",
         statusEnteredAt: d("2026-01-01T00:00:00Z"),
       }),
+      ws({ workspaceKey: "srv:unsent", statusBucket: "unsent", statusEnteredAt: null }),
       ws({ workspaceKey: "srv:dn", statusBucket: "done", statusEnteredAt: null }),
     ];
 

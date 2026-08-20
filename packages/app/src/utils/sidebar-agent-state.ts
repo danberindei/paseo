@@ -2,12 +2,13 @@ import {
   deriveAgentStateBucket,
   type AgentAttentionReason,
   type AgentStateBucketInput,
+  type WorkspaceStateBucket,
 } from "@getpaseo/protocol/agent-state-bucket";
 
-export type SidebarStateBucket = "needs_input" | "failed" | "running" | "attention" | "done";
+export type SidebarStateBucket = WorkspaceStateBucket | "unsent";
 export type SidebarAttentionReason = AgentAttentionReason;
 
-export function deriveSidebarStateBucket(input: AgentStateBucketInput): SidebarStateBucket {
+export function deriveSidebarStateBucket(input: AgentStateBucketInput): WorkspaceStateBucket {
   return deriveAgentStateBucket(input);
 }
 
@@ -25,6 +26,7 @@ const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
   "failed",
   "running",
   "attention",
+  "unsent",
   "done",
 ];
 
@@ -38,6 +40,7 @@ export const STATUS_BUCKET_ORDER: readonly SidebarStateBucket[] = [
   "failed",
   "attention",
   "running",
+  "unsent",
   "done",
 ] as const;
 

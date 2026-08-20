@@ -2,20 +2,20 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
+import { aggregateSidebarStateBuckets, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
+export type { SidebarStateBucket };
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -71,11 +71,13 @@ export interface SidebarWorkspacePlacementModel {
 
 export interface SidebarWorkspaceSession {
   serverId: string;
+  agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 interface SidebarWorkspaceSessionSource {
+  agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
@@ -92,6 +94,7 @@ export function selectSidebarWorkspaceSessions(
     }
     selected.push({
       serverId,
+      agents: session.agents,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
@@ -113,6 +116,7 @@ export function areSidebarWorkspaceSessionsEqual(
       !leftSession ||
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
+      leftSession.agents !== rightSession.agents ||
       leftSession.workspaces !== rightSession.workspaces ||
       leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
     ) {
@@ -123,7 +127,7 @@ export function areSidebarWorkspaceSessionsEqual(
 }
 
 interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 
@@ -149,6 +153,7 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  hasUnsentComposer?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -191,6 +196,7 @@ function deriveEffectiveWorkspaceStatus(input: {
   workspace: WorkspaceDescriptor;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  hasUnsentComposer?: boolean;
 }): EffectiveWorkspaceStatus {
   if (input.workspace.status !== "done") {
     return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
@@ -208,6 +214,12 @@ function deriveEffectiveWorkspaceStatus(input: {
   const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
   if (rootAgentActivity && rootAgentActivity.status !== "done") {
     return rootAgentActivity;
+  }
+
+  // An otherwise-idle workspace with an unsent composer draft on this client. enteredAt stays
+  // null so keystrokes don't re-sort the Unsent section on every change.
+  if (input.hasUnsentComposer) {
+    return { status: "unsent", enteredAt: null };
   }
 
   return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
@@ -366,6 +378,7 @@ export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  unsentComposerWorkspaceKeys?: ReadonlySet<string>;
   previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
 }): Map<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
@@ -391,6 +404,7 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      hasUnsentComposer: input.unsentComposerWorkspaceKeys?.has(placement.workspaceKey) ?? false,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

@@ -68,6 +68,94 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry hasUnsentComposer", () => {
+  it("flips a done workspace to unsent when it has an unsent composer draft", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "done",
+      }),
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("unsent");
+    expect(entry.statusEnteredAt).toBeNull();
+  });
+
+  it("does not override a running workspace's status", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "running",
+        statusEnteredAt: new Date("2026-06-10T00:00:00.000Z"),
+      }),
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("running");
+    expect(entry.statusEnteredAt).toEqual(new Date("2026-06-10T00:00:00.000Z"));
+  });
+
+  it("does not override a needs_input workspace's status", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "needs_input",
+      }),
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("needs_input");
+  });
+
+  it("does not override a done workspace whose root agent is still working", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "done",
+      }),
+      workspaceAgentActivity: new Map([
+        ["ws-1", { agentId: "a1", status: "running", enteredAt: new Date(1_000) }],
+      ]),
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("running");
+  });
+
+  it("stays done without an unsent composer draft", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "done",
+      }),
+      hasUnsentComposer: false,
+    });
+
+    expect(entry.statusBucket).toBe("done");
+  });
+});
+
 describe("createSidebarWorkspaceEntry workspace directory label", () => {
   it("uses the daemon-provided slug for a Paseo-owned worktree", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
@@ -321,6 +409,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "host-a",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
@@ -337,6 +426,7 @@ describe("shared sidebar workspace model", () => {
         },
         {
           serverId: "host-b",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
@@ -424,6 +514,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             ["one", one],
@@ -437,6 +528,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             ["one", one],
@@ -461,6 +553,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
