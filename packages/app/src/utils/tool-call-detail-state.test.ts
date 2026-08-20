@@ -28,6 +28,7 @@ describe("tool-call detail state", () => {
   it("marks running calls with no meaningful detail as pending", () => {
     assert.strictEqual(
       isPendingToolCallDetail({
+        toolName: "Bash",
         detail: {
           type: "unknown",
           input: {},
@@ -43,12 +44,45 @@ describe("tool-call detail state", () => {
   it("does not mark completed calls as pending", () => {
     assert.strictEqual(
       isPendingToolCallDetail({
+        toolName: "Bash",
         detail: {
           type: "unknown",
           input: {},
           output: null,
         },
         status: "completed",
+        error: null,
+      }),
+      false,
+    );
+  });
+
+  it("never marks ExitPlanMode as pending, even while running with no detail", () => {
+    assert.strictEqual(
+      isPendingToolCallDetail({
+        toolName: "ExitPlanMode",
+        detail: {
+          type: "unknown",
+          input: {},
+          output: null,
+        },
+        status: "running",
+        error: null,
+      }),
+      false,
+    );
+  });
+
+  it("never marks AskUserQuestion as pending, even while running with no detail", () => {
+    assert.strictEqual(
+      isPendingToolCallDetail({
+        toolName: "AskUserQuestion",
+        detail: {
+          type: "unknown",
+          input: {},
+          output: null,
+        },
+        status: "running",
         error: null,
       }),
       false,

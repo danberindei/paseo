@@ -72,6 +72,7 @@ export function buildToolCallPresentation(
     targetAgentTitle: input.targetAgentTitle,
   });
   const isLoadingDetails = isPendingToolCallDetail({
+    toolName: input.toolName,
     detail,
     status: input.status,
     error: input.error,

@@ -67,6 +67,26 @@ const ClaudeSpeakToolDetailSchema = z
     } satisfies ToolCallDetail;
   });
 
+const ClaudeExitPlanModeToolDetailSchema = z
+  .object({
+    name: z.literal("ExitPlanMode"),
+    input: z
+      .object({ plan: z.union([z.string(), z.null(), z.undefined()]).optional() })
+      .passthrough()
+      .nullable(),
+    output: z.unknown().nullable(),
+  })
+  .transform(({ input }) => {
+    const planText = input?.plan?.trim() ?? "";
+    if (!planText) {
+      return undefined;
+    }
+    return {
+      type: "plan" as const,
+      text: planText,
+    } satisfies ToolCallDetail;
+  });
+
 const ClaudeToolDetailPass2Schema = z.union([
   toolDetailBranchByName("Bash", ToolShellInputSchema, ToolShellOutputSchema, toShellToolDetail),
   toolDetailBranchByName("bash", ToolShellInputSchema, ToolShellOutputSchema, toShellToolDetail),
@@ -213,6 +233,7 @@ const ClaudeToolDetailPass2Schema = z.union([
     },
   ),
   ClaudeSpeakToolDetailSchema,
+  ClaudeExitPlanModeToolDetailSchema,
 ]);
 
 export function deriveClaudeToolDetail(
