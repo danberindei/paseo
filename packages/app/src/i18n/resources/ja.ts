@@ -1229,7 +1229,9 @@ export const ja: TranslationResources = {
       failed: "失敗",
       readyToReview: "レビュー待ち",
       working: "実行中",
+      unsent: "未送信",
       done: "完了",
+      noAgentSessions: "エージェントセッションなし",
     },
     display: {
       showBackground: "バックグラウンドを表示",

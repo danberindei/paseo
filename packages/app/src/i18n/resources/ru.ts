@@ -1234,7 +1234,9 @@ export const ru: TranslationResources = {
       failed: "Ошибка",
       readyToReview: "На проверку",
       working: "В работе",
+      unsent: "Не отправлено",
       done: "Готово",
+      noAgentSessions: "Нет сессий агента",
     },
     display: {
       showBackground: "Показать фоновые пространства",

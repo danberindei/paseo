@@ -82,7 +82,9 @@ interface WorkspaceStatusGroupEvent {
 
 async function switchSidebarToStatusGrouping(page: import("@playwright/test").Page) {
   await selectSidebarStatusGrouping(page);
-  await expect(page.getByTestId("sidebar-status-group-done")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-testid^="sidebar-status-group-"]').first()).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 async function startTrackingSidebarStatusGroups(page: import("@playwright/test").Page) {
@@ -638,7 +640,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("new workspace without an initial agent appears in the Done status group", async ({
+  test("new workspace without an initial agent appears in the No agent sessions group", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -681,14 +683,14 @@ test.describe("New workspace flow", () => {
       await expectWorkspaceStatusGroupEvents({
         page,
         rowTestId,
-        includes: "done",
+        includes: "no_agent_sessions",
         excludes: "running",
         excludesIndicator: "workspace-status-indicator-loading",
       });
       await expectWorkspaceStatusGroupEvents({
         page,
         rowTestId,
-        includes: "done",
+        includes: "no_agent_sessions",
         excludes: "running",
         excludesIndicator: "workspace-status-indicator-running",
       });

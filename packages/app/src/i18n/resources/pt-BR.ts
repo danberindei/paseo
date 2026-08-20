@@ -1242,7 +1242,9 @@ export const ptBR: TranslationResources = {
       failed: "Com falha",
       readyToReview: "Para revisar",
       working: "Em execução",
+      unsent: "Não enviado",
       done: "Concluído",
+      noAgentSessions: "Sem sessões de agente",
     },
     display: {
       showBackground: "Mostrar espaços em segundo plano",

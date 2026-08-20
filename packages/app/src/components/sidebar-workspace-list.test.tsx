@@ -204,7 +204,7 @@ function WorkspaceRowProbe({
   counts: RenderCounts;
 }): null {
   const workspaceEntry = useWorkspaceFields(serverId, workspaceId, (entry) =>
-    createSidebarWorkspaceEntry({ serverId, workspace: entry }),
+    createSidebarWorkspaceEntry({ serverId, workspace: entry, hasAgentSessions: false }),
   );
   if (workspaceEntry) {
     incrementRecord(counts.rows, workspaceEntry.workspaceId);
@@ -443,6 +443,7 @@ describe("sidebar group visibility", () => {
           name: `Row ${index + 1}`,
           status,
         }),
+        hasAgentSessions: false,
       }),
     );
   const policy = {
@@ -619,6 +620,7 @@ describe("sidebar group visibility", () => {
       serverId: SERVER_ID,
       workspace: descriptor,
       pendingCreateAttempts: { draft: pending },
+      hasAgentSessions: false,
     });
     expect(creating.statusBucket).toBe("running");
     rerender({ last: creating });
@@ -627,6 +629,7 @@ describe("sidebar group visibility", () => {
       serverId: SERVER_ID,
       workspace: descriptor,
       pendingCreateAttempts: { draft: { ...pending, lifecycle: "abandoned" } },
+      hasAgentSessions: false,
     });
     rerender({ last: abandoned });
     expect(result.current.visibleItems).toHaveLength(7);
@@ -638,6 +641,7 @@ describe("sidebar group visibility", () => {
         workspaceAgentActivity: new Map([
           [descriptor.id, { agentId: "agent", status, enteredAt: null }],
         ]),
+        hasAgentSessions: true,
       });
       expect(last.statusBucket).toBe(status);
       rerender({ last });

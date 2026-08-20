@@ -1252,7 +1252,9 @@ export const es: TranslationResources = {
       failed: "Con error",
       readyToReview: "Para revisar",
       working: "En ejecución",
+      unsent: "Sin enviar",
       done: "Terminado",
+      noAgentSessions: "Sin sesiones de agente",
     },
     display: {
       showBackground: "Mostrar espacios en segundo plano",

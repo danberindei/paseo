@@ -2,7 +2,7 @@ import type { TFunction } from "i18next";
 import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
 import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 
-export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
+export type StatusBucket = (typeof STATUS_BUCKET_ORDER)[number];
 
 export { STATUS_BUCKET_ORDER };
 
@@ -11,7 +11,9 @@ const STATUS_BUCKET_LABEL_KEYS = {
   failed: "sidebar.statusBucket.failed",
   attention: "sidebar.statusBucket.readyToReview",
   running: "sidebar.statusBucket.working",
+  unsent: "sidebar.statusBucket.unsent",
   done: "sidebar.statusBucket.done",
+  no_agent_sessions: "sidebar.statusBucket.noAgentSessions",
 } as const satisfies Record<StatusBucket, string>;
 
 export function getStatusBucketLabel(bucket: StatusBucket, t: TFunction): string {
@@ -32,7 +34,10 @@ export function buildStatusGroups(
   const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
 
   for (const ws of workspaces) {
-    const bucket: StatusBucket = ws.statusBucket;
+    const bucket: StatusBucket =
+      !ws.hasAgentSessions && ws.statusBucket !== "running" && ws.statusBucket !== "unsent"
+        ? "no_agent_sessions"
+        : ws.statusBucket;
     let rows = bucketRows.get(bucket);
     if (!rows) {
       rows = [];

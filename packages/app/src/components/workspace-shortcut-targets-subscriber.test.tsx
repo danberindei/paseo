@@ -8,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { seedRuntimeWorkspaces } from "@/test/seed-session";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
@@ -47,6 +47,52 @@ function workspaceDescriptor(input: {
     diffStat: null,
     scripts: [],
   };
+}
+
+/**
+ * An idle agent for a workspace. A workspace without one is grouped into the agent-free
+ * section whatever its own status is, which is not the section order this test reads.
+ */
+function workspaceAgent(workspaceId: string): Agent {
+  return {
+    serverId: "srv",
+    id: `agent-${workspaceId}`,
+    provider: "codex",
+    status: "idle",
+    turn: { phase: "idle", cancellationRequestId: null },
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    lastUserMessageAt: null,
+    lastActivityAt: new Date(0),
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    cwd: "/repo/main",
+    workspaceId,
+    model: null,
+    parentAgentId: null,
+    labels: {},
+    archivedAt: null,
+  };
+}
+
+function workspaceAgents(workspaceIds: readonly string[]): Map<string, Agent> {
+  const agents = new Map<string, Agent>();
+  for (const workspaceId of workspaceIds) {
+    const agent = workspaceAgent(workspaceId);
+    agents.set(agent.id, agent);
+  }
+  return agents;
 }
 
 function hostProfile(serverId = "srv"): HostProfile {
@@ -206,6 +252,12 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
           ],
         ]),
       );
+      useSessionStore
+        .getState()
+        .setAgents(
+          "srv",
+          workspaceAgents(["ws-done", "ws-running-old", "ws-needs-input", "ws-running-new"]),
+        );
     });
 
     await act(async () => {

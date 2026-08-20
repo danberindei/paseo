@@ -1216,7 +1216,9 @@ export const ar: TranslationResources = {
       failed: "فشل",
       readyToReview: "جاهزة للمراجعة",
       working: "قيد العمل",
+      unsent: "غير مُرسَل",
       done: "تم",
+      noAgentSessions: "لا توجد جلسات وكيل",
     },
     display: {
       showBackground: "إظهار مساحات العمل في الخلفية",

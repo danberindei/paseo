@@ -4,20 +4,20 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
+import { aggregateSidebarStateBuckets, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
-export type SidebarStateBucket = WorkspaceDescriptor["status"];
+export type { SidebarStateBucket };
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -55,6 +55,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  hasAgentSessions: boolean;
 }
 
 export interface SidebarProjectEntry {
@@ -74,11 +75,13 @@ export interface SidebarWorkspacePlacementModel {
 
 export interface SidebarWorkspaceSession {
   serverId: string;
+  agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 interface SidebarWorkspaceSessionSource {
+  agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
@@ -95,6 +98,7 @@ export function selectSidebarWorkspaceSessions(
     }
     selected.push({
       serverId,
+      agents: session.agents,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
@@ -116,6 +120,7 @@ export function areSidebarWorkspaceSessionsEqual(
       !leftSession ||
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
+      leftSession.agents !== rightSession.agents ||
       leftSession.workspaces !== rightSession.workspaces ||
       leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
     ) {
@@ -147,6 +152,8 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  hasUnsentComposer?: boolean;
+  hasAgentSessions: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -180,6 +187,7 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    hasAgentSessions: input.hasAgentSessions,
   };
 }
 
@@ -344,10 +352,23 @@ function resolveStructuralWorkspaceIdentity(input: {
   };
 }
 
+function workspaceKeysWithAgentSessions(sessions: SidebarWorkspaceSession[]): Set<string> {
+  const workspaceKeys = new Set<string>();
+  for (const session of sessions) {
+    for (const agent of session.agents.values()) {
+      if (!agent.archivedAt && agent.workspaceId) {
+        workspaceKeys.add(`${session.serverId}:${agent.workspaceId}`);
+      }
+    }
+  }
+  return workspaceKeys;
+}
+
 export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  unsentComposerWorkspaceKeys?: ReadonlySet<string>;
   previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
 }): ReadonlyMap<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
@@ -355,6 +376,7 @@ export function buildSidebarWorkspaceEntries(input: {
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
+  const workspaceKeysWithAgents = workspaceKeysWithAgentSessions(input.sessions);
   const entries = new Map<string, SidebarWorkspaceEntry>();
   const previousKeys = input.previousEntries?.keys();
   let unchanged = input.previousEntries !== undefined;
@@ -375,6 +397,8 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      hasUnsentComposer: input.unsentComposerWorkspaceKeys?.has(placement.workspaceKey) ?? false,
+      hasAgentSessions: workspaceKeysWithAgents.has(placement.workspaceKey),
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     const nextEntry =

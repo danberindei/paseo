@@ -4,6 +4,7 @@ import type {
   PluginAgentSnapshot,
   PluginWorkspaceSnapshot,
   PluginProjectSnapshot,
+  WorkspaceIndicator,
 } from "@getpaseo/plugin";
 import type { Agent, WorkspaceDescriptor, ProjectDescriptor } from "@/stores/session-store";
 import { cloneAndFreeze } from "../freeze";
@@ -25,11 +26,14 @@ export function createPluginWorkspaceSnapshot(
     parentAgent?: PluginWorkspaceSnapshot["parentAgent"];
   } = {},
 ): PluginWorkspaceSnapshot {
-  const indicator = deriveEffectiveWorkspaceStatus({
+  const derivedStatus = deriveEffectiveWorkspaceStatus({
     ...context,
     workspace,
     serverId: hostId,
   }).status;
+  // The plugin contract has no "unsent" indicator; an unsent draft only exists on an otherwise
+  // idle workspace, so it reports as "done" to plugins.
+  const indicator: WorkspaceIndicator = derivedStatus === "unsent" ? "done" : derivedStatus;
   const parentAgent = context.parentAgent ?? null;
   const cached = workspaceSnapshots.get(workspace)?.get(hostId);
   if (

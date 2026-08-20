@@ -38,6 +38,7 @@ function makeWorkspace(
     archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
+    hasAgentSessions: true,
     labels,
   };
   return { placement, entry };
@@ -175,4 +176,28 @@ describe("buildSidebarProjection", () => {
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
   });
+
+  it.each([false, true])(
+    "includes the bottom section in shortcut order unless collapsed (%s)",
+    (collapsed) => {
+      const input = projectionInput({ groupMode: "status" });
+      const empty = makeWorkspace("empty");
+      empty.entry.hasAgentSessions = false;
+      input.workspaceEntriesByKey.set(empty.entry.workspaceKey, empty.entry);
+      input.projects[0].workspaces.push(empty.placement);
+      if (collapsed) input.collapsedWorkspaceGroupKeys.add("no_agent_sessions");
+
+      const projection = buildSidebarProjection(input);
+
+      expect(projection.workspaceGroups.map((group) => [group.key, group.label])).toEqual([
+        ["needs_input", "Needs input"],
+        ["no_agent_sessions", "No agent sessions"],
+      ]);
+      expect(projection.shortcutModel.shortcutTargets).toEqual([
+        { serverId: "srv", workspaceId: "pinned" },
+        { serverId: "srv", workspaceId: "unpinned" },
+        ...(collapsed ? [] : [{ serverId: "srv", workspaceId: "empty" }]),
+      ]);
+    },
+  );
 });

@@ -29,10 +29,12 @@ import { withUnistyles } from "react-native-unistyles";
 import {
   ChevronDown,
   ChevronRight,
+  Circle,
   CircleAlert,
   CircleCheck,
   CircleDot,
   CircleX,
+  PencilLine,
 } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
 import { SidebarToastClearance } from "@/components/sidebar/sidebar-toast-region";
@@ -97,6 +99,7 @@ const runningGroupIconProps = densityIconProps("sm", (theme) => ({
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedCircle = withUnistyles(Circle);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
@@ -106,6 +109,7 @@ function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
   return workspace.workspaceKey;
 }
 
+const ThemedPencilLine = withUnistyles(PencilLine);
 interface StatusWorkspaceListProps {
   groups: SidebarWorkspaceGroup[];
   pinnedWorkspaces: SidebarWorkspaceEntry[];
@@ -530,8 +534,12 @@ function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
       return <ThemedCircleCheck uniProps={attentionGroupIconProps} />;
     case "running":
       return <ThemedCircleDot uniProps={runningGroupIconProps} />;
+    case "unsent":
+      return <ThemedPencilLine uniProps={mutedGroupIconProps} />;
     case "done":
       return <ThemedCircleCheck uniProps={mutedGroupIconProps} />;
+    case "no_agent_sessions":
+      return <ThemedCircle uniProps={mutedGroupIconProps} />;
   }
 }
 

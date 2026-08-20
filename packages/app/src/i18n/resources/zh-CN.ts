@@ -1208,7 +1208,9 @@ export const zhCN: TranslationResources = {
       failed: "失败",
       readyToReview: "待查看",
       working: "运行中",
+      unsent: "未发送",
       done: "已完成",
+      noAgentSessions: "无智能体会话",
     },
     display: {
       showBackground: "显示后台工作区",

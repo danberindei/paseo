@@ -41,6 +41,7 @@ describe("workspace source of truth consumption", () => {
     const sidebarWorkspace = createSidebarWorkspaceEntry({
       serverId: "srv",
       workspace,
+      hasAgentSessions: true,
     });
 
     expect(header.title).toBe("feat/workspace-sot");
@@ -60,6 +61,7 @@ describe("workspace source of truth consumption", () => {
           aheadOfOrigin: 0,
         },
       }),
+      hasAgentSessions: true,
     });
 
     expect(entry.currentBranch).toBe("feat/real-branch");
@@ -71,16 +73,19 @@ describe("workspace source of truth consumption", () => {
       workspace: createWorkspaceDescriptor({
         gitRuntime: { currentBranch: "HEAD", isDirty: false, aheadOfOrigin: 0 },
       }),
+      hasAgentSessions: true,
     });
     const blank = createSidebarWorkspaceEntry({
       serverId: "srv",
       workspace: createWorkspaceDescriptor({
         gitRuntime: { currentBranch: "  ", isDirty: false, aheadOfOrigin: 0 },
       }),
+      hasAgentSessions: true,
     });
     const missing = createSidebarWorkspaceEntry({
       serverId: "srv",
       workspace: createWorkspaceDescriptor(),
+      hasAgentSessions: true,
     });
 
     expect(detached.currentBranch).toBeNull();

@@ -1223,7 +1223,9 @@ export const ko: TranslationResources = {
       failed: "실패",
       readyToReview: "검토 대기",
       working: "실행 중",
+      unsent: "전송 안 됨",
       done: "완료",
+      noAgentSessions: "에이전트 세션 없음",
     },
     display: {
       showBackground: "백그라운드 표시",

@@ -130,6 +130,14 @@ describe("sidebar entity snapshots", () => {
     );
   });
 
+  it("reports an unsent draft workspace as done, the closest plugin indicator", () => {
+    const idle: WorkspaceDescriptor = { ...workspace, status: "done" };
+    const snapshot = createPluginWorkspaceSnapshot(idle, "host-1", { hasUnsentComposer: true });
+    expect(snapshot.status).toBe("done");
+    expect(snapshot.indicator).toBe("done");
+    expect(snapshot.indicatorLabel).toBe("Done");
+  });
+
   it("reads projects without requiring a workspace", () => {
     const project = {
       projectId: "empty",

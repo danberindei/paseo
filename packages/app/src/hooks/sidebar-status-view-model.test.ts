@@ -34,6 +34,7 @@ function ws(
     archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
+    hasAgentSessions: input.hasAgentSessions ?? true,
     workspaceKey: input.workspaceKey,
   };
 }
@@ -44,7 +45,32 @@ function d(iso: string): Date {
 
 const emptyProjectNames = new Map<string, string>();
 
+function groupWorkspaceKeys(group: StatusGroup) {
+  return [group.bucket, group.rows.map((row) => row.workspaceKey)];
+}
+
 describe("buildStatusGroups", () => {
+  it("puts workspaces without agent sessions last while preserving Working and Unsent", () => {
+    const groups = buildStatusGroups(
+      [
+        ws({ workspaceKey: "srv:empty", hasAgentSessions: false }),
+        ws({ workspaceKey: "srv:done" }),
+        ws({ workspaceKey: "srv:creating", hasAgentSessions: false, statusBucket: "running" }),
+        ws({ workspaceKey: "srv:draft", hasAgentSessions: false, statusBucket: "unsent" }),
+      ],
+      emptyProjectNames,
+      i18n.t,
+    );
+
+    expect(groups.map(groupWorkspaceKeys)).toEqual([
+      ["running", ["srv:creating"]],
+      ["unsent", ["srv:draft"]],
+      ["done", ["srv:done"]],
+      ["no_agent_sessions", ["srv:empty"]],
+    ]);
+    expect(groups.at(-1)?.label).toBe("No agent sessions");
+  });
+
   it("groups workspaces by status bucket in fixed order", () => {
     const workspaces = [
       ws({ workspaceKey: "srv:done-ws", statusBucket: "done", name: "done-ws" }),
@@ -178,7 +204,9 @@ describe("buildStatusGroups", () => {
         statusBucket: "running",
         statusEnteredAt: d("2026-01-01T00:00:00Z"),
       }),
+      ws({ workspaceKey: "srv:unsent", statusBucket: "unsent", statusEnteredAt: null }),
       ws({ workspaceKey: "srv:dn", statusBucket: "done", statusEnteredAt: null }),
+      ws({ workspaceKey: "srv:none", statusBucket: "done", hasAgentSessions: false }),
     ];
 
     const groups = buildStatusGroups(workspaces, emptyProjectNames, i18n.t);
@@ -187,10 +215,13 @@ describe("buildStatusGroups", () => {
     expect(groups.map((g) => g.label)).toEqual(
       STATUS_BUCKET_ORDER.map((b) => getStatusBucketLabel(b, i18n.t)),
     );
-    // Each group has exactly one row with the matching bucket
+    // Each group has exactly one row. The agent-free section holds a workspace whose own
+    // status is still done, so its row does not carry the section's bucket.
     for (const group of groups) {
       expect(group.rows).toHaveLength(1);
-      expect(group.rows[0]?.statusBucket).toBe(group.bucket);
+      expect(group.rows[0]?.statusBucket).toBe(
+        group.bucket === "no_agent_sessions" ? "done" : group.bucket,
+      );
     }
   });
 });
@@ -241,7 +272,9 @@ describe("getStatusBucketLabel", () => {
         "Échec",
         "À relire",
         "En cours",
+        "Non envoyé",
         "Terminé",
+        "Aucune session d'agent",
       ]);
     } finally {
       await i18n.changeLanguage("en");

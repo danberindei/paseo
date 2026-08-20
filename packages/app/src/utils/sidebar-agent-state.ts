@@ -2,12 +2,13 @@ import {
   deriveAgentStateBucket,
   type AgentAttentionReason,
   type AgentStateBucketInput,
+  type WorkspaceStateBucket,
 } from "@getpaseo/protocol/agent-state-bucket";
 
-export type SidebarStateBucket = "needs_input" | "failed" | "running" | "attention" | "done";
+export type SidebarStateBucket = WorkspaceStateBucket | "unsent";
 export type SidebarAttentionReason = AgentAttentionReason;
 
-export function deriveSidebarStateBucket(input: AgentStateBucketInput): SidebarStateBucket {
+export function deriveSidebarStateBucket(input: AgentStateBucketInput): WorkspaceStateBucket {
   return deriveAgentStateBucket(input);
 }
 
@@ -25,20 +26,27 @@ const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
   "failed",
   "running",
   "attention",
+  "unsent",
   "done",
 ];
 
 /**
- * The order states are listed in when all of them are shown side by side rather than collapsed
- * into one — the sidebar's status groups, and the subagent pill's segments. Anything the user has
+ * The order sections are listed in when all of them are shown side by side rather than collapsed
+ * into one: the sidebar's status groups, and the subagent pill's segments. Anything the user has
  * to act on comes before anything that is still moving on its own.
+ *
+ * Five of these are agent states from deriveAgentStateBucket, `unsent` is this client's composer
+ * draft, and `no_agent_sessions` is a section no agent can report, so the pill's agent rows skip
+ * it.
  */
-export const STATUS_BUCKET_ORDER: readonly SidebarStateBucket[] = [
+export const STATUS_BUCKET_ORDER: readonly (SidebarStateBucket | "no_agent_sessions")[] = [
   "needs_input",
   "failed",
   "attention",
   "running",
+  "unsent",
   "done",
+  "no_agent_sessions",
 ] as const;
 
 /**

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
+import { buildStatusGroups, type StatusGroup } from "./sidebar-status-view-model";
+import { i18n } from "@/i18n/i18next";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
@@ -58,6 +60,7 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
     const entry = createSidebarWorkspaceEntry({
       serverId: "srv",
       workspace: workspaceWithForge("gitlab", "https://gitlab.com/group/proj/-/merge_requests/7"),
+      hasAgentSessions: false,
     });
     expect(entry.prHint).toMatchObject({ number: 7, forge: "gitlab" });
   });
@@ -66,8 +69,102 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
     const entry = createSidebarWorkspaceEntry({
       serverId: "srv",
       workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      hasAgentSessions: false,
     });
     expect(entry.prHint).toMatchObject({ number: 42, forge: "github" });
+  });
+});
+
+describe("createSidebarWorkspaceEntry hasUnsentComposer", () => {
+  it("flips a done workspace to unsent when it has an unsent composer draft", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "done",
+      }),
+      hasAgentSessions: false,
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("unsent");
+    expect(entry.statusEnteredAt).toBeNull();
+  });
+
+  it("does not override a running workspace's status", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "running",
+        statusEnteredAt: new Date("2026-06-10T00:00:00.000Z"),
+      }),
+      hasAgentSessions: false,
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("running");
+    expect(entry.statusEnteredAt).toEqual(new Date("2026-06-10T00:00:00.000Z"));
+  });
+
+  it("does not override a needs_input workspace's status", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "needs_input",
+      }),
+      hasAgentSessions: false,
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("needs_input");
+  });
+
+  it("does not override a done workspace whose root agent is still working", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "done",
+      }),
+      workspaceAgentActivity: new Map([
+        ["ws-1", { agentId: "a1", status: "running", enteredAt: new Date(1_000) }],
+      ]),
+      hasAgentSessions: false,
+      hasUnsentComposer: true,
+    });
+
+    expect(entry.statusBucket).toBe("running");
+  });
+
+  it("stays done without an unsent composer draft", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "feature",
+        projectId: "project",
+        projectDisplayName: "project",
+        status: "done",
+      }),
+      hasAgentSessions: false,
+      hasUnsentComposer: false,
+    });
+
+    expect(entry.statusBucket).toBe("done");
   });
 });
 
@@ -77,7 +174,11 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
     descriptor.workspaceDirectory = "/worktrees/feature/packages/app";
     descriptor.worktreeSlug = "feature";
 
-    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: descriptor,
+      hasAgentSessions: false,
+    });
 
     expect(entry.workspaceDirectoryLabel).toBe("feature");
   });
@@ -86,7 +187,11 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
     descriptor.workspaceDirectory = "/home/alice/external/feature";
 
-    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: descriptor,
+      hasAgentSessions: false,
+    });
 
     expect(entry.workspaceDirectoryLabel).toBe("~/external/feature");
   });
@@ -326,6 +431,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "host-a",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
@@ -342,6 +448,7 @@ describe("shared sidebar workspace model", () => {
         },
         {
           serverId: "host-b",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
@@ -427,6 +534,7 @@ describe("shared sidebar workspace model", () => {
     const sessions = [
       {
         serverId: "srv",
+        agents: new Map(),
         workspaceAgentActivity: new Map(),
         workspaces: new Map([
           ["one", one],
@@ -480,6 +588,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             ["one", one],
@@ -493,6 +602,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             ["one", one],
@@ -517,6 +627,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
@@ -749,6 +860,156 @@ function agent(input: {
     labels: {},
   };
 }
+
+function groupWorkspaceKeys(group: StatusGroup) {
+  return [group.bucket, group.rows.map((row) => row.workspaceKey)];
+}
+
+describe("sidebar workspaces without agent sessions", () => {
+  const descriptor = projectWorkspace("ws-1", "done");
+  const placement = workspacePlacement({ workspaceId: descriptor.id });
+
+  function entries(agents: Agent[]) {
+    return buildSidebarWorkspaceEntries({
+      placements: [placement],
+      sessions: [
+        {
+          serverId: "srv",
+          workspaces: new Map([[descriptor.id, descriptor]]),
+          agents: new Map(agents.map((entry) => [entry.id, entry])),
+          workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+            new Map(agents.map((entry) => [entry.id, entry])),
+          ),
+        },
+      ],
+    });
+  }
+
+  it.each([
+    { name: "no agents", agents: [], bucket: "no_agent_sessions" },
+    {
+      name: "only archived agents",
+      agents: [
+        agent({ id: "a1", workspaceId: "ws-1", status: "idle", archivedAt: new Date(2_000) }),
+      ],
+      bucket: "no_agent_sessions",
+    },
+    {
+      name: "an agent owned by another workspace in the same directory",
+      agents: [
+        {
+          ...agent({ id: "a1", workspaceId: "ws-other", status: "idle" }),
+          cwd: descriptor.workspaceDirectory,
+        },
+      ],
+      bucket: "no_agent_sessions",
+    },
+    {
+      name: "an idle agent",
+      agents: [agent({ id: "a1", workspaceId: "ws-1", status: "idle" })],
+      bucket: "done",
+    },
+    {
+      name: "a closed resumable agent",
+      agents: [agent({ id: "a1", workspaceId: "ws-1", status: "closed" })],
+      bucket: "done",
+    },
+  ])("groups a workspace with $name under $bucket", ({ agents, bucket }) => {
+    const groups = buildStatusGroups([...entries(agents).values()], new Map(), i18n.t);
+    expect(groups.map(groupWorkspaceKeys)).toEqual([[bucket, [placement.workspaceKey]]]);
+  });
+
+  it("moves to the bottom section when its last agent is archived", () => {
+    const currentAgent = agent({ id: "a1", workspaceId: "ws-1", status: "idle" });
+    const previousEntries = entries([currentAgent]);
+    const archivedAgent = { ...currentAgent, archivedAt: new Date(2_000) };
+    const nextEntries = buildSidebarWorkspaceEntries({
+      placements: [placement],
+      sessions: [
+        {
+          serverId: "srv",
+          workspaces: new Map([[descriptor.id, descriptor]]),
+          agents: new Map([[archivedAgent.id, archivedAgent]]),
+          workspaceAgentActivity: new Map(),
+        },
+      ],
+      previousEntries,
+    });
+
+    expect(previousEntries.get(placement.workspaceKey)?.hasAgentSessions).toBe(true);
+    expect(nextEntries.get(placement.workspaceKey)?.hasAgentSessions).toBe(false);
+    expect(nextEntries.get(placement.workspaceKey)).not.toBe(
+      previousEntries.get(placement.workspaceKey),
+    );
+    expect(
+      buildStatusGroups([...nextEntries.values()], new Map(), i18n.t).map((group) => group.bucket),
+    ).toEqual(["no_agent_sessions"]);
+  });
+
+  it("does not count another host's agent with the same workspace ID", () => {
+    const otherAgent = {
+      ...agent({ id: "a1", workspaceId: descriptor.id, status: "idle" }),
+      serverId: "other",
+    };
+    const result = buildSidebarWorkspaceEntries({
+      placements: [
+        placement,
+        workspacePlacement({ serverId: "other", workspaceId: descriptor.id }),
+      ],
+      sessions: ["srv", "other"].map((serverId) => ({
+        serverId,
+        workspaces: new Map([[descriptor.id, descriptor]]),
+        agents: serverId === "other" ? new Map([[otherAgent.id, otherAgent]]) : new Map(),
+        workspaceAgentActivity: new Map(),
+      })),
+    });
+
+    expect(
+      [...result.values()].map((entry) => [entry.workspaceKey, entry.hasAgentSessions]),
+    ).toEqual([
+      [placement.workspaceKey, false],
+      [`other:${descriptor.id}`, true],
+    ]);
+  });
+
+  it("keeps agent-free workspaces with a pending creation or draft under Working and Unsent", () => {
+    const draft = projectWorkspace("draft", "done");
+    const result = buildSidebarWorkspaceEntries({
+      placements: [placement, workspacePlacement({ workspaceId: draft.id })],
+      sessions: [
+        {
+          serverId: "srv",
+          workspaces: new Map([
+            [descriptor.id, descriptor],
+            [draft.id, draft],
+          ]),
+          agents: new Map(),
+          workspaceAgentActivity: new Map(),
+        },
+      ],
+      pendingCreateAttempts: {
+        creating: {
+          draftId: "creating",
+          serverId: "srv",
+          workspaceId: descriptor.id,
+          agentId: null,
+          clientMessageId: "message",
+          text: "Start",
+          timestamp: 2_000,
+          lifecycle: "active",
+        },
+      },
+      unsentComposerWorkspaceKeys: new Set([`srv:${draft.id}`]),
+    });
+
+    expect(
+      buildStatusGroups([...result.values()], new Map(), i18n.t).map(groupWorkspaceKeys),
+    ).toEqual([
+      ["running", [placement.workspaceKey]],
+      ["unsent", [`srv:${draft.id}`]],
+    ]);
+  });
+});
 
 function sessionWith(input: {
   workspaces: WorkspaceDescriptor[];

@@ -310,9 +310,12 @@ async function expectStatusBucketsRetainActiveOverflow(
   await selectSidebarStatusGrouping(page);
   const done = page.getByTestId("sidebar-status-group-rows-done");
   const doneRows = done.locator('[data-testid^="sidebar-workspace-row-"]');
-  await expect(doneRows).toHaveCount(7);
-  await revealWorkspaces(done, "Show more");
-  await expect(doneRows).toHaveCount(12);
+  const empty = page.getByTestId("sidebar-status-group-rows-no_agent_sessions");
+  const emptyRows = empty.locator('[data-testid^="sidebar-workspace-row-"]');
+  await expect(doneRows).toHaveCount(1);
+  await expect(emptyRows).toHaveCount(7);
+  await revealWorkspaces(empty, "Show more");
+  await expect(emptyRows).toHaveCount(11);
   await seed.client.sendAgentMessage(agent.id, "status overflow");
   await seed.client.waitForFinish(agent.id, 15_000);
   await expect(
@@ -320,11 +323,12 @@ async function expectStatusBucketsRetainActiveOverflow(
       .getByTestId("sidebar-status-group-rows-attention")
       .getByText("Oldest workspace", { exact: true }),
   ).toBeVisible();
-  await expect(doneRows).toHaveCount(11);
+  await expect(doneRows).toHaveCount(0);
+  await expect(emptyRows).toHaveCount(11);
   await seed.client.clearWorkspaceAttention(seed.workspaceId);
-  await expect(doneRows).toHaveCount(12);
-  await revealWorkspaces(done, "Show less");
-  await expect(doneRows).toHaveCount(7);
+  await expect(doneRows).toHaveCount(1);
+  await revealWorkspaces(empty, "Show less");
+  await expect(emptyRows).toHaveCount(7);
   const activeAgents: Array<{ id: string }> = [];
   for (const workspaceId of ids.slice(0, 8)) {
     activeAgents.push(
@@ -347,6 +351,7 @@ async function expectStatusBucketsRetainActiveOverflow(
   await expect(attention.getByLabel("Show more", { exact: true })).toHaveCount(0);
   for (const workspaceId of ids.slice(0, 8)) await seed.client.clearWorkspaceAttention(workspaceId);
   await expect(doneRows).toHaveCount(7);
+  await expect(emptyRows).toHaveCount(3);
   await selectProjectGrouping(page);
   await expectWorkspaceOrder(rows, ids.slice(0, 7));
 }

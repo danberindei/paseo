@@ -137,9 +137,11 @@ test.describe("Model B sidebar shape", () => {
 
       const sidebar = page.getByTestId("sidebar-sessions").filter({ visible: true }).first();
 
-      // The idle workspace lands in the Done bucket; the busy mock-agent workspace
-      // lands in the Working bucket. Each workspace is bucketed independently.
-      await expect(page.getByTestId("sidebar-status-group-done")).toBeVisible({ timeout: 30_000 });
+      // The idle workspace lands in the No agent sessions section; the busy mock-agent
+      // workspace lands in the Working bucket. Each workspace is bucketed independently.
+      await expect(page.getByTestId("sidebar-status-group-no_agent_sessions")).toBeVisible({
+        timeout: 30_000,
+      });
       await expect(page.getByTestId("sidebar-status-group-running")).toBeVisible({
         timeout: 60_000,
       });
@@ -168,20 +170,20 @@ test.describe("Model B sidebar shape", () => {
         ).toBeVisible({ timeout: 60_000 });
       }
 
-      // The busy workspace is grouped under Working, the idle one under Done:
+      // The busy workspace is grouped under Working, the idle one under No agent sessions:
       // changing one workspace's status moved only that row.
       const workingRows = page.getByTestId("sidebar-status-group-rows-running");
-      const doneRows = page.getByTestId("sidebar-status-group-rows-done");
+      const emptyRows = page.getByTestId("sidebar-status-group-rows-no_agent_sessions");
       await expect(
         workingRows.getByTestId(`sidebar-workspace-row-${getServerId()}:${activeMock.workspaceId}`),
       ).toBeVisible({ timeout: 60_000 });
       await expect(
-        doneRows.getByTestId(`sidebar-workspace-row-${getServerId()}:${idleProject.workspaceId}`),
+        emptyRows.getByTestId(`sidebar-workspace-row-${getServerId()}:${idleProject.workspaceId}`),
       ).toBeVisible({ timeout: 30_000 });
-      // The busy workspace is NOT also sitting in the Done bucket — only its own
+      // The busy workspace is NOT also sitting in the No agent sessions section - only its own
       // row moved.
       await expect(
-        doneRows.getByTestId(`sidebar-workspace-row-${getServerId()}:${activeMock.workspaceId}`),
+        emptyRows.getByTestId(`sidebar-workspace-row-${getServerId()}:${activeMock.workspaceId}`),
       ).toHaveCount(0);
     } finally {
       await idleProject.cleanup();

@@ -1245,7 +1245,9 @@ export const fr: TranslationResources = {
       failed: "Échec",
       readyToReview: "À relire",
       working: "En cours",
+      unsent: "Non envoyé",
       done: "Terminé",
+      noAgentSessions: "Aucune session d'agent",
     },
     display: {
       showBackground: "Afficher les espaces en arrière-plan",

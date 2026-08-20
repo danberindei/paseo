@@ -1226,7 +1226,9 @@ export const en = {
       failed: "Failed",
       readyToReview: "Ready to review",
       working: "Working",
+      unsent: "Unsent",
       done: "Done",
+      noAgentSessions: "No agent sessions",
     },
     display: {
       showBackground: "Show background",

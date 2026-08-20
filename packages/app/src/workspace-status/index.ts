@@ -1,11 +1,12 @@
 import { useShallow } from "zustand/shallow";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 
@@ -14,6 +15,7 @@ export function deriveEffectiveWorkspaceStatus(input: {
   workspace: WorkspaceDescriptor;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  hasUnsentComposer?: boolean;
 }): EffectiveWorkspaceStatus {
   if (input.workspace.status !== "done") {
     return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
@@ -31,6 +33,12 @@ export function deriveEffectiveWorkspaceStatus(input: {
   const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
   if (rootAgentActivity && rootAgentActivity.status !== "done") {
     return rootAgentActivity;
+  }
+
+  // An otherwise-idle workspace with an unsent composer draft on this client. enteredAt stays
+  // null so keystrokes don't re-sort the Unsent section on every change.
+  if (input.hasUnsentComposer) {
+    return { status: "unsent", enteredAt: null };
   }
 
   return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
