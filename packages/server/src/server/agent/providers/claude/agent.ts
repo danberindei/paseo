@@ -86,6 +86,7 @@ import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "../provider-image-output.js";
+import { formatReportFindingsToMarkdown } from "./report-findings.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -5150,6 +5151,7 @@ class ClaudeAgentSession implements AgentSession {
       typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
     const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
     const toolName = entry?.name ?? blockToolName ?? "tool";
+    const input = entry?.input ?? null;
     const callId =
       typeof block.tool_use_id === "string" && block.tool_use_id.length > 0
         ? block.tool_use_id
@@ -5165,7 +5167,7 @@ class ClaudeAgentSession implements AgentSession {
         mapClaudeFailedToolCall({
           name: toolName,
           callId,
-          input: entry?.input ?? null,
+          input,
           output: output ?? null,
           error: { ...block, content: text },
         }),
@@ -5176,12 +5178,14 @@ class ClaudeAgentSession implements AgentSession {
         mapClaudeCompletedToolCall({
           name: toolName,
           callId,
-          input: entry?.input ?? null,
+          input,
           output: output ?? null,
         }),
         items,
       );
     }
+
+    this.maybeEmitReportFindingsReviewResult(toolName, block.is_error, input, items);
 
     for (const image of images) {
       const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
@@ -5194,6 +5198,21 @@ class ClaudeAgentSession implements AgentSession {
 
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
+    }
+  }
+
+  private maybeEmitReportFindingsReviewResult(
+    toolName: string,
+    isError: unknown,
+    input: AgentMetadata | null | undefined,
+    items: AgentTimelineItem[],
+  ): void {
+    if (isError || toolName !== "ReportFindings") {
+      return;
+    }
+    const reportFindingsMarkdown = formatReportFindingsToMarkdown(input);
+    if (reportFindingsMarkdown) {
+      items.push({ type: "review_result", text: reportFindingsMarkdown });
     }
   }
 
