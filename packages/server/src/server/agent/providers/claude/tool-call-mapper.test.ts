@@ -443,4 +443,35 @@ describe("claude tool-call mapper", () => {
 
     expect(item).toBeNull();
   });
+
+  it("maps ExitPlanMode calls with a plan to plan detail", () => {
+    const item = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-plan-1",
+        name: "ExitPlanMode",
+        input: { plan: "1. Do the thing\n2. Do another thing" },
+        output: null,
+      }),
+    );
+
+    expect(item.status).toBe("running");
+    expect(item.name).toBe("ExitPlanMode");
+    expect(item.detail).toEqual({
+      type: "plan",
+      text: "1. Do the thing\n2. Do another thing",
+    });
+  });
+
+  it("falls back to unknown detail when ExitPlanMode input has no plan", () => {
+    const item = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-plan-2",
+        name: "ExitPlanMode",
+        input: {},
+        output: null,
+      }),
+    );
+
+    expect(item.detail?.type).toBe("unknown");
+  });
 });
