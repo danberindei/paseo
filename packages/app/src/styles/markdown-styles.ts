@@ -313,6 +313,7 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     blockquote: {
+      position: "relative" as const,
       backgroundColor: theme.colors.surface1,
       color: `${theme.colors.foreground}cc`,
       borderLeftWidth: 4,

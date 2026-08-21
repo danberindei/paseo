@@ -304,6 +304,7 @@ export const es: TranslationResources = {
     },
     actions: {
       copyCode: "Copiar código",
+      copyQuote: "Copiar cita",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
       forkMenu: "Bifurcar mensaje",

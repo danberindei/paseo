@@ -68,6 +68,8 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { useToolCallSheet } from "@/components/tool-call-sheet";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
+import { CopyButton } from "@/components/markdown/copy-button";
+import { astNodesToMarkdown } from "@/components/markdown/serialize-markdown";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { useRevealedText } from "@/hooks/use-revealed-text";
@@ -1429,6 +1431,37 @@ function MarkdownListView({
   );
 }
 
+interface MarkdownBlockquoteProps {
+  node: ASTNode;
+  style: ViewStyle;
+  children: ReactNode;
+}
+
+function MarkdownBlockquote({ node, style, children }: MarkdownBlockquoteProps) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const controlsVisible = isHovered || isNative || isCompact;
+  const getText = useCallback(() => astNodesToMarkdown(node.children), [node.children]);
+  return (
+    <View
+      style={style}
+      dataSet={markdownCopyDataSet.blockquote}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+    >
+      {children}
+      <CopyButton
+        getText={getText}
+        visible={controlsVisible}
+        copyLabel={t("message.actions.copyQuote")}
+      />
+    </View>
+  );
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   occurrenceKey,
   message,
@@ -1526,13 +1559,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
       ) => (
-        <View
-          key={node.key}
-          style={styles._VIEW_SAFE_blockquote}
-          dataSet={markdownCopyDataSet.blockquote}
-        >
+        <MarkdownBlockquote key={node.key} node={node} style={styles._VIEW_SAFE_blockquote}>
           {children}
-        </View>
+        </MarkdownBlockquote>
       ),
       hr: (node: ASTNode, _children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <View key={node.key} style={styles._VIEW_SAFE_hr} dataSet={markdownCopyDataSet.hr} />

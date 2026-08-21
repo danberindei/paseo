@@ -1,10 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import { MarkdownTextSpan } from "@/components/markdown-text";
-import * as Clipboard from "expo-clipboard";
-import { Check, Copy } from "lucide-react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { useTranslation } from "react-i18next";
+import { MarkdownTextSpan } from "@/components/markdown-text";
+import { CopyButton } from "@/components/markdown/copy-button";
 import type { HighlightToken } from "@getpaseo/highlight";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -13,7 +11,6 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
 import {
   markdownCopyCodeBlockDataSet,
-  markdownCopyDataSet,
   TRAILING_CODE_LINE_BREAKS,
 } from "@/assistant-selection-copy/markup";
 
@@ -60,6 +57,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   inheritedStyles,
   textStyle,
 }: HighlightedCodeBlockProps) {
+  const { t } = useTranslation();
   // Box styles (bg / padding / border / radius / margin) go on the wrapper View
   // so the absolute copy button positions relative to the visible code area,
   // not to a parent that includes the Text's own marginVertical.
@@ -104,7 +102,11 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
           {renderedCode}
         </MarkdownTextSpan>
       )}
-      <CopyButton getCode={getCode} visible={controlsVisible} />
+      <CopyButton
+        getText={getCode}
+        visible={controlsVisible}
+        copyLabel={t("message.actions.copyCode")}
+      />
     </View>
   );
 });
@@ -163,87 +165,3 @@ function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): Spli
     innerTextStyle: [inheritedStyles, textOnly],
   };
 }
-
-interface CopyButtonProps {
-  getCode: () => string;
-  visible: boolean;
-}
-
-const COPIED_RESET_MS = 1500;
-
-const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButtonProps) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(
-    () => () => {
-      if (resetRef.current) clearTimeout(resetRef.current);
-    },
-    [],
-  );
-
-  const handlePress = useCallback(async () => {
-    const content = getCode();
-    if (!content) return;
-    await Clipboard.setStringAsync(content);
-    setCopied(true);
-    if (resetRef.current) clearTimeout(resetRef.current);
-    resetRef.current = setTimeout(() => {
-      setCopied(false);
-      resetRef.current = null;
-    }, COPIED_RESET_MS);
-  }, [getCode]);
-
-  const visibilityStyle = visible
-    ? copyButtonStyles.containerVisible
-    : copyButtonStyles.containerHidden;
-  const wrapperStyle = useMemo(
-    () => [copyButtonStyles.container, visibilityStyle],
-    [visibilityStyle],
-  );
-
-  return (
-    <Pressable
-      onPress={handlePress}
-      style={wrapperStyle}
-      pointerEvents={visible ? "auto" : "none"}
-      accessibilityRole="button"
-      accessibilityLabel={copied ? t("message.actions.copied") : t("message.actions.copyCode")}
-      hitSlop={8}
-      dataSet={markdownCopyDataSet.ignore}
-    >
-      {({ hovered }) => {
-        const iconColor = hovered
-          ? copyButtonStyles.iconHoveredColor.color
-          : copyButtonStyles.iconColor.color;
-        return copied ? (
-          <Check size={14} color={iconColor} />
-        ) : (
-          <Copy size={14} color={iconColor} />
-        );
-      }}
-    </Pressable>
-  );
-});
-
-const copyButtonStyles = StyleSheet.create((theme) => ({
-  container: {
-    position: "absolute",
-    top: theme.spacing[2],
-    right: theme.spacing[2],
-    padding: theme.spacing[1],
-  },
-  containerVisible: {
-    opacity: 1,
-  },
-  containerHidden: {
-    opacity: 0,
-  },
-  iconColor: {
-    color: theme.colors.foregroundMuted,
-  },
-  iconHoveredColor: {
-    color: theme.colors.foreground,
-  },
-}));
