@@ -351,6 +351,7 @@ export const ja: TranslationResources = {
     },
     actions: {
       copyCode: "コードをコピー",
+      copyQuote: "引用をコピー",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",
       forkMenu: "メッセージをフォーク",

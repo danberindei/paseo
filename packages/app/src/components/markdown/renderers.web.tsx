@@ -1,18 +1,23 @@
 import { Text } from "react-native";
 import { forwardRef, useCallback, useMemo, useState, type ComponentProps } from "react";
 import type {
+  BlockquoteRendererProps,
   CodeBlockRendererProps,
   LinkRendererProps,
   MarkdownRenderers,
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { useFileLink } from "@/assistant-file-links";
 import { MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE } from "@/assistant-selection-copy/markup";
+import { CopyButton } from "@/components/markdown/copy-button";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
+import { astNodesToMarkdown } from "./serialize-markdown";
 import { isRecognizedLink, markdownLinkSource } from "./source";
 
 const ThemedCodeBlock = withUnistyles(HighlightedCodeBlock);
@@ -27,6 +32,31 @@ const codeStyle = (theme: Theme) => ({
 function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
   if (language?.toLowerCase() === "mermaid") return <MermaidFence code={code} />;
   return <ThemedCodeBlock code={code} language={language} uniProps={codeStyle} />;
+}
+
+function WebBlockquote({ node, style, children }: BlockquoteRendererProps) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const [hovered, setHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setHovered(true), []);
+  const handlePointerLeave = useCallback(() => setHovered(false), []);
+  const quoteStyle = useMemo(() => ({ ...style, position: "relative" as const }), [style]);
+  // The quote body without its markers: nested quotes keep their own prefix.
+  const getText = useCallback(() => astNodesToMarkdown(node.children ?? []), [node]);
+  return (
+    <blockquote
+      style={quoteStyle}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+    >
+      {children}
+      <CopyButton
+        getText={getText}
+        visible={hovered || isCompact}
+        copyLabel={t("message.actions.copyQuote")}
+      />
+    </blockquote>
+  );
 }
 
 // The library styles links inline, so a stylesheet :hover rule cannot underline them.
@@ -112,3 +142,8 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const WEB_RENDERERS: MarkdownRenderers = { codeBlock: WebCodeBlock, link: WebLink };
+
+export const WEB_CHAT_RENDERERS: MarkdownRenderers = {
+  ...WEB_RENDERERS,
+  blockquote: WebBlockquote,
+};

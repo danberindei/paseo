@@ -345,6 +345,7 @@ export const en = {
     },
     actions: {
       copyCode: "Copy code",
+      copyQuote: "Copy quote",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
       forkMenu: "Fork chat from here",

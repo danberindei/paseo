@@ -1245,6 +1245,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         text={revealedMessage}
         agentCommands
         streaming={phase !== "complete" || revealedMessage.length < renderedMessage.text.length}
+        copyBlockquotes
         client={client}
         workspaceRoot={workspaceRoot}
         serverId={serverId}

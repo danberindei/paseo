@@ -15,7 +15,7 @@ import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 import { density, resolveDensity } from "@/styles/density";
 import { MarkdownBlockStack } from "./block-stack";
-import { WEB_RENDERERS } from "./renderers";
+import { WEB_CHAT_RENDERERS, WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
 import { splitStreamingMarkdown } from "./streaming";
@@ -53,6 +53,8 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
   muted?: boolean;
   selectable?: boolean;
   streaming?: boolean;
+  // Chat opts in; previews, plans and pull requests keep their quotes static.
+  copyBlockquotes?: boolean;
   onLinkPress?: (url: string) => unknown;
   agentCommands?: boolean;
   /**
@@ -93,6 +95,7 @@ const MarkdownPart = memo(function MarkdownPart({
   muted = false,
   selectable = true,
   streaming = false,
+  copyBlockquotes = false,
   onLinkPress,
   agentCommands: _agentCommands,
   external = false,
@@ -148,6 +151,8 @@ const MarkdownPart = memo(function MarkdownPart({
     if (url !== PENDING_MARKDOWN_IMAGE) setImage({ type: "uri", uri: url });
   });
   const closeImage = useStableEvent(() => setImage(null));
+  const webRenderers = copyBlockquotes ? WEB_CHAT_RENDERERS : WEB_RENDERERS;
+  const renderers = isWeb ? webRenderers : undefined;
   const segments = useMemo(
     () =>
       isWeb ? [{ kind: "markdown", id: "0", source: markdown }] : splitMermaidFences(markdown),
@@ -175,7 +180,7 @@ const MarkdownPart = memo(function MarkdownPart({
               streamingAnimation={false}
               onLinkPress={pressLink}
               onImagePress={pressImage}
-              renderers={isWeb ? WEB_RENDERERS : undefined}
+              renderers={renderers}
             />
           ),
         )}
