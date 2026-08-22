@@ -140,6 +140,7 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
   });
   useDraftStore.getState().clearDraftInput({
     draftKey: buildDraftStoreKey({ serverId, agentId }),
+    lifecycle: "removed",
   });
   const initKey = getInitKey(serverId, agentId);
   if (getInitDeferred(initKey)) {

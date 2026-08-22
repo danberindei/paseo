@@ -21,7 +21,7 @@ export interface DraftInput {
   attachments: UserComposerAttachment[];
 }
 
-export type DraftLifecycleState = "active" | "abandoned" | "sent";
+export type DraftLifecycleState = "active" | "abandoned" | "sent" | "removed";
 
 export type CanonicalDraftInput = DraftInput;
 
@@ -112,7 +112,7 @@ export const CanonicalDraftInputSchema = z.strictObject({
 });
 const DraftRecordSchema: z.ZodType<DraftRecord> = z.strictObject({
   input: CanonicalDraftInputSchema,
-  lifecycle: z.enum(["active", "abandoned", "sent"]),
+  lifecycle: z.enum(["active", "abandoned", "sent", "removed"]),
   updatedAt: z.number(),
   version: z.number().int().positive(),
 });

@@ -8,6 +8,8 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import { createUserMessage } from "@/types/stream";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { useDraftStore } from "@/stores/draft-store";
 import { applyAgentDirectoryDelta, replaceFetchedAgentDirectory } from "./agent-directory-sync";
 
 function createAgentPayload(
@@ -287,6 +289,10 @@ describe("replaceFetchedAgentDirectory", () => {
     );
     store.setInitializingAgents(serverId, new Map([[agentId, true]]));
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
+    const draftKey = buildDraftStoreKey({ serverId, agentId });
+    useDraftStore
+      .getState()
+      .saveDraftInput({ draftKey, draft: { text: "unsent work", attachments: [] } });
 
     applyAgentDirectoryDelta({ serverId, delta: { kind: "remove", agentId } });
 
@@ -301,6 +307,8 @@ describe("replaceFetchedAgentDirectory", () => {
       permissions: session?.pendingPermissions.size,
       initializing: session?.initializingAgents.has(agentId),
       archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
+      draftInput: useDraftStore.getState().getDraftInput(draftKey),
+      draftLifecycle: useDraftStore.getState().drafts[draftKey]?.lifecycle,
     }).toEqual({
       agents: false,
       details: false,
@@ -311,8 +319,11 @@ describe("replaceFetchedAgentDirectory", () => {
       permissions: 0,
       initializing: false,
       archivePending: false,
+      draftInput: undefined,
+      draftLifecycle: "removed",
     });
 
+    useDraftStore.getState().clearDraftInput({ draftKey });
     store.clearSession(serverId);
   });
 

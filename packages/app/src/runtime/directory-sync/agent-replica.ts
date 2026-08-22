@@ -110,7 +110,17 @@ export class AgentDirectoryReplica {
     deltas: readonly AgentDirectoryDelta[],
   ): Map<string, Agent> {
     const previous = useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
-    const reconciled = reconcileAgentDirectory({ previous, snapshot: entries, deltas });
+    const merged = new Map<string, FetchAgentsEntry>();
+    for (const agent of previous.values()) {
+      const entry = projectAgentDirectoryEntry(agent);
+      if (entry) merged.set(agent.id, entry);
+    }
+    for (const entry of entries) merged.set(entry.agent.id, entry);
+    const reconciled = reconcileAgentDirectory({
+      previous,
+      snapshot: Array.from(merged.values()),
+      deltas,
+    });
     const nextIds = new Set(reconciled.entries.map((entry) => entry.agent.id));
     for (const agentId of this.pendingCacheReads) {
       if (!nextIds.has(agentId)) this.advance(agentId);
@@ -140,18 +150,11 @@ export class AgentDirectoryReplica {
     removals: readonly { id: string }[],
     deltas: readonly AgentDirectoryDelta[],
   ): Map<string, Agent> {
-    const previous = useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
-    const merged = new Map<string, FetchAgentsEntry>();
-    for (const agent of previous.values()) {
-      const entry = projectAgentDirectoryEntry(agent);
-      if (entry) merged.set(agent.id, entry);
-    }
-    for (const entry of entries) merged.set(entry.agent.id, entry);
     const removalsAsDeltas: AgentDirectoryDelta[] = removals.map(({ id }) => ({
       kind: "remove",
       agentId: id,
     }));
-    return this.commitSnapshot(Array.from(merged.values()), [...removalsAsDeltas, ...deltas]);
+    return this.commitSnapshot(entries, [...removalsAsDeltas, ...deltas]);
   }
 
   archive(agentId: string, archivedAt: string): void {

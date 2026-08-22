@@ -85,7 +85,7 @@ const RawDraftInputSchema = z.strictObject({
     .optional(),
   cwd: z.string().optional(),
 });
-const DraftLifecycleSchema = z.enum(["active", "abandoned", "sent"]);
+const DraftLifecycleSchema = z.enum(["active", "abandoned", "sent", "removed"]);
 const NestedDraftRecordSchema = z.strictObject({
   input: RawDraftInputSchema,
   lifecycle: DraftLifecycleSchema.optional(),

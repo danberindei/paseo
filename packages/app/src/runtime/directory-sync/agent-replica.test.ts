@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { useDraftStore } from "@/stores/draft-store";
 import { useSessionStore } from "@/stores/session-store";
 import { AgentDirectoryReplica } from "./agent-replica";
 
-function payload(title: string): AgentSnapshotPayload {
+function payload(title: string, id = "agent"): AgentSnapshotPayload {
   return {
-    id: "agent",
+    id,
     provider: "codex",
     cwd: "/repo",
     model: null,
@@ -88,6 +90,28 @@ describe("AgentDirectoryReplica", () => {
       turnId: "turn-1",
       startedAt: new Date("2026-07-17T00:01:00.000Z"),
     });
+    store.clearSession(serverId);
+  });
+
+  it("keeps composer drafts for agents dropped from a scoped snapshot", () => {
+    const serverId = "agent-replica-scoped-snapshot";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    replica.commitSnapshot(
+      [entry(payload("agent-a", "agent-a")), entry(payload("agent-b", "agent-b"))],
+      [],
+    );
+
+    const draftKey = buildDraftStoreKey({ serverId, agentId: "agent-b" });
+    useDraftStore
+      .getState()
+      .saveDraftInput({ draftKey, draft: { text: "unsent work", attachments: [] } });
+
+    replica.commitSnapshot([entry(payload("agent-a", "agent-a"))], []);
+
+    expect(useDraftStore.getState().getDraftInput(draftKey)?.text).toBe("unsent work");
+    useDraftStore.getState().clearDraftInput({ draftKey });
     store.clearSession(serverId);
   });
 
