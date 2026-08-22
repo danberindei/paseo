@@ -1,5 +1,13 @@
 import { Text } from "react-native";
-import { forwardRef, useCallback, useMemo, useState, type ComponentProps } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import type {
   BlockquoteRendererProps,
   CodeBlockRendererProps,
@@ -8,9 +16,11 @@ import type {
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { useFileLink } from "@/assistant-file-links";
+import { useAssistantFileLinkEnvironment, useFileLink } from "@/assistant-file-links";
 import { MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE } from "@/assistant-selection-copy/markup";
+import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { CopyButton } from "@/components/markdown/copy-button";
+import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
@@ -62,14 +72,24 @@ function WebBlockquote({ node, style, children }: BlockquoteRendererProps) {
 // The library styles links inline, so a stylesheet :hover rule cannot underline them.
 const LINK_HOVER_STYLE = { textDecoration: "underline" } as const;
 
-function WebLink({ link, anchorProps, children }: LinkRendererProps) {
-  const forgeShorthand = useForgeShorthand();
-  // A forge reference like `#12` carries its web URL so hover, copy and new-tab opens work.
-  const forgeUrl = link.sourceType === "text" ? forgeShorthand?.resolve(link.url) : null;
-  const { tooltipPath, onHoverIn } = useFileLink(
-    forgeUrl ? markdownLinkSource(forgeUrl) : markdownLinkSource(link.url, link.sourceType),
-  );
-  const tooltip = forgeUrl ?? tooltipPath;
+interface FileLinkAnchorProps {
+  anchorProps: ComponentProps<"a">;
+  /** Resolved forge web URL; overrides the shorthand href the library passed in. */
+  href?: string | null;
+  tooltip: string | null;
+  onHoverIn: () => void;
+  onContextMenu?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  children: ReactNode;
+}
+
+function FileLinkAnchor({
+  anchorProps,
+  href,
+  tooltip,
+  onHoverIn,
+  onContextMenu,
+  children,
+}: FileLinkAnchorProps) {
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
   const handleMouseLeave = useCallback(() => setHovered(false), []);
@@ -81,22 +101,14 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     }),
     [anchorProps.style, hovered],
   );
-  // Selection copy pastes a link Paseo recognized as the text the reply showed.
-  const recognized = isRecognizedLink(link);
-  const copyAnchorProps = useMemo(
-    () =>
-      recognized
-        ? { ...anchorProps, [MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE]: "true" }
-        : anchorProps,
-    [anchorProps, recognized],
-  );
   const anchor = (
     <a
-      {...copyAnchorProps}
-      href={forgeUrl ?? anchorProps.href}
+      {...anchorProps}
+      href={href ?? anchorProps.href}
       style={anchorStyle}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onContextMenu={onContextMenu}
     >
       {children}
     </a>
@@ -116,6 +128,104 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     </Tooltip>
   );
 }
+
+// The library renders each link inside a prose paragraph, so the anchor itself has to be the
+// menu trigger: a wrapper element there would break the inline flow.
+function FileLinkContextMenuAnchor({
+  anchorProps,
+  href,
+  tooltip,
+  onHoverIn,
+  children,
+}: Omit<FileLinkAnchorProps, "onContextMenu">) {
+  const menu = useContextMenu();
+  const handleContextMenu = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      menu.setAnchorRect({ x: event.pageX, y: event.pageY, width: 0, height: 0 });
+      menu.setOpen(true);
+    },
+    [menu],
+  );
+  return (
+    <FileLinkAnchor
+      anchorProps={anchorProps}
+      href={href}
+      tooltip={tooltip}
+      onHoverIn={onHoverIn}
+      onContextMenu={handleContextMenu}
+    >
+      {children}
+    </FileLinkAnchor>
+  );
+}
+
+function WebLink({ link, anchorProps, children }: LinkRendererProps) {
+  const environment = useAssistantFileLinkEnvironment();
+  const forgeShorthand = useForgeShorthand();
+  // A forge reference like `#12` carries its web URL so hover, copy and new-tab opens work.
+  const forgeUrl = link.sourceType === "text" ? forgeShorthand?.resolve(link.url) : null;
+  // Selection copy pastes a link Paseo recognized as the text the reply showed.
+  const recognized = isRecognizedLink(link);
+  const copyAnchorProps = useMemo(
+    () =>
+      recognized
+        ? { ...anchorProps, [MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE]: "true" }
+        : anchorProps,
+    [anchorProps, recognized],
+  );
+  const { target, candidateTarget, tooltipPath, onHoverIn } = useFileLink(
+    forgeUrl ? markdownLinkSource(forgeUrl) : markdownLinkSource(link.url, link.sourceType),
+  );
+  const tooltip = forgeUrl ?? tooltipPath;
+  const copyPathValue = candidateTarget?.path;
+  const onCopyPath = environment.onCopyPath;
+  const onOpenInEditor = environment.canOpenInEditor ? environment.onOpenInEditor : undefined;
+  // Opening needs the file confirmed; copying only needs the path the link names.
+  const canCopy = Boolean(copyPathValue && onCopyPath);
+  const canOpen = Boolean(target && onOpenInEditor);
+  const copyPath = useCallback(() => {
+    if (copyPathValue) onCopyPath?.(copyPathValue);
+  }, [onCopyPath, copyPathValue]);
+  const openInEditor = useCallback(() => {
+    if (target) onOpenInEditor?.(target.path);
+  }, [onOpenInEditor, target]);
+
+  if (!canCopy && !canOpen) {
+    return (
+      <FileLinkAnchor
+        anchorProps={copyAnchorProps}
+        href={forgeUrl}
+        tooltip={tooltip}
+        onHoverIn={onHoverIn}
+      >
+        {children}
+      </FileLinkAnchor>
+    );
+  }
+
+  return (
+    <ContextMenu>
+      <FileLinkContextMenuAnchor
+        anchorProps={copyAnchorProps}
+        href={forgeUrl}
+        tooltip={tooltip}
+        onHoverIn={onHoverIn}
+      >
+        {children}
+      </FileLinkContextMenuAnchor>
+      <FileActionsContextMenuContent
+        fileKind="file"
+        fileExists={Boolean(target)}
+        testIDPrefix="file-link"
+        onCopyPath={canCopy ? copyPath : undefined}
+        onOpenInEditor={canOpen ? openInEditor : undefined}
+      />
+    </ContextMenu>
+  );
+}
+
 // TooltipTrigger also supplies native Pressable handlers; forward only DOM events.
 // A View renders a div, which is invalid inside the library's prose paragraphs.
 const InlineLinkTrigger = forwardRef<HTMLSpanElement, ComponentProps<"span">>(

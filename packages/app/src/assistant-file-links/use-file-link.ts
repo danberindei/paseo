@@ -19,7 +19,13 @@ import {
 } from "./resolver";
 
 export interface UseFileLinkResult {
+  /** Target once a lookup confirmed the file; null while it is missing or unchecked. */
   target: InlinePathTarget | null;
+  /**
+   * Path the link names whether or not the file exists. A lookup that finds nothing leaves
+   * `target` null, but the path is still known from the link text, so copy keeps working.
+   */
+  candidateTarget: InlinePathTarget | null;
   tooltipPath: string | null;
   onHoverIn: () => void;
   onPress: () => void;
@@ -133,16 +139,26 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   });
 
   const target = useMemo(() => {
+    // A direct file target comes from the link text, not from a lookup, so it stays a
+    // candidate until the resolver confirms the file exists.
+    return resolution.kind === "needsLookup" ? (query.data ?? null) : null;
+  }, [query.data, resolution]);
+
+  const candidateTarget = useMemo(() => {
     if (resolution.kind === "resolved") {
       return resolution.value.kind === "file" ? resolution.value.target : null;
     }
-    return query.data ?? null;
-  }, [query.data, resolution]);
+    return resolution.target;
+  }, [resolution]);
 
-  const tooltipPath = target ? formatFileLinkTooltipPath({ target, workspaceRoot }) : null;
+  // Direct links show the path they name; looked-up links show the path the lookup confirmed.
+  const tooltipTarget = resolution.kind === "resolved" ? candidateTarget : target;
+  const tooltipPath = tooltipTarget
+    ? formatFileLinkTooltipPath({ target: tooltipTarget, workspaceRoot })
+    : null;
   return useMemo(
-    () => ({ target, tooltipPath, onHoverIn, onPress, open }),
-    [target, tooltipPath, onHoverIn, onPress, open],
+    () => ({ target, candidateTarget, tooltipPath, onHoverIn, onPress, open }),
+    [target, candidateTarget, tooltipPath, onHoverIn, onPress, open],
   );
 }
 

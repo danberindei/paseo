@@ -202,6 +202,99 @@ describe("tool badge file action", () => {
     await userEvent.keyboard("{Enter}");
     expect(view().queryByText("File contents")).toBeNull();
   });
+
+  it("opens the file action menu from the disclosure button", async () => {
+    const copied = vi.fn();
+    function Badge() {
+      const [expanded, setExpanded] = React.useState(false);
+      const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
+      return (
+        <ExpandableBadge
+          label="Read"
+          secondaryLabel="src/index.ts"
+          isExpanded={expanded}
+          onToggle={toggle}
+          onCopyPath={copied}
+        />
+      );
+    }
+    act(() => root.render(<Badge />));
+    const disclosure = view().getByRole("button", { name: /^Read src\/index\.ts$/ });
+    act(() => {
+      disclosure.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+    });
+    await expect.element(page.getByRole("menuitem", { name: "Copy path" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Copy path" }).click();
+    expect(copied).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the menu trigger on the disclosure rather than the whole row", async () => {
+    const copied = vi.fn();
+    const openFile = vi.fn();
+    function Badge() {
+      const [expanded, setExpanded] = React.useState(false);
+      const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
+      return (
+        <ExpandableBadge
+          label="Read"
+          secondaryLabel="src/index.ts"
+          isExpanded={expanded}
+          onToggle={toggle}
+          onOpenFile={openFile}
+          onCopyPath={copied}
+        />
+      );
+    }
+    act(() => root.render(<Badge />));
+    await page.getByRole("button", { name: "Read src/index.ts", exact: true }).hover();
+    const file = view().getByRole("button", { name: /^Open file$/ });
+    act(() => {
+      file.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+    });
+    await expect.element(page.getByRole("menuitem", { name: "Copy path" })).not.toBeInTheDocument();
+    expect(copied).not.toHaveBeenCalled();
+  });
+
+  it("keeps the file action menu closed on a badge without a disclosure toggle", async () => {
+    const copied = vi.fn();
+    act(() =>
+      root.render(
+        <ExpandableBadge
+          label="Read"
+          secondaryLabel="src/index.ts"
+          isExpanded={false}
+          onCopyPath={copied}
+        />,
+      ),
+    );
+    const label = view().getByText("Read");
+    act(() => {
+      label.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+    });
+    await expect.element(page.getByRole("menuitem", { name: "Copy path" })).not.toBeInTheDocument();
+    expect(copied).not.toHaveBeenCalled();
+  });
 });
 
 const longDetail = {

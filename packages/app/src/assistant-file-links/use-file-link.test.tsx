@@ -87,8 +87,13 @@ function createToast(): ToastApi {
   };
 }
 
-function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; toast?: ToastApi }) {
-  const queryClient = createQueryClient();
+function createWrapper(input: {
+  client: TestClient;
+  openedFiles: OpenedFile[];
+  toast?: ToastApi;
+  queryClient?: QueryClient;
+}) {
+  const queryClient = input.queryClient ?? createQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
     const openWorkspaceFile = useCallback(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
@@ -262,6 +267,68 @@ describe("useFileLink", () => {
       expect(result.current.first.target?.path).toBe("/Users/test/project/docs/dumm.md");
       expect(result.current.second.target?.path).toBe("/Users/test/project/docs/dumm.md");
     });
+  });
+
+  it("keeps the path when the lookup finds no file", async () => {
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const queryClient = createQueryClient();
+    const missingSource = {
+      href: "src/missing.ts",
+      text: "src/missing.ts",
+      sourceType: "inline-code" as const,
+    };
+    const { result } = renderHook(() => useFileLink(missingSource), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        queryClient,
+      }),
+    });
+
+    act(() => {
+      result.current.onHoverIn();
+    });
+    await waitFor(() => {
+      expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
+      // Wait for the failed lookup to settle, not only for its call.
+      expect(queryClient.isFetching()).toBe(0);
+    });
+
+    expect(result.current.target).toBeNull();
+    expect(result.current.candidateTarget?.path).toBe("/Users/test/project/src/missing.ts");
+  });
+
+  it("treats a direct link as unchecked until a lookup confirms the file", () => {
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const { result } = renderHook(
+      () => ({
+        explicit: useFileLink({
+          href: "/Users/test/project/src/explicit.ts",
+          text: "src/explicit.ts",
+        }),
+        absolute: useFileLink({
+          href: "/tmp/absolute.ts",
+          text: "/tmp/absolute.ts",
+          sourceType: "inline-code",
+        }),
+      }),
+      {
+        wrapper: createWrapper({
+          client: { getDirectorySuggestions },
+          openedFiles,
+        }),
+      },
+    );
+
+    expect(result.current.explicit.target).toBeNull();
+    expect(result.current.explicit.candidateTarget?.path).toBe(
+      "/Users/test/project/src/explicit.ts",
+    );
+    expect(result.current.absolute.target).toBeNull();
+    expect(result.current.absolute.candidateTarget?.path).toBe("/tmp/absolute.ts");
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
   });
 
   it("hover then click uses the prefetched result", async () => {

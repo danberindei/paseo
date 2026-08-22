@@ -86,6 +86,8 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, Rect, Stop, LinearGradient as SvgLinearGradient } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
 import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
@@ -1567,6 +1569,8 @@ interface ExpandableBadgeProps {
   style?: StyleProp<ViewStyle>;
   onToggle?: () => void;
   onOpenFile?: () => void;
+  onCopyPath?: () => void;
+  onOpenInEditor?: () => void;
   renderDetails?: () => ReactNode;
   isLoading?: boolean;
   isError?: boolean;
@@ -1883,6 +1887,7 @@ function buildShimmerTextStyle(input: {
   });
 }
 
+// oxlint-disable-next-line complexity
 export const ExpandableBadge = memo(function ExpandableBadge({
   label,
   style,
@@ -1891,6 +1896,8 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   isExpanded,
   onToggle,
   onOpenFile,
+  onCopyPath,
+  onOpenInEditor,
   renderDetails,
   isLoading = false,
   isError = false,
@@ -2150,6 +2157,80 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       }
     : {};
 
+  const hasFileActionsMenu = Boolean(onCopyPath || onOpenInEditor);
+  const badgeDisclosureContent = (
+    <>
+      <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
+      <ExpandableBadgeLabelRow
+        label={label}
+        labelStyle={labelStyle}
+        secondaryLabel={secondaryLabel}
+        secondaryLabelStyle={secondaryLabelStyle}
+        shouldMeasureWebShimmer={shouldMeasureWebShimmer}
+        shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
+        isWebShimmer={isWebShimmer}
+        isNativeShimmer={isNativeShimmer}
+        shimmerLabelTextStyle={shimmerLabelTextStyle}
+        shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
+        labelRowWidth={labelRowWidth}
+        labelRowHeight={labelRowHeight}
+        nativeShimmerPeakWidth={nativeShimmerPeakWidth}
+        shimmerDuration={shimmerDuration}
+        nativeGradientId={nativeGradientIdRef.current}
+        onLabelRowLayout={handleLabelRowLayout}
+        onLabelLayout={handleLabelLayout}
+        onSecondaryLayout={handleSecondaryLayout}
+      />
+    </>
+  );
+  // The disclosure button is the menu trigger, so a long press opens the menu on native while a
+  // press still toggles. The open-file button stays a sibling to keep its own accessible name.
+  // A badge with file actions but no toggle has a disabled trigger, and its menu never opens.
+  const disclosure = hasFileActionsMenu ? (
+    <ContextMenu>
+      <ContextMenuTrigger
+        {...pressHandlers}
+        disabled={!isInteractive}
+        accessibilityState={accessibilityState}
+        style={expandableBadgeStylesheet.disclosureButton}
+      >
+        {badgeDisclosureContent}
+      </ContextMenuTrigger>
+      <FileActionsContextMenuContent
+        fileKind="file"
+        onCopyPath={onCopyPath}
+        onOpenInEditor={onOpenInEditor}
+      />
+    </ContextMenu>
+  ) : (
+    <Pressable
+      {...pressHandlers}
+      disabled={!isInteractive}
+      accessibilityState={accessibilityState}
+      style={expandableBadgeStylesheet.disclosureButton}
+    >
+      {badgeDisclosureContent}
+    </Pressable>
+  );
+  const openFileButton =
+    onOpenFile && isHovered ? (
+      <Pressable
+        onPress={handleOpenFilePress}
+        onHoverIn={handleOpenFileHoverIn}
+        onHoverOut={handleOpenFileHoverOut}
+        accessibilityRole="button"
+        accessibilityLabel={t("message.actions.openFile")}
+        testID="tool-call-open-file"
+        style={expandableBadgeStylesheet.openFileButton}
+        hitSlop={6}
+      >
+        <ThemedFileSymlinkIcon
+          size={14}
+          uniProps={isOpenFileHovered ? foregroundColorMapping : foregroundMutedColorMapping}
+        />
+      </Pressable>
+    ) : null;
+  const headerRowStyle = [pressableStyle, expandableBadgeStylesheet.headerRow];
   return (
     <View
       style={containerStyle}
@@ -2157,52 +2238,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       onPointerEnter={isWeb ? handleHoverIn : undefined}
       onPointerLeave={isWeb ? handleHoverOut : undefined}
     >
-      <View style={[pressableStyle, expandableBadgeStylesheet.headerRow]}>
-        <Pressable
-          {...pressHandlers}
-          disabled={!isInteractive}
-          accessibilityState={accessibilityState}
-          style={expandableBadgeStylesheet.disclosureButton}
-        >
-          <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
-          <ExpandableBadgeLabelRow
-            label={label}
-            labelStyle={labelStyle}
-            secondaryLabel={secondaryLabel}
-            secondaryLabelStyle={secondaryLabelStyle}
-            shouldMeasureWebShimmer={shouldMeasureWebShimmer}
-            shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
-            isWebShimmer={isWebShimmer}
-            isNativeShimmer={isNativeShimmer}
-            shimmerLabelTextStyle={shimmerLabelTextStyle}
-            shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
-            labelRowWidth={labelRowWidth}
-            labelRowHeight={labelRowHeight}
-            nativeShimmerPeakWidth={nativeShimmerPeakWidth}
-            shimmerDuration={shimmerDuration}
-            nativeGradientId={nativeGradientIdRef.current}
-            onLabelRowLayout={handleLabelRowLayout}
-            onLabelLayout={handleLabelLayout}
-            onSecondaryLayout={handleSecondaryLayout}
-          />
-        </Pressable>
-        {onOpenFile && isHovered ? (
-          <Pressable
-            onPress={handleOpenFilePress}
-            onHoverIn={handleOpenFileHoverIn}
-            onHoverOut={handleOpenFileHoverOut}
-            accessibilityRole="button"
-            accessibilityLabel={t("message.actions.openFile")}
-            testID="tool-call-open-file"
-            style={expandableBadgeStylesheet.openFileButton}
-            hitSlop={6}
-          >
-            <ThemedFileSymlinkIcon
-              size={14}
-              uniProps={isOpenFileHovered ? foregroundColorMapping : foregroundMutedColorMapping}
-            />
-          </Pressable>
-        ) : null}
+      <View style={headerRowStyle}>
+        {disclosure}
+        {openFileButton}
       </View>
       {detailContent ? (
         <View ref={detailWrapperRef} style={detailWrapperStyle}>
@@ -2227,6 +2265,8 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.testID !== next.testID) return false;
   if (previous.onToggle !== next.onToggle) return false;
   if (previous.onOpenFile !== next.onOpenFile) return false;
+  if (previous.onCopyPath !== next.onCopyPath) return false;
+  if (previous.onOpenInEditor !== next.onOpenInEditor) return false;
   if (previous.renderDetails !== next.renderDetails) return false;
   return true;
 }
@@ -2246,6 +2286,8 @@ interface ToolCallProps {
   disableOuterSpacing?: boolean;
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
   onOpenFilePath?: (filePath: string) => void;
+  onCopyFilePath?: (filePath: string) => void;
+  onOpenFilePathInEditor?: (filePath: string) => void;
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
@@ -2269,6 +2311,8 @@ export const ToolCall = memo(function ToolCall({
   disableOuterSpacing,
   onInlineDetailsExpandedChange,
   onOpenFilePath,
+  onCopyFilePath,
+  onOpenFilePathInEditor,
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
@@ -2323,6 +2367,20 @@ export const ToolCall = memo(function ToolCall({
     }
     return () => onOpenFilePath(openFilePath);
   }, [presentation.openFilePath, onOpenFilePath]);
+  const handleCopyPath = useMemo(() => {
+    const openFilePath = presentation.openFilePath;
+    if (!openFilePath || !onCopyFilePath) {
+      return undefined;
+    }
+    return () => onCopyFilePath(openFilePath);
+  }, [presentation.openFilePath, onCopyFilePath]);
+  const handleOpenInEditor = useMemo(() => {
+    const openFilePath = presentation.openFilePath;
+    if (!openFilePath || !onOpenFilePathInEditor) {
+      return undefined;
+    }
+    return () => onOpenFilePathInEditor(openFilePath);
+  }, [presentation.openFilePath, onOpenFilePathInEditor]);
 
   const handleToggle = useCallback(() => {
     if (!shouldRenderInline) {
@@ -2413,6 +2471,8 @@ export const ToolCall = memo(function ToolCall({
       isExpanded={shouldRenderInline && isExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
+      onCopyPath={handleCopyPath}
+      onOpenInEditor={handleOpenInEditor}
       renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
       isLoading={status === "running" || status === "executing"}
       isError={status === "failed"}
@@ -2422,6 +2482,7 @@ export const ToolCall = memo(function ToolCall({
   );
 }, areToolCallPropsEqual);
 
+// oxlint-disable-next-line complexity
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.toolName !== next.toolName) return false;
   if (previous.serverId !== next.serverId) return false;
@@ -2436,6 +2497,8 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.isLastInSequence !== next.isLastInSequence) return false;
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.onOpenFilePath !== next.onOpenFilePath) return false;
+  if (previous.onCopyFilePath !== next.onCopyFilePath) return false;
+  if (previous.onOpenFilePathInEditor !== next.onOpenFilePathInEditor) return false;
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
