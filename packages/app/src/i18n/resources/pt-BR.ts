@@ -441,6 +441,8 @@ export const ptBR: TranslationResources = {
       openFile: "Abrir arquivo",
       openIn: "Abrir no {{target}}",
       openToSide: "Abrir ao lado",
+      openInEditor: "Abrir no editor",
+      openInEditorFailed: "Falha ao abrir o arquivo",
       copyPath: "Copiar caminho",
       copyRelativePath: "Copiar caminho relativo",
       revealIn: "Mostrar no {{target}}",

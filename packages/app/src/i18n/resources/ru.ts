@@ -440,6 +440,8 @@ export const ru: TranslationResources = {
       openFile: "Открыть файл",
       openIn: "Открыть в {{target}}",
       openToSide: "Открыть сбоку",
+      openInEditor: "Открыть в редакторе",
+      openInEditorFailed: "Не удалось открыть файл",
       copyPath: "Копировать путь",
       copyRelativePath: "Копировать относительный путь",
       revealIn: "Показать в {{target}}",

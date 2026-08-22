@@ -61,6 +61,8 @@ import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/type
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
+import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
@@ -2273,6 +2275,8 @@ interface ExpandableBadgeProps {
   style?: StyleProp<ViewStyle>;
   onToggle?: () => void;
   onOpenFile?: () => void;
+  onCopyPath?: () => void;
+  onOpenInEditor?: () => void;
   onDetailHoverChange?: (hovered: boolean) => void;
   renderDetails?: () => ReactNode;
   isLoading?: boolean;
@@ -2636,6 +2640,8 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   isExpanded,
   onToggle,
   onOpenFile,
+  onCopyPath,
+  onOpenInEditor,
   onDetailHoverChange,
   renderDetails,
   isLoading = false,
@@ -2897,6 +2903,37 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       }
     : {};
 
+  const hasFileActionsMenu = Boolean(onCopyPath || onOpenInEditor);
+  const badgeHeader = (
+    <View style={expandableBadgeStylesheet.headerRow}>
+      <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
+      <ExpandableBadgeLabelRow
+        label={label}
+        labelStyle={labelStyle}
+        secondaryLabel={secondaryLabel}
+        secondaryLabelStyle={secondaryLabelStyle}
+        shouldMeasureWebShimmer={shouldMeasureWebShimmer}
+        shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
+        isWebShimmer={isWebShimmer}
+        isNativeShimmer={isNativeShimmer}
+        shimmerLabelTextStyle={shimmerLabelTextStyle}
+        shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
+        labelRowWidth={labelRowWidth}
+        labelRowHeight={labelRowHeight}
+        nativeShimmerPeakWidth={nativeShimmerPeakWidth}
+        shimmerDuration={shimmerDuration}
+        nativeGradientId={nativeGradientIdRef.current}
+        onLabelRowLayout={handleLabelRowLayout}
+        onLabelLayout={handleLabelLayout}
+        onSecondaryLayout={handleSecondaryLayout}
+        showOpenFileButton={Boolean(onOpenFile && isHovered)}
+        isOpenFileHovered={isOpenFileHovered}
+        onOpenFilePress={handleOpenFilePress}
+        onOpenFileHoverIn={handleOpenFileHoverIn}
+        onOpenFileHoverOut={handleOpenFileHoverOut}
+      />
+    </View>
+  );
   return (
     <View
       style={containerStyle}
@@ -2904,41 +2941,32 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       onPointerEnter={isWeb ? handleHoverIn : undefined}
       onPointerLeave={isWeb ? handleHoverOut : undefined}
     >
-      <Pressable
-        {...pressHandlers}
-        disabled={!isInteractive}
-        accessibilityState={accessibilityState}
-        style={pressableStyle}
-      >
-        <View style={expandableBadgeStylesheet.headerRow}>
-          <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
-          <ExpandableBadgeLabelRow
-            label={label}
-            labelStyle={labelStyle}
-            secondaryLabel={secondaryLabel}
-            secondaryLabelStyle={secondaryLabelStyle}
-            shouldMeasureWebShimmer={shouldMeasureWebShimmer}
-            shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
-            isWebShimmer={isWebShimmer}
-            isNativeShimmer={isNativeShimmer}
-            shimmerLabelTextStyle={shimmerLabelTextStyle}
-            shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
-            labelRowWidth={labelRowWidth}
-            labelRowHeight={labelRowHeight}
-            nativeShimmerPeakWidth={nativeShimmerPeakWidth}
-            shimmerDuration={shimmerDuration}
-            nativeGradientId={nativeGradientIdRef.current}
-            onLabelRowLayout={handleLabelRowLayout}
-            onLabelLayout={handleLabelLayout}
-            onSecondaryLayout={handleSecondaryLayout}
-            showOpenFileButton={Boolean(onOpenFile && isHovered)}
-            isOpenFileHovered={isOpenFileHovered}
-            onOpenFilePress={handleOpenFilePress}
-            onOpenFileHoverIn={handleOpenFileHoverIn}
-            onOpenFileHoverOut={handleOpenFileHoverOut}
+      {hasFileActionsMenu ? (
+        <ContextMenu>
+          <ContextMenuTrigger
+            {...pressHandlers}
+            disabled={!isInteractive}
+            accessibilityState={accessibilityState}
+            style={pressableStyle}
+          >
+            {badgeHeader}
+          </ContextMenuTrigger>
+          <FileActionsContextMenuContent
+            fileKind="file"
+            onCopyPath={onCopyPath}
+            onOpenInEditor={onOpenInEditor}
           />
-        </View>
-      </Pressable>
+        </ContextMenu>
+      ) : (
+        <Pressable
+          {...pressHandlers}
+          disabled={!isInteractive}
+          accessibilityState={accessibilityState}
+          style={pressableStyle}
+        >
+          {badgeHeader}
+        </Pressable>
+      )}
       {detailContent ? (
         <Pressable
           ref={detailWrapperRef}
@@ -2967,6 +2995,8 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.testID !== next.testID) return false;
   if (previous.onToggle !== next.onToggle) return false;
   if (previous.onOpenFile !== next.onOpenFile) return false;
+  if (previous.onCopyPath !== next.onCopyPath) return false;
+  if (previous.onOpenInEditor !== next.onOpenInEditor) return false;
   if (previous.onDetailHoverChange !== next.onDetailHoverChange) return false;
   if (previous.renderDetails !== next.renderDetails) return false;
   return true;
@@ -2986,6 +3016,8 @@ interface ToolCallProps {
   onInlineDetailsHoverChange?: (hovered: boolean) => void;
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
   onOpenFilePath?: (filePath: string) => void;
+  onCopyFilePath?: (filePath: string) => void;
+  onOpenFilePathInEditor?: (filePath: string) => void;
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
@@ -3005,6 +3037,8 @@ export const ToolCall = memo(function ToolCall({
   onInlineDetailsHoverChange,
   onInlineDetailsExpandedChange,
   onOpenFilePath,
+  onCopyFilePath,
+  onOpenFilePathInEditor,
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
@@ -3049,6 +3083,20 @@ export const ToolCall = memo(function ToolCall({
     }
     return () => onOpenFilePath(openFilePath);
   }, [presentation.openFilePath, onOpenFilePath]);
+  const handleCopyPath = useMemo(() => {
+    const openFilePath = presentation.openFilePath;
+    if (!openFilePath || !onCopyFilePath) {
+      return undefined;
+    }
+    return () => onCopyFilePath(openFilePath);
+  }, [presentation.openFilePath, onCopyFilePath]);
+  const handleOpenInEditor = useMemo(() => {
+    const openFilePath = presentation.openFilePath;
+    if (!openFilePath || !onOpenFilePathInEditor) {
+      return undefined;
+    }
+    return () => onOpenFilePathInEditor(openFilePath);
+  }, [presentation.openFilePath, onOpenFilePathInEditor]);
 
   const handleToggle = useCallback(() => {
     if (!shouldRenderInline) {
@@ -3143,6 +3191,8 @@ export const ToolCall = memo(function ToolCall({
       isExpanded={shouldRenderInline && isExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
+      onCopyPath={handleCopyPath}
+      onOpenInEditor={handleOpenInEditor}
       renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
       isLoading={status === "running" || status === "executing"}
       isError={status === "failed"}
@@ -3165,6 +3215,8 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.isLastInSequence !== next.isLastInSequence) return false;
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.onOpenFilePath !== next.onOpenFilePath) return false;
+  if (previous.onCopyFilePath !== next.onCopyFilePath) return false;
+  if (previous.onOpenFilePathInEditor !== next.onOpenFilePathInEditor) return false;
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;

@@ -438,6 +438,8 @@ export const ko: TranslationResources = {
       openFile: "파일 열기",
       openIn: "{{target}}에서 열기",
       openToSide: "옆에 열기",
+      openInEditor: "에디터에서 열기",
+      openInEditorFailed: "파일을 열지 못했습니다",
       copyPath: "경로 복사",
       copyRelativePath: "상대 경로 복사",
       revealIn: "{{target}}에서 보기",

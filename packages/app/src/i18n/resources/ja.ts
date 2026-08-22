@@ -441,6 +441,8 @@ export const ja: TranslationResources = {
       openFile: "ファイルを開く",
       openIn: "{{target}}で開く",
       openToSide: "横に開く",
+      openInEditor: "エディタで開く",
+      openInEditorFailed: "ファイルを開けませんでした",
       copyPath: "パスをコピー",
       copyRelativePath: "相対パスをコピー",
       revealIn: "{{target}}で表示",

@@ -441,6 +441,8 @@ export const es: TranslationResources = {
       openFile: "Abrir archivo",
       openIn: "Abrir en {{target}}",
       openToSide: "Abrir al lado",
+      openInEditor: "Abrir en el editor",
+      openInEditorFailed: "No se pudo abrir el archivo",
       copyPath: "Copiar ruta",
       copyRelativePath: "Copiar ruta relativa",
       revealIn: "Mostrar en {{target}}",

@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Platform, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
@@ -6,9 +6,12 @@ import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
 import { AssistantLinkPressProvider, type AssistantLinkPress } from "./link-press-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 import { useAssistantFileLinkResolverContext } from "./provider";
+import type { InlinePathTarget } from "./parse";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
 
@@ -98,8 +101,70 @@ export function AssistantMarkdownLink({
     </a>
   );
 
-  return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
+  return (
+    <FileLinkHoverTooltip filePath={tooltipPath}>
+      <AssistantFileLinkAnchor
+        target={target}
+        onCopyPath={configRef.current.onCopyPath}
+        onOpenInEditor={configRef.current.onOpenInEditor}
+        canOpenInEditor={configRef.current.canOpenInEditor}
+      >
+        {anchor}
+      </AssistantFileLinkAnchor>
+    </FileLinkHoverTooltip>
+  );
 }
+
+/**
+ * Right-click context menu for a resolved file link, web only: wrapping the native
+ * inline text path in a `ContextMenuTrigger` would nest an extra native view inside
+ * the paragraph's UITextView, which the iOS tap-to-open workaround above depends on
+ * not having (see the native branch's comment on why plain `<Text>` gets dropped there).
+ */
+function AssistantFileLinkAnchor({
+  target,
+  onCopyPath,
+  onOpenInEditor,
+  canOpenInEditor,
+  children,
+}: {
+  target: InlinePathTarget | null;
+  onCopyPath?: (path: string) => void;
+  onOpenInEditor?: (path: string) => void;
+  canOpenInEditor?: boolean;
+  children: ReactNode;
+}): ReactNode {
+  const path = target?.path;
+  const handleCopyPath = useCallback(() => {
+    if (path) onCopyPath?.(path);
+  }, [onCopyPath, path]);
+  const handleOpenInEditor = useCallback(() => {
+    if (path) onOpenInEditor?.(path);
+  }, [onOpenInEditor, path]);
+  const canActuallyOpenInEditor = Boolean(canOpenInEditor && onOpenInEditor);
+
+  if (!isWeb || !target || (!onCopyPath && !canActuallyOpenInEditor)) {
+    return children;
+  }
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger tabIndex={-1} style={INLINE_CONTEXT_MENU_TRIGGER_STYLE}>
+        {children}
+      </ContextMenuTrigger>
+      <FileActionsContextMenuContent
+        fileKind="file"
+        onCopyPath={onCopyPath ? handleCopyPath : undefined}
+        onOpenInEditor={canActuallyOpenInEditor ? handleOpenInEditor : undefined}
+      />
+    </ContextMenu>
+  );
+}
+
+const INLINE_CONTEXT_MENU_TRIGGER_STYLE: ViewStyle = {
+  // Matches LINK_ANCHOR_STYLE's "display: contents" trick: the trigger must not
+  // generate its own box, or the link drops out of the paragraph's inline flow.
+  display: "contents" as ViewStyle["display"],
+};
 
 interface AssistantMarkdownCodeLinkProps {
   source: AssistantFileLinkSource;

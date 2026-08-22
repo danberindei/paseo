@@ -437,6 +437,8 @@ export const ar: TranslationResources = {
       openFile: "افتح الملف",
       openIn: "فتح في {{target}}",
       openToSide: "فتح إلى الجانب",
+      openInEditor: "فتح في المحرر",
+      openInEditorFailed: "فشل فتح الملف",
       copyPath: "نسخ المسار",
       copyRelativePath: "نسخ المسار النسبي",
       revealIn: "إظهار في {{target}}",

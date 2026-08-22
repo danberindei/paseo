@@ -434,6 +434,8 @@ export const en = {
       openFile: "Open file",
       openIn: "Open in {{target}}",
       openToSide: "Open to the side",
+      openInEditor: "Open in editor",
+      openInEditorFailed: "Failed to open file",
       copyPath: "Copy path",
       copyRelativePath: "Copy relative path",
       revealIn: "Reveal in {{target}}",

@@ -100,9 +100,14 @@ import {
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
+import { resolveToolCallCopyPath, resolveToolCallEditorOpenInput } from "./tool-call-file-actions";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useForkAgent } from "@/hooks/use-fork-agent";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import {
   createFocusedPermissionRequestKeydownHandler,
   createPermissionRequestShortcutHandler,
@@ -440,6 +445,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const workspaceRoot = context.cwd?.trim() || "";
+    const isLocalDaemon = useIsLocalDaemon(resolvedServerId);
+    const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
+      useDesktopOpenTargets({ isLocalExecution: isLocalDaemon });
+    const editorTargets = useMemo(
+      () => desktopOpenTargets.filter((target) => target.kind === "editor"),
+      [desktopOpenTargets],
+    );
+    const { preferredEditorId } = usePreferredEditor();
+    const preferredEditorTarget = useMemo(() => {
+      const editorTargetIds = editorTargets.map((target) => target.id);
+      const effectiveEditorId = resolvePreferredEditorId(editorTargetIds, preferredEditorId);
+      return editorTargets.find((target) => target.id === effectiveEditorId) ?? null;
+    }, [editorTargets, preferredEditorId]);
     const { requestDirectoryListing } = useFileExplorerActions({
       serverId: resolvedServerId,
       workspaceId: context.workspaceId,
@@ -542,6 +560,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
       handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
     });
+
+    const handleToolCallCopyPath = useStableEvent((filePath: string) => {
+      void copyToClipboard(resolveToolCallCopyPath(filePath, workspaceRoot));
+    });
+
+    const handleToolCallOpenInEditor = useStableEvent((filePath: string) => {
+      const openInput = resolveToolCallEditorOpenInput({
+        filePath,
+        workspaceRoot,
+        editorId: preferredEditorTarget?.id ?? null,
+      });
+      if (!openInput) {
+        return;
+      }
+      void openDesktopTarget(openInput).catch(() => {
+        toast?.error(t("workspace.fileActions.openInEditorFailed"));
+      });
+    });
+    const canOpenInEditor = useMemo(
+      () => isDesktopOpenAvailable && preferredEditorTarget !== null,
+      [isDesktopOpenAvailable, preferredEditorTarget],
+    );
 
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
       async ({ target, boundary }) => {
@@ -778,6 +818,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             serverId={resolvedServerId}
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={handleInlinePathPress}
+            onCopyPath={handleToolCallCopyPath}
+            onOpenInEditor={canOpenInEditor ? handleToolCallOpenInEditor : undefined}
+            canOpenInEditor={canOpenInEditor}
             toast={toast}
           >
             <AssistantMessage
@@ -793,7 +836,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        handleInlinePathPress,
+        handleToolCallCopyPath,
+        handleToolCallOpenInEditor,
+        canOpenInEditor,
+        resolvedServerId,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(
@@ -846,6 +899,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               metadata={data.metadata}
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
+              onCopyFilePath={handleToolCallCopyPath}
+              onOpenFilePathInEditor={canOpenInEditor ? handleToolCallOpenInEditor : undefined}
               maxDetailHeight={maxDetailHeight}
             />
           );
@@ -862,11 +917,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             status={data.status}
             isLastInSequence={isLastInSequence}
             onOpenFilePath={handleToolCallOpenFile}
+            onCopyFilePath={handleToolCallCopyPath}
+            onOpenFilePathInEditor={canOpenInEditor ? handleToolCallOpenInEditor : undefined}
             maxDetailHeight={maxDetailHeight}
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [
+        context.cwd,
+        setInlineDetailsExpanded,
+        handleToolCallOpenFile,
+        handleToolCallCopyPath,
+        handleToolCallOpenInEditor,
+        canOpenInEditor,
+      ],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity

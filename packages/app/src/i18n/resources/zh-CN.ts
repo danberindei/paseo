@@ -437,6 +437,8 @@ export const zhCN: TranslationResources = {
       openFile: "打开文件",
       openIn: "在 {{target}} 中打开",
       openToSide: "在侧边打开",
+      openInEditor: "在编辑器中打开",
+      openInEditorFailed: "打开文件失败",
       copyPath: "复制路径",
       copyRelativePath: "复制相对路径",
       revealIn: "在 {{target}} 中显示",

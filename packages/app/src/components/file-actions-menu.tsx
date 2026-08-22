@@ -157,6 +157,12 @@ export function FileActionsContextMenuContent({
         label: t("workspace.fileActions.openToSide"),
         icon: ArrowRightToLine,
       }),
+      optionalFileAction(availableFile, onOpenInEditor, {
+        key: "open-in-editor",
+        group: "open",
+        label: t("workspace.fileActions.openInEditor"),
+        icon: ExternalLink,
+      }),
       onCopyPath
         ? {
             key: "copy-path",
@@ -261,6 +267,7 @@ export function FileActionsContextMenuContent({
     onNewFile,
     onNewFolder,
     onOpenFile,
+    onOpenInEditor,
     openInEditorAction,
     onOpenToSide,
     onRename,
