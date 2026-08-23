@@ -1107,6 +1107,8 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-start",
     gap: theme.spacing[1],
     userSelect: "none",
+    borderWidth: 1,
+    borderColor: "transparent",
   },
   workspaceRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
@@ -1124,5 +1126,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarRowSelected: {
     backgroundColor: theme.colors.surfaceSidebarSelected,
+    borderColor: theme.colors.ring,
   },
 }));
