@@ -6,7 +6,12 @@ import { getCM, vim } from "@replit/codemirror-vim";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
-import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
+import {
+  editorBaseExtensions,
+  editorTheme,
+  type EditorVisualTheme,
+  highlightLocation,
+} from "./extensions.web";
 
 interface FileEditorViewProps {
   model: FileEditorModel;
@@ -98,15 +103,8 @@ export function FileEditorView({
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || !location.lineStart) return;
-    const lineStart = Math.min(location.lineStart, view.state.doc.lines);
-    const lineEnd = Math.min(location.lineEnd ?? lineStart, view.state.doc.lines);
-    const from = view.state.doc.line(lineStart).from;
-    const to = view.state.doc.line(Math.max(lineStart, lineEnd)).to;
-    view.dispatch({
-      selection: { anchor: from, head: lineEnd > lineStart ? to : from },
-      effects: EditorView.scrollIntoView(from, { y: "center" }),
-    });
+    if (!view) return;
+    highlightLocation(view, location.lineStart, location.lineEnd);
   }, [location.lineEnd, location.lineStart, navigationRevision]);
 
   useEffect(() => {

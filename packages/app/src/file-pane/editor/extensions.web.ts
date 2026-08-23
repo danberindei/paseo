@@ -85,3 +85,19 @@ export function editorTheme(theme: EditorVisualTheme) {
     syntaxHighlighting(createCodeMirrorHighlightStyle(theme.syntax)),
   ];
 }
+
+export function highlightLocation(
+  view: EditorView,
+  lineStart: number | undefined,
+  lineEnd: number | undefined,
+) {
+  if (!lineStart) return;
+  const clampedLineStart = Math.min(lineStart, view.state.doc.lines);
+  const clampedLineEnd = Math.min(lineEnd ?? clampedLineStart, view.state.doc.lines);
+  const from = view.state.doc.line(clampedLineStart).from;
+  const to = view.state.doc.line(Math.max(clampedLineStart, clampedLineEnd)).to;
+  view.dispatch({
+    selection: { anchor: from, head: to },
+    effects: EditorView.scrollIntoView(from, { y: "center" }),
+  });
+}
