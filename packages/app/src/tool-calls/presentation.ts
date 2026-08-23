@@ -59,6 +59,7 @@ export function buildToolCallPresentation(
     cwd: input.cwd,
   });
   const isLoadingDetails = isPendingToolCallDetail({
+    toolName: input.toolName,
     detail: input.detail,
     status: input.status,
     error: input.error,

@@ -93,11 +93,21 @@ export function hasMeaningfulToolCallDetail(detail: ToolCallDetail | undefined):
   }
 }
 
+// Claude resolves its plan/question prompts through the permission flow: by the time either
+// is visible at all, the model has already finished generating the call, so the rest of its
+// "running" time is a human decision wait, not work in progress. A loading skeleton there
+// implies content is still coming, which is never true - show the empty state instead.
+const PERMISSION_GATED_TOOL_NAMES = new Set(["exitplanmode", "askuserquestion"]);
+
 export function isPendingToolCallDetail(params: {
+  toolName: string;
   detail: ToolCallDetail | undefined;
   status: "executing" | "running" | "completed" | "failed" | "canceled";
   error: unknown;
 }): boolean {
+  if (PERMISSION_GATED_TOOL_NAMES.has(params.toolName.trim().toLowerCase())) {
+    return false;
+  }
   const isRunning = params.status === "running" || params.status === "executing";
   return isRunning && params.error == null && !hasMeaningfulToolCallDetail(params.detail);
 }
