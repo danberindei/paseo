@@ -3928,12 +3928,16 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
+    let lastUserMessageTimestamp: string | undefined;
     for (const event of historyEvents) {
       const row = this.recordTimeline(
         agent.id,
         event.item,
         event.timestamp ? { timestamp: event.timestamp } : undefined,
       );
+      if (event.item.type === "user_message") {
+        lastUserMessageTimestamp = row.timestamp;
+      }
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -3942,6 +3946,11 @@ export class AgentManager {
         });
       }
     }
+    // Rebuilding the timeline (e.g. after a rewind) makes it authoritative, so
+    // recompute lastUserMessageAt from the rebuilt user messages. Otherwise a
+    // live user_message that triggered the rebuild (or the rewind moment) leaves
+    // the field stuck at "now" even though that message is no longer present.
+    agent.lastUserMessageAt = lastUserMessageTimestamp ? new Date(lastUserMessageTimestamp) : null;
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }

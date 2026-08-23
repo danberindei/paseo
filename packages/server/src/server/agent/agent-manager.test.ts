@@ -10226,6 +10226,82 @@ test("hydrateTimeline preserves provider replay timestamps and marks missing one
   expect(timeline[1]?.timestamp).toEqual(expect.any(String));
 });
 
+test("force hydration recomputes lastUserMessageAt from rebuilt user messages", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rewind-luma-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  const historyUserTimestamp = "2020-01-01T00:00:00.000Z";
+
+  class RewindSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-live-user";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "user_message", text: "live message before rewind" },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        timestamp: historyUserTimestamp,
+        item: { type: "user_message", text: "hello", messageId: "msg_1" },
+      };
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        timestamp: "2020-01-01T00:00:05.000Z",
+        item: { type: "assistant_message", text: "reply" },
+      };
+    }
+  }
+
+  class RewindClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RewindSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RewindClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000205",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await manager.runAgent(snapshot.id, { text: "do something" });
+
+    // The live user_message bumps lastUserMessageAt to wall-clock "now".
+    const beforeRewind = manager.getAgent(snapshot.id)?.lastUserMessageAt;
+    expect(beforeRewind).toBeInstanceOf(Date);
+    expect(beforeRewind?.toISOString()).not.toBe(historyUserTimestamp);
+
+    // A rewind rebuilds the timeline from provider history.
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true, broadcast: true });
+
+    expect(manager.getAgent(snapshot.id)?.lastUserMessageAt?.toISOString()).toBe(
+      historyUserTimestamp,
+    );
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("provider user_message is recorded from the live stream", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-no-prior-record-"));
   const storagePath = join(workdir, "agents");
