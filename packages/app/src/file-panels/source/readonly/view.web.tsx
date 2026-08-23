@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { FileFind, FileFindModel } from "../find/index.web";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { drawSelection, EditorView } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
-import { editorTheme } from "../editor/extensions.web";
+import {
+  editorTheme,
+  emptyLineHighlightExtension,
+  highlightLocation,
+} from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
 import type { SourcePresentation } from "./presentation";
 
@@ -51,6 +55,8 @@ export function FileSourceView({
             "aria-label": `Source for ${values.filename}`,
           }),
           EditorView.editable.of(false),
+          drawSelection(),
+          emptyLineHighlightExtension,
           languageCompartment.of(
             languageFor({ filename: values.filename, presentation: values.presentation }),
           ),
@@ -83,11 +89,9 @@ export function FileSourceView({
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || !location.lineStart) return;
-    const line = Math.min(location.lineStart, view.state.doc.lines);
-    const from = view.state.doc.line(line).from;
-    view.dispatch({ effects: EditorView.scrollIntoView(from, { y: "center" }) });
-  }, [location.lineStart, navigationRevision]);
+    if (!view) return;
+    highlightLocation(view, location.lineStart, location.lineEnd);
+  }, [location.lineEnd, location.lineStart, navigationRevision]);
 
   return (
     <div style={FRAME_STYLE}>

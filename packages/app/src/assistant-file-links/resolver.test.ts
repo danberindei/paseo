@@ -362,12 +362,6 @@ describe("fetchDaemonResolution", () => {
     const result = await fetchDaemonResolution({
       ambiguousQuery: "file.ts",
       token: "file.ts:12",
-      target: {
-        raw: "file.ts:12",
-        path: "/Users/test/project/file.ts",
-        lineStart: 12,
-        lineEnd: undefined,
-      },
       workspaceRoot: "/Users/test/project",
       getDirectorySuggestions,
     });
@@ -380,12 +374,7 @@ describe("fetchDaemonResolution", () => {
         limit: 1,
       },
     ]);
-    expect(result).toEqual({
-      raw: "file.ts:12",
-      path: "/Users/test/project/packages/app/src/file.ts",
-      lineStart: 12,
-      lineEnd: undefined,
-    });
+    expect(result).toBe("/Users/test/project/packages/app/src/file.ts");
   });
 
   it("throws a typed unresolved error when the daemon finds no match", async () => {
@@ -395,12 +384,6 @@ describe("fetchDaemonResolution", () => {
       fetchDaemonResolution({
         ambiguousQuery: "src/file.ts",
         token: "src/file.ts",
-        target: {
-          raw: "src/file.ts",
-          path: "/Users/test/project/src/file.ts",
-          lineStart: undefined,
-          lineEnd: undefined,
-        },
         workspaceRoot: "/Users/test/project",
         getDirectorySuggestions,
       }),
@@ -412,12 +395,6 @@ describe("fetchDaemonResolution", () => {
       fetchDaemonResolution({
         ambiguousQuery: "dumm.md",
         token: "dumm.md",
-        target: {
-          raw: "dumm.md",
-          path: "/Users/test/project/dumm.md",
-          lineStart: undefined,
-          lineEnd: undefined,
-        },
         workspaceRoot: "/Users/test/project",
         getDirectorySuggestions: unavailableSuggestions,
       }),

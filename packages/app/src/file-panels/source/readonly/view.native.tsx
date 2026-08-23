@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
@@ -6,6 +6,7 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
+import { computeHighlightedLineRange } from "./highlighted-line-range";
 import type { SourcePresentation } from "./presentation";
 import { buildSourceLines } from "./source-lines";
 
@@ -45,6 +46,24 @@ export function FileSourceView({
     return buildSourceLines({ content, filename, presentation, firstLines }, setLines);
   }, [content, filename, presentation]);
   const lineCount = lines?.length ?? 0;
+  const highlightedLineRange = useMemo(
+    () => computeHighlightedLineRange(location.lineStart, location.lineEnd, lineCount),
+    [lineCount, location.lineStart, location.lineEnd],
+  );
+  const renderSourceLine = useCallback<ListRenderItem<HighlightToken[]>>(
+    ({ item, index }) => (
+      <SourceLineView
+        tokens={item}
+        number={index + 1}
+        highlighted={
+          highlightedLineRange !== null &&
+          index + 1 >= highlightedLineRange.start &&
+          index + 1 <= highlightedLineRange.end
+        }
+      />
+    ),
+    [highlightedLineRange],
+  );
   useEffect(() => {
     if (!location.lineStart || lineCount === 0) return;
     listRef.current?.scrollToIndex({
@@ -52,7 +71,7 @@ export function FileSourceView({
       animated: false,
       viewPosition: 0.5,
     });
-  }, [lineCount, location.lineStart, navigationRevision]);
+  }, [lineCount, location.lineStart, location.lineEnd, navigationRevision]);
   if (!lines) return <FilePanelLoading />;
   return (
     <FlatList
@@ -70,14 +89,19 @@ export function FileSourceView({
 interface SourceLineProps {
   tokens: HighlightToken[];
   number: number;
+  highlighted: boolean;
 }
 
 // Finishing the highlight replaces every line; the lines already highlighted stay as they were.
-const SourceLineView = memo(function SourceLineView({ tokens, number }: SourceLineProps) {
+const SourceLineView = memo(function SourceLineView({
+  tokens,
+  number,
+  highlighted,
+}: SourceLineProps) {
   // A token's offset in its line identifies it; its text and style can repeat.
   let offset = 0;
   return (
-    <View style={styles.line}>
+    <View style={[styles.line, highlighted && styles.lineHighlighted]}>
       <Text style={styles.gutter}>{number}</Text>
       <Text selectable style={styles.text}>
         {tokens.map((token) => {
@@ -97,6 +121,7 @@ const SourceLineView = memo(function SourceLineView({ tokens, number }: SourceLi
 function sameSourceLine(previous: SourceLineProps, next: SourceLineProps): boolean {
   return (
     previous.number === next.number &&
+    previous.highlighted === next.highlighted &&
     previous.tokens.length === next.tokens.length &&
     previous.tokens.every(
       (token, index) =>
@@ -113,12 +138,9 @@ function sourceLineLayout(_data: ArrayLike<HighlightToken[]> | null | undefined,
   return { length: 20, offset: index * 20, index };
 }
 
-const renderSourceLine: ListRenderItem<HighlightToken[]> = ({ item, index }) => (
-  <SourceLineView tokens={item} number={index + 1} />
-);
-
 const styles = StyleSheet.create((theme) => ({
   line: { flexDirection: "row", minHeight: theme.fontSize.code * 1.45 },
+  lineHighlighted: { backgroundColor: theme.colors.terminal.selectionBackground },
   gutter: {
     width: 56,
     paddingRight: theme.spacing[3],

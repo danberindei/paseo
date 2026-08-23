@@ -41,8 +41,6 @@ export interface AssistantFileLinkActions {
 interface AssistantFileLinkLookupKey {
   query: string;
   path: string;
-  lineStart: number | null;
-  lineEnd: number | null;
 }
 
 type AssistantFileLinkQueryKey = readonly [
@@ -92,7 +90,6 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
       return fetchDaemonResolution({
         ambiguousQuery: resolution.ambiguousQuery,
         token: resolution.token,
-        target: resolution.target,
         workspaceRoot,
         getDirectorySuggestions: context.getDirectorySuggestions,
       });
@@ -125,7 +122,6 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
         fetchDaemonResolution({
           ambiguousQuery: resolution.ambiguousQuery,
           token: resolution.token,
-          target: resolution.target,
           workspaceRoot,
           getDirectorySuggestions: context.getDirectorySuggestions,
         }),
@@ -141,7 +137,12 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   const target = useMemo(() => {
     // A direct file target comes from the link text, not from a lookup, so it stays a
     // candidate until the resolver confirms the file exists.
-    return resolution.kind === "needsLookup" ? (query.data ?? null) : null;
+    if (resolution.kind !== "needsLookup" || !query.data) {
+      return null;
+    }
+    // The lookup confirms only the path, so the line range keeps coming from the link
+    // itself. Links that share one basename resolution keep their own line numbers.
+    return { ...resolution.target, path: query.data };
   }, [query.data, resolution]);
 
   const candidateTarget = useMemo(() => {
@@ -217,13 +218,12 @@ function openAssistantFileLink(input: {
 
   const run = async () => {
     try {
-      const target = await input.queryClient.fetchQuery({
+      const path = await input.queryClient.fetchQuery({
         queryKey: capturedQueryKey,
         queryFn: () =>
           fetchDaemonResolution({
             ambiguousQuery: capturedResolution.ambiguousQuery,
             token: capturedResolution.token,
-            target: capturedResolution.target,
             workspaceRoot: capturedConfig.workspaceRoot,
             getDirectorySuggestions: input.context.getDirectorySuggestions,
           }),
@@ -231,7 +231,7 @@ function openAssistantFileLink(input: {
         staleTime: Infinity,
       });
       await dispatchFileTarget({
-        target,
+        target: { ...capturedResolution.target, path },
         disposition: input.disposition,
         capturedServerId: capturedConfig.serverId,
         capturedWorkspaceRoot: capturedConfig.workspaceRoot,
@@ -287,8 +287,6 @@ function assistantFileLinkQueryKey(input: {
     {
       query: input.resolution.ambiguousQuery,
       path: input.resolution.target.path,
-      lineStart: input.resolution.target.lineStart ?? null,
-      lineEnd: input.resolution.target.lineEnd ?? null,
     },
   ];
 }
