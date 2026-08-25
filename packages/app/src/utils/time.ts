@@ -10,6 +10,11 @@ type Elapsed =
   | { kind: "elapsed"; value: string }
   | { kind: "date"; value: string };
 
+/** Shows one decimal past the whole unit, so "1h" doesn't sit unchanged for 59 minutes. */
+function decimalOrWhole(floatValue: number, wholeValue: number): number {
+  return floatValue > 1 && floatValue < 10 ? parseFloat(floatValue.toFixed(1)) : wholeValue;
+}
+
 function describeElapsed(date: Date, now: Date): Elapsed {
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
@@ -21,13 +26,11 @@ function describeElapsed(date: Date, now: Date): Elapsed {
   if (diffMin < 1) return { kind: "elapsed", value: `${diffSec}s` };
   if (diffHour < 1) return { kind: "elapsed", value: `${diffMin}m` };
   if (diffDay < 1) {
-    const floatHours = diffMin / 60;
-    const hours = floatHours > 1 && floatHours < 10 ? parseFloat(floatHours.toFixed(1)) : diffHour;
+    const hours = decimalOrWhole(diffMin / 60, diffHour);
     return { kind: "elapsed", value: `${hours}h` };
   }
   if (diffDay < 7) {
-    const floatDays = diffHour / 24;
-    const days = floatDays > 1 && floatDays < 10 ? parseFloat(floatDays.toFixed(1)) : diffDay;
+    const days = decimalOrWhole(diffHour / 24, diffDay);
     return { kind: "elapsed", value: `${days}d` };
   }
 
@@ -86,10 +89,16 @@ export function describeCompactTimeAgo(date: Date, now: Date = new Date()): Comp
     return { label: `${Math.floor(elapsedMs / MINUTE_MS)}m`, resolution: "minute" };
   }
   if (elapsedMs < DAY_MS) {
-    return { label: `${Math.floor(elapsedMs / HOUR_MS)}h`, resolution: "hour" };
+    const floatHours = elapsedMs / HOUR_MS;
+    const hours = decimalOrWhole(floatHours, Math.floor(floatHours));
+    // A decimal changes every six minutes, so it needs minute ticks, not the hour tier's thirty.
+    const resolution: RelativeTimeResolution = floatHours < 10 ? "minute" : "hour";
+    return { label: `${hours}h`, resolution };
   }
   if (elapsedMs < ABSOLUTE_AFTER_MS) {
-    return { label: `${Math.floor(elapsedMs / DAY_MS)}d`, resolution: "day" };
+    const floatDays = elapsedMs / DAY_MS;
+    const days = decimalOrWhole(floatDays, Math.floor(floatDays));
+    return { label: `${days}d`, resolution: "day" };
   }
 
   const month = date.toLocaleDateString("en-US", { month: "short" });
