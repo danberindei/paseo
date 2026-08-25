@@ -120,6 +120,7 @@ export function spawnProcess(
   return child;
 }
 
+// oxlint-disable-next-line complexity
 export async function execCommand(
   command: string,
   args: string[],
