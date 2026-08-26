@@ -977,6 +977,7 @@ type RowIndex = Map<string, Set<number>>;
 interface MutableTimeline {
   written: number[];
   index: RowIndex | null;
+  runningToolCalls: Set<number>;
 }
 
 /** False keeps the immutable, copy-on-write path used by live updates. */
@@ -1319,6 +1320,57 @@ function findExistingTimelineIdentityIndex(
     [`identity:${identity}`],
     (row) => streamTimelineItemIdentity(row) === identity,
   );
+}
+
+type TurnTerminalStatus = "canceled" | "completed" | "failed";
+
+function finalizeRunningToolCalls(
+  state: StreamItem[],
+  terminalStatus: TurnTerminalStatus,
+  mutable: MutableFlag,
+): StreamItem[] {
+  const targetAgentStatus: AgentToolCallStatus = terminalStatus;
+  if (mutable) {
+    for (const i of mutable.runningToolCalls) {
+      const entry = state[i];
+      if (
+        entry.kind === "tool_call" &&
+        entry.payload.source === "agent" &&
+        entry.payload.data.status === "running"
+      ) {
+        state[i] = {
+          ...entry,
+          payload: {
+            source: "agent",
+            data: { ...entry.payload.data, status: targetAgentStatus },
+          },
+        };
+      }
+    }
+    mutable.runningToolCalls.clear();
+    return state;
+  }
+
+  let mutated = false;
+  const nextState = state.map((entry) => {
+    if (
+      entry.kind === "tool_call" &&
+      entry.payload.source === "agent" &&
+      entry.payload.data.status === "running"
+    ) {
+      mutated = true;
+      return {
+        ...entry,
+        payload: {
+          source: "agent" as const,
+          data: { ...entry.payload.data, status: targetAgentStatus },
+        },
+      };
+    }
+    return entry;
+  });
+
+  return mutated ? nextState : state;
 }
 
 function hasNonEmptyObject(value: unknown): boolean {
@@ -1897,13 +1949,29 @@ function reduceStreamUpdateImpl(
     }
     case "thread_started":
     case "turn_started":
-    case "turn_completed":
-    case "turn_failed":
-    case "turn_canceled":
     case "permission_requested":
     case "permission_resolved":
     case "attention_required":
       return deferFinalize ? state : finalizeActiveThoughts(state, mutable);
+    case "turn_completed":
+    case "turn_failed":
+    case "turn_canceled": {
+      let terminalStatus: TurnTerminalStatus;
+      if (event.type === "turn_completed") {
+        terminalStatus = "completed";
+      } else if (event.type === "turn_failed") {
+        terminalStatus = "failed";
+      } else {
+        terminalStatus = "canceled";
+      }
+      // Finalize running tool calls to this turn's terminal status even during
+      // hydration (deferFinalize). This is what lets a completed turn's tool
+      // calls read "completed" instead of being swept to "canceled" at the end
+      // of the batch. Thought finalization stays deferred so hydration keeps its
+      // O(N + M) shape for the common append-heavy case.
+      const base = deferFinalize ? state : finalizeActiveThoughts(state, mutable);
+      return finalizeRunningToolCalls(base, terminalStatus, mutable);
+    }
     default:
       return state;
   }
@@ -2007,7 +2075,7 @@ export function hydrateStreamState(
 ): StreamItem[] {
   const source = options?.source ?? "live";
   const state: StreamItem[] = [];
-  const mutable: MutableTimeline = { written: [], index: null };
+  const mutable: MutableTimeline = { written: [], index: null, runningToolCalls: new Set() };
   for (let i = 0; i < events.length; i += 1) {
     const { event, timestamp, timelineCursor } = events[i];
     reduceStreamUpdateImpl(state, event, timestamp, {
@@ -2017,7 +2085,18 @@ export function hydrateStreamState(
       reservedItemIds: options?.reservedItemIds,
       timelineCursor,
     });
+    for (const index of mutable.written) {
+      const item = state[index];
+      if (isAgentToolCallItem(item) && item.payload.data.status === "running") {
+        mutable.runningToolCalls.add(index);
+      } else {
+        mutable.runningToolCalls.delete(index);
+      }
+    }
   }
+  // Tool calls are finalized per turn-terminal event (see the terminal case in
+  // reduceStreamUpdateImpl), so there is no end-sweep here: a turn still in
+  // progress at the end of the batch keeps its running tool calls "running".
   return finalizeActiveThoughts(state, mutable);
 }
 

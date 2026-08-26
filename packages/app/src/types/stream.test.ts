@@ -1088,6 +1088,86 @@ describe("stream reducer canonical tool calls", () => {
     });
   });
 
+  it("finalizes a running tool call to completed when the turn completes during hydration", () => {
+    const updates = [
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId: "tool-completed-turn",
+          name: "shell",
+          status: "running",
+          input: { command: "pwd" },
+        }),
+        timestamp: new Date("2025-01-01T10:20:00Z"),
+      },
+      {
+        event: { type: "turn_completed" as const, provider: "codex" as const },
+        timestamp: new Date("2025-01-01T10:20:01Z"),
+      },
+    ];
+
+    const state = hydrateStreamState(updates);
+    const tools = state.filter(isAgentToolCallItem);
+
+    assert.strictEqual(tools.length, 1);
+    assert.strictEqual(tools[0].payload.data.status, "completed");
+  });
+
+  it("keeps a running tool call running when the turn has not terminated during hydration", () => {
+    const updates = [
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId: "tool-in-progress-turn",
+          name: "shell",
+          status: "running",
+          input: { command: "sleep 1" },
+        }),
+        timestamp: new Date("2025-01-01T10:21:00Z"),
+      },
+    ];
+
+    const state = hydrateStreamState(updates);
+    const tools = state.filter(isAgentToolCallItem);
+
+    assert.strictEqual(tools.length, 1);
+    assert.strictEqual(tools[0].payload.data.status, "running");
+  });
+
+  it("preserves tool statuses across multiple terminal events and an unfinished turn", () => {
+    const timestamp = new Date("2025-01-01T10:21:00Z");
+    const tool = (callId: string, status: "running" | "completed") => ({
+      event: canonicalToolTimeline({ provider: "codex", callId, name: "shell", status, input: {} }),
+      timestamp,
+    });
+    const updates = [
+      tool("finished", "running"),
+      tool("finished", "completed"),
+      tool("failed", "running"),
+      {
+        event: { type: "turn_failed" as const, provider: "codex" as const, error: "failed" },
+        timestamp,
+      },
+      tool("canceled", "running"),
+      {
+        event: { type: "turn_canceled" as const, provider: "codex" as const, reason: "canceled" },
+        timestamp,
+      },
+      { event: { type: "turn_completed" as const, provider: "codex" as const }, timestamp },
+      tool("ongoing", "running"),
+    ];
+    const tools = hydrateStreamState(updates).filter(isAgentToolCallItem);
+    assert.deepStrictEqual(
+      tools.map((item) => [item.payload.data.callId, item.payload.data.status]),
+      [
+        ["finished", "completed"],
+        ["failed", "failed"],
+        ["canceled", "canceled"],
+        ["ongoing", "running"],
+      ],
+    );
+  });
+
   it("keeps sub_agent detail through lifecycle updates for the same callId", () => {
     const callId = "task-sub-agent-1";
     const updates = [

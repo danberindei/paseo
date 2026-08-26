@@ -1423,7 +1423,17 @@ interface CodexQuestionPrompt {
   isSecret?: boolean;
 }
 
-export function normalizeCodexQuestionPrompts(raw: unknown): CodexQuestionPrompt[] {
+interface NetworkPolicyAmendment {
+  host: string;
+  action: "allow" | "deny";
+}
+
+const NetworkPolicyAmendmentSchema = z.object({
+  host: z.string(),
+  action: z.enum(["allow", "deny"]),
+});
+
+function normalizeCodexQuestionPrompts(raw: unknown): CodexQuestionPrompt[] {
   if (!Array.isArray(raw)) {
     return [];
   }
@@ -3849,6 +3859,8 @@ interface CodexPendingPermissionHandler {
   kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
   questions?: CodexQuestionPrompt[];
   plan?: { text: string; turnId: string | undefined };
+  proposedExecpolicyAmendment?: string[];
+  proposedNetworkPolicyAmendments?: NetworkPolicyAmendment[];
 }
 
 interface ConsumedRootCompaction {
@@ -5405,7 +5417,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
 
     if (pending.kind === "command") {
-      pending.resolve({ decision: resolvePermissionDecision(response) });
+      pending.resolve({
+        decision: this.resolveCommandPermissionDecision(pending, response),
+      });
       return;
     }
 
@@ -5497,6 +5511,44 @@ export class CodexAppServerAgentSession implements AgentSession {
       resolution: response,
     });
     return followUpPrompt ? { followUpPrompt } : undefined;
+  }
+
+  private resolveCommandPermissionDecision(
+    pending: {
+      proposedExecpolicyAmendment?: string[];
+      proposedNetworkPolicyAmendments?: NetworkPolicyAmendment[];
+    },
+    response: AgentPermissionResponse,
+  ): unknown {
+    const actionId = response.selectedActionId;
+    if (response.behavior === "allow") {
+      if (actionId === "accept_policy" && pending.proposedExecpolicyAmendment) {
+        return {
+          acceptWithExecpolicyAmendment: {
+            execpolicy_amendment: pending.proposedExecpolicyAmendment,
+          },
+        };
+      }
+      const amendment = this.resolveSelectedNetworkPolicyAmendment(pending, actionId);
+      return amendment ? { applyNetworkPolicyAmendment: amendment } : "accept";
+    }
+
+    const amendment = this.resolveSelectedNetworkPolicyAmendment(pending, actionId);
+    if (amendment) {
+      return { applyNetworkPolicyAmendment: amendment };
+    }
+    return response.interrupt ? "cancel" : "decline";
+  }
+
+  private resolveSelectedNetworkPolicyAmendment(
+    pending: { proposedNetworkPolicyAmendments?: NetworkPolicyAmendment[] },
+    actionId: string | undefined,
+  ): NetworkPolicyAmendment | null {
+    if (!actionId?.startsWith("apply_network_") || !pending.proposedNetworkPolicyAmendments) {
+      return null;
+    }
+    const idx = parseInt(actionId.slice("apply_network_".length), 10);
+    return pending.proposedNetworkPolicyAmendments[idx] ?? null;
   }
 
   private handlePlanPermissionResponse(params: {
@@ -8027,6 +8079,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
+  // oxlint-disable-next-line complexity
   private handleCommandApprovalRequest(params: unknown): Promise<unknown> {
     const parsed = z
       .object({
@@ -8038,8 +8091,19 @@ export class CodexAppServerAgentSession implements AgentSession {
         command: z.string().nullable().optional(),
         cwd: z.string().nullable().optional(),
         reason: z.string().nullable().optional(),
+        proposedExecpolicyAmendment: z.array(z.string()).nullable().optional(),
+        proposedNetworkPolicyAmendments: z
+          .array(NetworkPolicyAmendmentSchema)
+          .nullable()
+          .optional(),
       })
       .parse(params);
+    const execAmendment = parsed.proposedExecpolicyAmendment?.length
+      ? parsed.proposedExecpolicyAmendment
+      : null;
+    const networkAmendments = parsed.proposedNetworkPolicyAmendments?.length
+      ? parsed.proposedNetworkPolicyAmendments
+      : null;
     const commandPreview = mapCodexExecNotificationToToolCall({
       callId: parsed.itemId,
       command: parsed.command,
@@ -8048,6 +8112,44 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
     const requestId = `permission-${parsed.approvalId ?? parsed.itemId}`;
     const title = parsed.command ? `Run command: ${parsed.command}` : "Run command";
+
+    const actions: AgentPermissionAction[] | undefined =
+      execAmendment || networkAmendments
+        ? [
+            { id: "accept", label: "Approve", behavior: "allow", variant: "primary" },
+            ...(execAmendment
+              ? [
+                  {
+                    id: "accept_policy",
+                    label: "Always allow",
+                    behavior: "allow" as const,
+                    variant: "secondary" as const,
+                  },
+                ]
+              : []),
+            ...(networkAmendments
+              ? networkAmendments.map(
+                  (amendment, i): AgentPermissionAction => ({
+                    id: `apply_network_${i}`,
+                    label:
+                      amendment.action === "allow"
+                        ? `Always allow ${amendment.host}`
+                        : `Always deny ${amendment.host}`,
+                    behavior: amendment.action === "allow" ? "allow" : "deny",
+                    variant: amendment.action === "allow" ? "secondary" : "danger",
+                  }),
+                )
+              : []),
+            {
+              id: "deny",
+              label: "Deny",
+              behavior: "deny",
+              variant: "danger",
+              intent: "dismiss",
+            },
+          ]
+        : undefined;
+
     const request: AgentPermissionRequest = {
       id: requestId,
       provider: CODEX_PROVIDER,
@@ -8067,6 +8169,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         },
         output: null,
       },
+      ...(actions ? { actions } : {}),
       metadata: {
         itemId: parsed.itemId,
         threadId: parsed.threadId,
@@ -8076,7 +8179,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingPermissions.set(requestId, request);
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
     return new Promise((resolve) => {
-      this.pendingPermissionHandlers.set(requestId, { resolve, kind: "command" });
+      this.pendingPermissionHandlers.set(requestId, {
+        resolve,
+        kind: "command",
+        ...(execAmendment ? { proposedExecpolicyAmendment: execAmendment } : {}),
+        ...(networkAmendments ? { proposedNetworkPolicyAmendments: networkAmendments } : {}),
+      });
     });
   }
 

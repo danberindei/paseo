@@ -1607,7 +1607,10 @@ export function PermissionRequestCard({
     [resolvedActions],
   );
   const denyAction = useMemo(
-    () => resolvedActions.find((a) => a.behavior === "deny") ?? null,
+    () =>
+      resolvedActions.find((a) => a.behavior === "deny" && a.intent === "dismiss") ??
+      resolvedActions.find((a) => a.behavior === "deny") ??
+      null,
     [resolvedActions],
   );
 

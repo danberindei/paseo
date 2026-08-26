@@ -862,6 +862,62 @@ describe("permission shortcut coordination", () => {
     expect(actions).toEqual([]);
   });
 
+  it.each([
+    ["Alt+D", (card: HTMLElement) => pressCardKey(card, "d", { altKey: true })],
+    ["Escape", (card: HTMLElement) => pressCardKey(card, "Escape")],
+    ["permission.deny", () => act(() => expect(dispatch("permission.deny")).toBe(true))],
+  ] as const)(
+    "%s dismisses the request when permanent host denial comes first",
+    async (_shortcut, press) => {
+      respondToPermissionAndWait.mockClear();
+      const permission = createPermission("network-approval");
+      permission.request.provider = "codex";
+      permission.request.actions = [
+        {
+          id: "accept",
+          label: "Approve",
+          behavior: "allow",
+          variant: "primary",
+        },
+        {
+          id: "apply_network_0",
+          label: "Always deny example.com",
+          behavior: "deny",
+          variant: "danger",
+        },
+        {
+          id: "deny",
+          label: "Deny",
+          behavior: "deny",
+          variant: "danger",
+          intent: "dismiss",
+        },
+      ];
+      renderRealCard(
+        <RealPermissionCardSurface
+          permission={permission}
+          client={permissionClient}
+          dispatcherRef={dispatcherRef}
+        />,
+      );
+
+      await vi.waitFor(() => expect(shortcutOwnerLabel()).toBe("owner"));
+      const question = container.querySelector('[data-testid="permission-request-question"]');
+      const card = question?.parentElement;
+      if (!(card instanceof HTMLElement)) throw new Error("Permission card did not render");
+      act(() => card.focus());
+
+      press(card);
+
+      await vi.waitFor(() => expect(respondToPermissionAndWait).toHaveBeenCalledTimes(1));
+      expect(respondToPermissionAndWait.mock.calls[0]?.slice(0, 3)).toEqual([
+        "agent",
+        "network-approval",
+        { behavior: "deny", selectedActionId: "deny", message: "Denied by user" },
+      ]);
+    },
+  );
+
   it("blocks a focused permission card under a real hover card and answers after it closes", async () => {
     respondToPermissionAndWait.mockClear();
     const permission = createPermission("first");

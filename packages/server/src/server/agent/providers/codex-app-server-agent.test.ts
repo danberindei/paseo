@@ -120,6 +120,7 @@ interface CodexSessionTestAccess {
     count(): number;
   };
   ensureThreadLoaded(): Promise<void>;
+  handleCommandApprovalRequest(params: unknown): Promise<unknown>;
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
   handleNotification(method: string, params: unknown): Promise<void>;
   refreshResolvedCollaborationMode(): void;
@@ -4166,6 +4167,35 @@ describe("Codex app-server provider", () => {
 
     expect(env.PASEO_AGENT_ID).toBe(launchContext.env?.PASEO_AGENT_ID);
     expect(env.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
+  });
+
+  test("marks ordinary denial as dismissal when a permanent network denial is offered", async () => {
+    const session = createSession();
+    const pendingResponse = asInternals(session).handleCommandApprovalRequest({
+      itemId: "network-approval",
+      threadId: "test-thread",
+      turnId: "test-turn",
+      command: "curl https://example.com",
+      proposedNetworkPolicyAmendments: [{ host: "example.com", action: "deny" }],
+    });
+
+    expect(session.getPendingPermissions()[0]?.actions).toEqual([
+      { id: "accept", label: "Approve", behavior: "allow", variant: "primary" },
+      {
+        id: "apply_network_0",
+        label: "Always deny example.com",
+        behavior: "deny",
+        variant: "danger",
+      },
+      { id: "deny", label: "Deny", behavior: "deny", variant: "danger", intent: "dismiss" },
+    ]);
+
+    await session.respondToPermission("permission-network-approval", {
+      behavior: "deny",
+      selectedActionId: "deny",
+    });
+    await expect(pendingResponse).resolves.toEqual({ decision: "decline" });
+    expect(session.getPendingPermissions()).toEqual([]);
   });
 
   test("projects request_user_input into a question permission and running timeline tool call", () => {
