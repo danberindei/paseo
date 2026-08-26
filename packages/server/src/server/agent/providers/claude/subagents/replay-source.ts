@@ -146,7 +146,10 @@ export interface ClaudeReplaySubagentInput {
 
 export interface ClaudeReplayParentFacts {
   /** Task `tool_use` id -> identity declared in the parent's tool input. */
-  toolCalls: ReadonlyMap<string, { title?: string; description?: string }>;
+  toolCalls: ReadonlyMap<
+    string,
+    { title?: string; description?: string; prompt?: string; timestamp?: string }
+  >;
   /** agentId -> tool call, recovered by scraping tool-result text. Legacy fallback only. */
   linksByAgentId: ReadonlyMap<string, { toolCallId: string; failed: boolean }>;
   /** Task `tool_use` id -> outcome. Usable once meta.json supplies the link directly. */
@@ -282,6 +285,26 @@ function observeSubagent(
   const observations: SubagentObservation[] = [declareSubagent(subagent, link, toolCall)];
   const subtitle = observeSubtitle(subagent, link, toolCall?.title ?? subagent.meta?.agentType);
   if (subtitle) observations.push(subtitle);
+
+  // Open the timeline with the task it was actually given, matching the live path
+  // (live-source.ts's observeTaskStarted). Without this the pane starts mid-conversation, and the
+  // turn built from these entries never gets a `user_message` opener, so turn-time.ts drops every
+  // timestamp in it.
+  //
+  // Stamp the opener with the parent's Task tool_use timestamp, not the child's first entry: the
+  // child's first entry is its own response, so reusing that timestamp collapses the turn's
+  // reported duration to 0ms. Fall back to the child's first entry for sessions recorded before
+  // the parent facts carried a timestamp.
+  if (toolCall?.prompt) {
+    const promptTimestamp =
+      toolCall.timestamp ?? normalizeProviderReplayTimestamp(subagent.entries[0]?.timestamp);
+    observations.push({
+      kind: "timeline",
+      id: link.id,
+      item: { type: "user_message", text: toolCall.prompt },
+      ...(promptTimestamp ? { timestamp: promptTimestamp } : {}),
+    });
+  }
 
   for (const entry of subagent.entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);

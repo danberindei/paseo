@@ -319,6 +319,86 @@ describe("observeReplaySubagents", () => {
       timestamp: "2026-07-26T06:27:47.034Z",
     });
   });
+
+  it("opens the timeline with the Task prompt when the parent recorded one", () => {
+    const parent = parentWithTaskCall();
+    parent.toolCalls.set(TOOL_USE_ID, {
+      ...parent.toolCalls.get(TOOL_USE_ID),
+      prompt: "Summarize the hover doc and the unistyles doc.",
+    });
+
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+        },
+      ],
+      parent,
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    const timelineObservations = observations.filter((o) => o.kind === "timeline");
+    expect(timelineObservations[0]).toMatchObject({
+      kind: "timeline",
+      id: TOOL_USE_ID,
+      item: { type: "user_message", text: "Summarize the hover doc and the unistyles doc." },
+      timestamp: "2026-07-26T06:27:47.034Z",
+    });
+    expect(timelineObservations[1]).toMatchObject({
+      kind: "timeline",
+      id: TOOL_USE_ID,
+      item: { type: "reasoning", text: "thinking" },
+    });
+  });
+
+  it("stamps the prompt opener with the parent's Task timestamp, not the child's first entry", () => {
+    const parent = parentWithTaskCall();
+    parent.toolCalls.set(TOOL_USE_ID, {
+      ...parent.toolCalls.get(TOOL_USE_ID),
+      prompt: "Summarize the hover doc and the unistyles doc.",
+      timestamp: "2026-07-26T06:27:40.000Z",
+    });
+
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+        },
+      ],
+      parent,
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    const opener = observations.find((o) => o.kind === "timeline");
+    expect(opener).toMatchObject({
+      kind: "timeline",
+      id: TOOL_USE_ID,
+      item: { type: "user_message", text: "Summarize the hover doc and the unistyles doc." },
+      timestamp: "2026-07-26T06:27:40.000Z",
+    });
+  });
+
+  it("omits the prompt opener when the parent recorded no Task prompt", () => {
+    const observations = observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+        },
+      ],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    expect(observations.some((o) => o.kind === "timeline" && o.item.type === "user_message")).toBe(
+      false,
+    );
+  });
 });
 
 describe("replay runtime", () => {

@@ -5715,11 +5715,16 @@ function parseClaudeHistoryRecords(content: string): ClaudeHistoryEntry[] {
  * Claude Code wrote the meta sidecar.
  */
 function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): ClaudeReplayParentFacts {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
+  const toolCalls = new Map<
+    string,
+    { title?: string; description?: string; prompt?: string; timestamp?: string }
+  >();
   for (const [id, call] of readClaudeHistoricalSubagentToolCalls(parentEntries)) {
     toolCalls.set(id, {
       ...((call.name ?? call.subagentType) ? { title: call.name ?? call.subagentType } : {}),
       ...(call.description ? { description: call.description } : {}),
+      ...(call.prompt ? { prompt: call.prompt } : {}),
+      ...(call.timestamp ? { timestamp: call.timestamp } : {}),
     });
   }
 
@@ -5834,6 +5839,8 @@ interface ClaudeHistoricalSubagentToolCall {
   name?: string;
   subagentType?: string;
   description?: string;
+  prompt?: string;
+  timestamp?: string;
 }
 
 function readClaudeHistoricalSubagentToolCalls(
@@ -5856,10 +5863,14 @@ function readClaudeHistoricalSubagentToolCalls(
       const name = readNonEmptyString(input?.name);
       const subagentType = readNonEmptyString(input?.subagent_type);
       const description = readNonEmptyString(input?.description);
+      const prompt = readNonEmptyString(input?.prompt);
+      const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
       toolCalls.set(block.id, {
         ...(name ? { name } : {}),
         ...(subagentType ? { subagentType } : {}),
         ...(description ? { description } : {}),
+        ...(prompt ? { prompt } : {}),
+        ...(timestamp ? { timestamp } : {}),
       });
     }
   }
