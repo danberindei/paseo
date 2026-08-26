@@ -1103,6 +1103,56 @@ function findExistingTimelineIdentityIndex(state: StreamItem[], identity: string
   return state.findIndex((entry) => streamTimelineItemIdentity(entry) === identity);
 }
 
+type TurnTerminalStatus = "canceled" | "completed" | "failed";
+
+function finalizeRunningToolCalls(
+  state: StreamItem[],
+  terminalStatus: TurnTerminalStatus,
+  mutable: boolean,
+): StreamItem[] {
+  const targetAgentStatus: AgentToolCallStatus = terminalStatus;
+  if (mutable) {
+    for (let i = 0; i < state.length; i += 1) {
+      const entry = state[i];
+      if (
+        entry.kind === "tool_call" &&
+        entry.payload.source === "agent" &&
+        entry.payload.data.status === "running"
+      ) {
+        state[i] = {
+          ...entry,
+          payload: {
+            source: "agent",
+            data: { ...entry.payload.data, status: targetAgentStatus },
+          },
+        };
+      }
+    }
+    return state;
+  }
+
+  let mutated = false;
+  const nextState = state.map((entry) => {
+    if (
+      entry.kind === "tool_call" &&
+      entry.payload.source === "agent" &&
+      entry.payload.data.status === "running"
+    ) {
+      mutated = true;
+      return {
+        ...entry,
+        payload: {
+          source: "agent" as const,
+          data: { ...entry.payload.data, status: targetAgentStatus },
+        },
+      };
+    }
+    return entry;
+  });
+
+  return mutated ? nextState : state;
+}
+
 function hasNonEmptyObject(value: unknown): boolean {
   return isRecord(value) && Object.keys(value).length > 0;
 }
@@ -1676,13 +1726,29 @@ function reduceStreamUpdateImpl(
     }
     case "thread_started":
     case "turn_started":
-    case "turn_completed":
-    case "turn_failed":
-    case "turn_canceled":
     case "permission_requested":
     case "permission_resolved":
     case "attention_required":
       return deferFinalize ? state : finalizeActiveThoughts(state, mutable);
+    case "turn_completed":
+    case "turn_failed":
+    case "turn_canceled": {
+      let terminalStatus: TurnTerminalStatus;
+      if (event.type === "turn_completed") {
+        terminalStatus = "completed";
+      } else if (event.type === "turn_failed") {
+        terminalStatus = "failed";
+      } else {
+        terminalStatus = "canceled";
+      }
+      // Finalize running tool calls to this turn's terminal status even during
+      // hydration (deferFinalize). This is what lets a completed turn's tool
+      // calls read "completed" instead of being swept to "canceled" at the end
+      // of the batch. Thought finalization stays deferred so hydration keeps its
+      // O(N + M) shape for the common append-heavy case.
+      const base = deferFinalize ? state : finalizeActiveThoughts(state, mutable);
+      return finalizeRunningToolCalls(base, terminalStatus, mutable);
+    }
     default:
       return state;
   }
@@ -1774,6 +1840,9 @@ export function hydrateStreamState(
       timelineCursor,
     });
   }
+  // Tool calls are finalized per turn-terminal event (see the terminal case in
+  // reduceStreamUpdateImpl), so there is no end-sweep here: a turn still in
+  // progress at the end of the batch keeps its running tool calls "running".
   return finalizeActiveThoughts(state, true);
 }
 
