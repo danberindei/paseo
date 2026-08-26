@@ -1213,6 +1213,34 @@ function buildClaudeQuestionPermissionSummary(
   return labels.length > 0 ? { title, description: labels.join(" / ") } : { title };
 }
 
+/**
+ * The SDK reports the prompt subtitle and the reason the prompt triggered in separate fields, and the
+ * permission card has one subtitle slot, so both are kept there.
+ *
+ * Without a reason the subtitle is returned unchanged. The reason keeps the ANSI stripping and
+ * trimming applied to it elsewhere. A subtitle that is empty or whitespace-only is dropped, so the
+ * reason is not preceded by a blank line; a subtitle that already states the reason is returned
+ * alone; otherwise the reason follows the subtitle on its own line.
+ */
+function buildClaudePermissionDescription(options: {
+  description?: string;
+  decisionReason?: string;
+}): string | undefined {
+  const subtitle = options.description;
+  const reason = readNonEmptyString(stripAnsi(options.decisionReason ?? ""))?.trim();
+  if (!reason) {
+    return subtitle;
+  }
+  // Appending the reason would put an empty first line ahead of it when the subtitle has no text.
+  if (!subtitle?.trim()) {
+    return reason;
+  }
+  if (subtitle.trim() === reason) {
+    return subtitle;
+  }
+  return `${subtitle}\n${reason}`;
+}
+
 function getClaudeModeLabel(modeId: PermissionMode): string {
   return DEFAULT_MODES.find((mode) => mode.id === modeId)?.label ?? modeId;
 }
@@ -5625,7 +5653,8 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
-      description: readNonEmptyString(stripAnsi(options.decisionReason ?? ""))?.trim(),
+      title: options.title,
+      description: buildClaudePermissionDescription(options),
       ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,

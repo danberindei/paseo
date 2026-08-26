@@ -1033,6 +1033,125 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  describe("permission request title and description", () => {
+    /**
+     * Drives one permission prompt through the canUseTool callback captured from the mocked query
+     * factory and returns the request the session published, so the assertions cover how the provider
+     * maps the callback arguments the test supplies.
+     */
+    async function requestThroughCanUseTool(
+      toolName: string,
+      input: Record<string, unknown>,
+      options: Record<string, unknown>,
+    ): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>["request"]> {
+      const { queryFactory } = createQueryMock();
+      const session = await new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+      const events: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => events.push(event));
+
+      try {
+        await session.startTurn("run the tool");
+        const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+        if (!canUseTool) throw new Error("Expected canUseTool callback");
+        canUseTool(toolName, input, { toolUseID: "tool-description", ...options }).catch(
+          () => undefined,
+        );
+
+        const requested = events.find(
+          (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+            event.type === "permission_requested",
+        );
+        if (!requested) throw new Error(`no permission was requested for ${toolName}`);
+        return requested.request;
+      } finally {
+        unsubscribe();
+        await session.close();
+      }
+    }
+
+    test("shows the SDK title plus the subtitle and the distinct reason", async () => {
+      const request = await requestThroughCanUseTool(
+        "Bash",
+        { command: "printf test" },
+        {
+          title: "Claude wants to run printf test",
+          description: "Run a shell command",
+          decisionReason:
+            "\u001b[33mHeredoc input to python3 -- cannot statically verify safety\u001b[0m",
+        },
+      );
+
+      expect(request.title).toBe("Claude wants to run printf test");
+      expect(request.description).toBe(
+        "Run a shell command\nHeredoc input to python3 -- cannot statically verify safety",
+      );
+    });
+
+    test("does not repeat a reason the subtitle already states", async () => {
+      const request = await requestThroughCanUseTool(
+        "Bash",
+        { command: "printf test" },
+        {
+          description: "Explicit ask rule",
+          decisionReason: "\u001b[33mExplicit ask rule\u001b[0m",
+        },
+      );
+
+      expect(request.description).toBe("Explicit ask rule");
+    });
+
+    test("keeps the AskUserQuestion summary over the SDK subtitle and reason", async () => {
+      const request = await requestThroughCanUseTool(
+        "AskUserQuestion",
+        {
+          questions: [
+            {
+              question: "Which library should we use?",
+              header: "Library",
+              options: [{ label: "date-fns" }, { label: "Luxon" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        {
+          title: "Claude wants to ask a question",
+          description: "Pick a library",
+          decisionReason: "\u001b[33mAskUserQuestion\u001b[0m",
+        },
+      );
+
+      expect(request.title).toBe("Which library should we use?");
+      expect(request.description).toBe("date-fns / Luxon");
+    });
+
+    test("passes the SDK subtitle through unchanged when there is no reason", async () => {
+      const padded = await requestThroughCanUseTool(
+        "Bash",
+        { command: "printf test" },
+        { description: "  Claude will read and write files in ~/Downloads\t" },
+      );
+      expect(padded.description).toBe("  Claude will read and write files in ~/Downloads\t");
+
+      const whitespaceOnly = await requestThroughCanUseTool(
+        "Bash",
+        { command: "printf test" },
+        { description: "   " },
+      );
+      expect(whitespaceOnly.description).toBe("   ");
+
+      const empty = await requestThroughCanUseTool(
+        "Bash",
+        { command: "printf test" },
+        { description: "" },
+      );
+      expect(empty.description).toBe("");
+    });
+  });
+
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
