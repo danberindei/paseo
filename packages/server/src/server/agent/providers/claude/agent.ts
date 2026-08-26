@@ -65,7 +65,11 @@ import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
 } from "./subagents/live-source.js";
-import { observeReplaySubagents, type ClaudeReplayParentFacts } from "./subagents/replay-source.js";
+import {
+  observeReplaySubagents,
+  type ClaudeReplayParentFacts,
+  type ClaudeReplayToolCall,
+} from "./subagents/replay-source.js";
 import { mapTaskStatus } from "./subagents/task-status.js";
 import type { ProviderSubagentStatus } from "../../provider-subagents/store.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
@@ -6798,7 +6802,7 @@ function labelReplayedSubagentCard(
 async function readClaudeReplayParentFacts(
   entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
 ): Promise<ClaudeReplayParentFacts> {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
+  const toolCalls = new Map<string, ClaudeReplayToolCall>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
@@ -6811,7 +6815,7 @@ async function readClaudeReplayParentFacts(
     if (!Array.isArray(content)) continue;
     for (const value of content) {
       const block = toObjectRecord(value);
-      const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
+      const declaration = readClaudeReplayTaskDeclaration(entry, block);
       if (declaration) toolCalls.set(declaration.id, declaration.identity);
       if (
         entry.type !== "user" ||
@@ -6838,14 +6842,14 @@ async function readClaudeReplayParentFacts(
 }
 
 function readClaudeReplayTaskDeclaration(
-  entryType: unknown,
+  entry: ClaudeHistoryEntry,
   block: Record<string, unknown> | undefined,
 ): {
   id: string;
-  identity: { title?: string; description?: string };
+  identity: ClaudeReplayToolCall;
 } | null {
   if (
-    entryType !== "assistant" ||
+    entry.type !== "assistant" ||
     block?.type !== "tool_use" ||
     (block.name !== "Task" && block.name !== "Agent") ||
     typeof block.id !== "string"
@@ -6854,9 +6858,16 @@ function readClaudeReplayTaskDeclaration(
   const input = toObjectRecord(block.input);
   const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
   const description = readNonEmptyString(input?.description);
+  const prompt = readNonEmptyString(input?.prompt);
+  const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
   return {
     id: block.id,
-    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
+    identity: {
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      ...(prompt ? { prompt } : {}),
+      ...(timestamp ? { timestamp } : {}),
+    },
   };
 }
 

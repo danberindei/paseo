@@ -129,6 +129,71 @@ describe("observeReplaySubagents", () => {
     expect(live.resolveSubagentId("resumed-tool")).toBe(TOOL_USE_ID);
   });
 
+  it("replays a one-shot transcript with its prompt, usage, and tool ownership", async () => {
+    const timestamp = "2026-07-26T06:27:47.034Z";
+    function* entries(): Generator<ClaudeReplayEntry> {
+      yield {
+        type: "assistant",
+        timestamp,
+        effort: "high",
+        message: {
+          model: "claude-opus-5",
+          usage: { input_tokens: 900, output_tokens: 100 },
+          content: [{ type: "tool_use", id: "bash-1", name: "Bash" }],
+          stop_reason: "end_turn",
+        },
+      };
+    }
+
+    const result = await observeReplaySubagents({
+      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: entries() }],
+      parent: {
+        ...emptyParent(),
+        toolCalls: new Map([
+          [TOOL_USE_ID, { prompt: "Inspect docs.", timestamp: "2026-07-26T06:27:40.000Z" }],
+        ]),
+      },
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    expect(result).toEqual({
+      toolOwners: new Map([["bash-1", TOOL_USE_ID]]),
+      restored: [
+        {
+          taskId: AGENT_ID,
+          id: TOOL_USE_ID,
+          presentation: {
+            model: "claude-opus-5",
+            effort: "high",
+            usage: { totalTokens: 1000 },
+          },
+        },
+      ],
+      observations: [
+        { kind: "declared", id: TOOL_USE_ID, toolCallId: TOOL_USE_ID, timestamp },
+        {
+          kind: "subtitle",
+          id: TOOL_USE_ID,
+          subtitle: "Opus 5 \u00b7 High \u00b7 1k tokens",
+          timestamp,
+        },
+        {
+          kind: "timeline",
+          id: TOOL_USE_ID,
+          item: { type: "user_message", text: "Inspect docs." },
+          timestamp: "2026-07-26T06:27:40.000Z",
+        },
+        {
+          kind: "timeline",
+          id: TOOL_USE_ID,
+          item: { type: "reasoning", text: "thinking" },
+          timestamp,
+        },
+        { kind: "status", id: TOOL_USE_ID, status: "completed", timestamp },
+      ],
+    });
+  });
+
   it("links a subagent to its Task call through meta.toolUseId", async () => {
     const observations = (
       await observeReplaySubagents({
@@ -410,6 +475,86 @@ describe("observeReplaySubagents", () => {
       id: TOOL_USE_ID,
       timestamp: "2026-07-26T06:27:47.034Z",
     });
+  });
+
+  it("opens the timeline with the Task prompt when the parent recorded one", async () => {
+    const parent = parentWithTaskCall();
+    parent.toolCalls.set(TOOL_USE_ID, {
+      ...parent.toolCalls.get(TOOL_USE_ID),
+      prompt: "Summarize the hover doc and the unistyles doc.",
+    });
+
+    const { observations } = await observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+        },
+      ],
+      parent,
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    const timelineObservations = observations.filter((o) => o.kind === "timeline");
+    expect(timelineObservations[0]).toMatchObject({
+      kind: "timeline",
+      id: TOOL_USE_ID,
+      item: { type: "user_message", text: "Summarize the hover doc and the unistyles doc." },
+      timestamp: "2026-07-26T06:27:47.034Z",
+    });
+    expect(timelineObservations[1]).toMatchObject({
+      kind: "timeline",
+      id: TOOL_USE_ID,
+      item: { type: "reasoning", text: "thinking" },
+    });
+  });
+
+  it("stamps the prompt opener with the parent's Task timestamp, not the child's first entry", async () => {
+    const parent = parentWithTaskCall();
+    parent.toolCalls.set(TOOL_USE_ID, {
+      ...parent.toolCalls.get(TOOL_USE_ID),
+      prompt: "Summarize the hover doc and the unistyles doc.",
+      timestamp: "2026-07-26T06:27:40.000Z",
+    });
+
+    const { observations } = await observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+        },
+      ],
+      parent,
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    const opener = observations.find((o) => o.kind === "timeline");
+    expect(opener).toMatchObject({
+      kind: "timeline",
+      id: TOOL_USE_ID,
+      item: { type: "user_message", text: "Summarize the hover doc and the unistyles doc." },
+      timestamp: "2026-07-26T06:27:40.000Z",
+    });
+  });
+
+  it("omits the prompt opener when the parent recorded no Task prompt", async () => {
+    const { observations } = await observeReplaySubagents({
+      subagents: [
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID },
+          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+        },
+      ],
+      parent: parentWithTaskCall(),
+      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+    });
+
+    expect(observations.some((o) => o.kind === "timeline" && o.item.type === "user_message")).toBe(
+      false,
+    );
   });
 });
 

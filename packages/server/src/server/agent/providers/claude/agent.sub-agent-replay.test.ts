@@ -286,6 +286,95 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test.each(["Task", "Agent"])(
+    "restores a missing %s prompt with the parent tool call timestamp",
+    async (toolName) => {
+      const prompt = "Summarize the hover doc and the unistyles doc.";
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: { prompt },
+            },
+          ]),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
+      });
+
+      const events = await replayDescriptors();
+      expect(
+        events.map((event) => event.event).filter((event) => event.type === "timeline"),
+      ).toEqual([
+        {
+          type: "timeline",
+          id: TOOL_USE_ID,
+          item: { type: "user_message", text: prompt },
+          timestamp: "2026-07-26T06:27:47.034Z",
+        },
+        {
+          type: "timeline",
+          id: TOOL_USE_ID,
+          item: { type: "assistant_message", text: "summary of the docs" },
+          timestamp: "2026-07-26T06:27:50.000Z",
+        },
+      ]);
+    },
+  );
+
+  test.each(["Task", "Agent"])(
+    "preserves an existing %s prompt without adding another opener",
+    async (toolName) => {
+      const prompt = "Summarize the hover doc and the unistyles doc.";
+      const timestamp = "2026-07-26T06:27:48.000Z";
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: { prompt },
+            },
+          ]),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [
+          JSON.stringify({
+            type: "user",
+            isSidechain: true,
+            agentId: AGENT_ID,
+            uuid: "child-prompt",
+            timestamp,
+            message: { role: "user", content: prompt },
+          }),
+          sidechainEntry({ stopReason: "end_turn" }),
+        ],
+      });
+
+      const events = await replayDescriptors();
+      expect(
+        events.map((event) => event.event).filter((event) => event.type === "timeline"),
+      ).toEqual([
+        {
+          type: "timeline",
+          id: TOOL_USE_ID,
+          item: { type: "user_message", text: prompt, messageId: "child-prompt" },
+          timestamp,
+        },
+        {
+          type: "timeline",
+          id: TOOL_USE_ID,
+          item: { type: "assistant_message", text: "summary of the docs" },
+          timestamp: "2026-07-26T06:27:50.000Z",
+        },
+      ]);
+    },
+  );
+
   test.each(["system", "user", "queue-operation"] as const)(
     "restores nested background notification ownership from %s history",
     async (form) => {

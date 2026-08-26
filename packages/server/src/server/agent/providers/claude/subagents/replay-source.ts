@@ -137,9 +137,16 @@ export interface ClaudeReplaySubagentInput {
   parentFacts?: ClaudeReplayParentFacts;
 }
 
+export interface ClaudeReplayToolCall {
+  title?: string;
+  description?: string;
+  prompt?: string;
+  timestamp?: string;
+}
+
 export interface ClaudeReplayParentFacts {
   /** Task `tool_use` id -> identity declared in the parent's tool input. */
-  toolCalls: ReadonlyMap<string, { title?: string; description?: string }>;
+  toolCalls: ReadonlyMap<string, ClaudeReplayToolCall>;
   /** agentId -> tool call, recovered by scraping tool-result text. Legacy fallback only. */
   linksByAgentId: ReadonlyMap<string, { toolCallId: string }>;
   /**
@@ -154,6 +161,13 @@ interface ParentLink {
   toolCallId: string;
   /** Terminal status recorded by the parent, or null when its Task has no outcome yet. */
   status: ProviderSubagentStatus | null;
+}
+
+interface ReplayPromptInput {
+  id: string;
+  toolCall: ClaudeReplayToolCall | undefined;
+  firstTimestamp: string | null;
+  firstItem: AgentTimelineItem | undefined;
 }
 
 /**
@@ -199,7 +213,7 @@ function resolveParentLink(
 function declareSubagent(
   subagent: ClaudeReplaySubagentInput,
   link: ParentLink,
-  toolCall: { title?: string; description?: string } | undefined,
+  toolCall: ClaudeReplayToolCall | undefined,
   parentSubagentId: string | undefined,
   firstTimestamp: string | null,
 ): SubagentObservation {
@@ -242,6 +256,20 @@ function observeSubtitle(
   };
 }
 
+function observePrompt(input: ReplayPromptInput): SubagentObservation | null {
+  if (!input.toolCall?.prompt || input.firstItem?.type === "user_message") return null;
+
+  // A missing opening prompt leaves the turn duration unknown. The parent's Task timestamp
+  // includes the time before the first response; preserve the child's prompt when it has one.
+  const timestamp = input.toolCall.timestamp ?? input.firstTimestamp;
+  return {
+    kind: "timeline",
+    id: input.id,
+    item: { type: "user_message", text: input.toolCall.prompt },
+    ...(timestamp ? { timestamp } : {}),
+  };
+}
+
 async function observeSubagent(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
@@ -253,7 +281,7 @@ async function observeSubagent(
   const link = resolveParentLink(subagent, parent);
   if (!link) return [];
   const toolCall = parent.toolCalls.get(link.toolCallId);
-  const timeline: SubagentObservation[] = [];
+  const timeline: Extract<SubagentObservation, { kind: "timeline" }>[] = [];
   const runtime: { model?: string; effort?: string } = {};
   let usage: ClaudeSubagentUsage | null = null;
   let firstTimestamp: string | null = null;
@@ -287,6 +315,15 @@ async function observeSubagent(
   });
   const subtitle = observeSubtitle(link, title, runtime, usage, lastTimestamp);
   if (subtitle) observations.push(subtitle);
+
+  const prompt = observePrompt({
+    id: link.id,
+    toolCall,
+    firstTimestamp,
+    firstItem: timeline[0]?.item,
+  });
+  if (prompt) observations.push(prompt);
+
   for (const observation of timeline) observations.push(observation);
   const terminalStatus = link.status ?? childTerminalStatus;
   if (terminalStatus) {
