@@ -4613,6 +4613,8 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
+      title: options.title,
+      description: options.description,
       ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,
