@@ -753,6 +753,18 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     version: z.number(),
     data: JsonWireValueSchema,
   }),
+  z.object({
+    type: z.literal("review_result"),
+    text: z.string(),
+    target: z
+      .discriminatedUnion("type", [
+        z.object({ type: z.literal("uncommittedChanges") }),
+        z.object({ type: z.literal("baseBranch"), branch: z.string() }),
+        z.object({ type: z.literal("commit"), sha: z.string(), title: z.string().nullable() }),
+        z.object({ type: z.literal("custom"), instructions: z.string() }),
+      ])
+      .optional(),
+  }),
 ]);
 
 export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [

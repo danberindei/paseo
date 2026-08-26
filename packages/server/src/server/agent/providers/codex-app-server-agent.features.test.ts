@@ -1,7 +1,8 @@
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
-import type { AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
+import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
+import { asInternals as castInternals } from "../../test-utils/class-mocks.js";
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
@@ -32,7 +33,29 @@ const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
   },
 ];
 
-type CodexFeaturesTestSession = AgentSession;
+interface CodexClientLike {
+  request: (method: string, ...rest: unknown[]) => Promise<unknown>;
+}
+
+interface CodexFeaturesInternals {
+  client: CodexClientLike | null;
+  connected: boolean;
+  currentThreadId: string | null;
+  ensureThreadLoaded: () => Promise<void>;
+  ensureThread: () => Promise<void>;
+  buildUserInput: (prompt: string) => Promise<unknown[]>;
+  resolveSlashCommandInvocation: (
+    prompt: string,
+  ) => Promise<{ commandName: string; args?: string } | null>;
+  handleNotification: (method: string, params: unknown) => void;
+}
+
+type CodexFeaturesTestSession = AgentSession & {
+  connected: boolean;
+  currentThreadId: string | null;
+  activeForegroundTurnId: string | null;
+  client: CodexClientLike | null;
+};
 
 interface CapturedLogEntry {
   level?: number;
@@ -61,6 +84,23 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     model: "gpt-5.4",
     ...overrides,
   };
+}
+
+function createSession(
+  configOverrides: Partial<AgentSessionConfig> = {},
+): CodexFeaturesTestSession {
+  return new CodexAppServerAgentSession(
+    createConfig(configOverrides),
+    null,
+    createTestLogger(),
+    () => {
+      throw new Error("Test session cannot spawn Codex app-server");
+    },
+  ) as CodexFeaturesTestSession;
+}
+
+function asInternals(session: CodexFeaturesTestSession): CodexFeaturesInternals {
+  return castInternals<CodexFeaturesInternals>(session);
 }
 
 function createSessionHarness(
@@ -97,6 +137,92 @@ async function createConnectedSession(
 }
 
 describe("Codex app-server provider features", () => {
+  test("startTurn routes built-in review slash commands through review/start", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "review/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    asInternals(session).client = { request };
+    asInternals(session).connected = true;
+    asInternals(session).currentThreadId = "thread-123";
+    asInternals(session).ensureThreadLoaded = vi.fn().mockResolvedValue(undefined);
+    asInternals(session).ensureThread = vi.fn().mockResolvedValue(undefined);
+    asInternals(session).buildUserInput = vi.fn().mockResolvedValue([{ type: "text", text: "hi" }]);
+    asInternals(session).resolveSlashCommandInvocation = vi
+      .fn()
+      .mockResolvedValue({ commandName: "review", args: "--base release/main" });
+
+    await session.startTurn("/review --base release/main");
+
+    expect(request).toHaveBeenCalledWith(
+      "review/start",
+      {
+        threadId: "thread-123",
+        target: {
+          type: "baseBranch",
+          branch: "release/main",
+        },
+        delivery: "inline",
+      },
+      expect.any(Number),
+    );
+    expect(asInternals(session).buildUserInput).not.toHaveBeenCalled();
+  });
+
+  test("startTurn routes built-in compact slash commands through thread/compact/start", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/compact/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    asInternals(session).client = { request };
+    asInternals(session).connected = true;
+    asInternals(session).currentThreadId = "thread-123";
+    asInternals(session).ensureThreadLoaded = vi.fn().mockResolvedValue(undefined);
+    asInternals(session).ensureThread = vi.fn().mockResolvedValue(undefined);
+    asInternals(session).buildUserInput = vi.fn().mockResolvedValue([{ type: "text", text: "hi" }]);
+    asInternals(session).resolveSlashCommandInvocation = vi
+      .fn()
+      .mockResolvedValue({ commandName: "compact" });
+
+    await session.startTurn("/compact");
+
+    expect(request).toHaveBeenCalledWith(
+      "thread/compact/start",
+      {
+        threadId: "thread-123",
+      },
+      expect.any(Number),
+    );
+    expect(asInternals(session).buildUserInput).not.toHaveBeenCalled();
+  });
+
+  test("thread/compacted notification completes an active compact command", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.activeForegroundTurnId = "turn-compact-1";
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "thread-456",
+      turnId: "native-compact-turn",
+    });
+
+    expect(session.currentThreadId).toBe("thread-456");
+    expect(session.activeForegroundTurnId).toBeNull();
+    expect(events).toContainEqual({
+      type: "turn_completed",
+      provider: CODEX_PROVIDER,
+      usage: undefined,
+      turnId: "turn-compact-1",
+    });
+  });
+
   test("features returns fast and plan toggles when supported", async () => {
     const { session } = await createConnectedSession();
 

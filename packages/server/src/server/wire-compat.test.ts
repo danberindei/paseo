@@ -184,6 +184,7 @@ function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
   directorySync?: DirectorySyncService;
   messages?: SessionOutboundMessage[];
+  onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
   rows?: AgentTimelineRow[];
 }): Session {
   const messages = options?.messages ?? [];
@@ -210,6 +211,7 @@ function createSessionForWireCompatTest(options?: {
     permissions: OWNER_PERMISSIONS,
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
+    ...(options?.onMessageToSource ? { onMessageToSource: options.onMessageToSource } : {}),
     logger: pino({ level: "silent" }),
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushNotifications: {} as SessionOptions["pushNotifications"],
@@ -539,5 +541,79 @@ describe("wire compatibility", () => {
       runSetup: false,
       paseoHome: "/tmp/paseo-home",
     });
+  });
+
+  test("timeline 'review_result' downgrades to 'assistant_message' on the general emit path", () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWireCompatTest({ clientCapabilities: null, messages });
+    const emit = (session as unknown as { emit(msg: SessionOutboundMessage): void }).emit.bind(
+      session,
+    );
+
+    const inputItem = {
+      type: "review_result",
+      text: "No issues found.",
+      target: { type: "uncommittedChanges" },
+    };
+    // The live agent_stream "timeline" event carries review_result, so the downgrade
+    // must run here too.
+    emit({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent-1",
+        event: { type: "timeline", provider: "codex", item: inputItem },
+        timestamp: "2026-07-22T00:00:00.000Z",
+      },
+    } as unknown as SessionOutboundMessage);
+
+    const outItem = (
+      messages[0] as { payload: { event: { item: { type: string; text: string } } } }
+    ).payload.event.item;
+    expect(outItem).toEqual({ type: "assistant_message", text: "No issues found." });
+    // Copy-on-write: the source object is untouched (it is shared server-side).
+    expect(inputItem.type).toBe("review_result");
+    // The downgraded item parses under the closed timeline union an old client validates against.
+    expect(AgentTimelineItemPayloadSchema.parse(outItem)).toEqual(outItem);
+  });
+
+  test("timeline 'review_result' downgrades to 'assistant_message' on the source-specific path", () => {
+    const sourceMessages: SessionOutboundMessage[] = [];
+    const source = {};
+    const session = createSessionForWireCompatTest({
+      clientCapabilities: null,
+      onMessageToSource: (_source, message) => sourceMessages.push(message),
+    });
+    session.updateClientCapabilities(null, source);
+
+    const emitForSource = (
+      session as unknown as {
+        emitForSource(msg: SessionOutboundMessage, source?: object): void;
+      }
+    ).emitForSource.bind(session);
+
+    const inputItem = {
+      type: "review_result",
+      text: "No issues found.",
+      target: { type: "uncommittedChanges" },
+    };
+    emitForSource(
+      {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-1",
+          event: { type: "timeline", provider: "codex", item: inputItem },
+          timestamp: "2026-07-22T00:00:00.000Z",
+        },
+      } as unknown as SessionOutboundMessage,
+      source,
+    );
+
+    const outItem = (
+      sourceMessages[0] as { payload: { event: { item: { type: string; text: string } } } }
+    ).payload.event.item;
+    expect(outItem).toEqual({ type: "assistant_message", text: "No issues found." });
+    // Copy-on-write: the source object is untouched (it is shared server-side).
+    expect(inputItem.type).toBe("review_result");
+    expect(AgentTimelineItemPayloadSchema.parse(outItem)).toEqual(outItem);
   });
 });

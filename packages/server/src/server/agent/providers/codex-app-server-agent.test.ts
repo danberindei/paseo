@@ -16,6 +16,7 @@ import type {
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
 import {
+  __codexAppServerInternals,
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
   CodexAppServerAgentSession,
@@ -1896,6 +1897,21 @@ describe("Codex app-server provider", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("lists built-in slash commands", () => {
+    expect(__codexAppServerInternals.listCodexBuiltInSlashCommands()).toEqual([
+      {
+        name: "compact",
+        description: "Compact the current Codex thread.",
+        argumentHint: "",
+      },
+      {
+        name: "review",
+        description: "Review changes with Codex's built-in review flow.",
+        argumentHint: "[--uncommitted | --base <branch> | --commit <sha> | <instructions>]",
+      },
+    ]);
   });
 
   const logger = createTestLogger();
@@ -4585,9 +4601,13 @@ describe("Codex app-server provider", () => {
 
     expect(events).toEqual([
       {
+        type: "turn_completed",
+        provider: "codex",
+        usage: undefined,
+      },
+      {
         type: "timeline",
         provider: "codex",
-        turnId: "legacy-compact-turn",
         item: {
           type: "compaction",
           status: "completed",
@@ -4613,22 +4633,14 @@ describe("Codex app-server provider", () => {
 
     expect(events).toEqual([
       {
-        type: "timeline",
+        type: "turn_completed",
         provider: "codex",
-        turnId: "legacy-compact-turn-1",
-        item: {
-          type: "compaction",
-          status: "completed",
-        },
+        usage: undefined,
       },
       {
-        type: "timeline",
+        type: "turn_completed",
         provider: "codex",
-        turnId: "legacy-compact-turn-2",
-        item: {
-          type: "compaction",
-          status: "completed",
-        },
+        usage: undefined,
       },
     ]);
   });
@@ -4721,7 +4733,7 @@ describe("Codex app-server provider", () => {
 
     await expect(session.listCommands?.()).resolves.toContainEqual({
       name: "compact",
-      description: "Summarize conversation to prevent hitting the context limit",
+      description: "Compact the current Codex thread.",
       argumentHint: "",
       kind: "command",
     });

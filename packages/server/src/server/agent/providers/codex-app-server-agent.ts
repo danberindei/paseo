@@ -17,6 +17,7 @@ import {
   type AgentProviderNotice,
   type AgentPromptContentBlock,
   type AgentPromptInput,
+  type AgentReviewTarget,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -242,6 +243,8 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
+const CODEX_REVIEW_COMMAND_NAME = "review";
+const CODEX_COMPACT_COMMAND_NAME = "compact";
 
 interface CodexAppServerClientLike {
   request(method: string, params?: unknown): Promise<unknown>;
@@ -273,6 +276,22 @@ interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
   approvalsReviewer?: "auto_review";
+}
+
+interface CodexBuiltInSlashCommandInvocation {
+  name: string;
+  payload?: Record<string, unknown>;
+}
+
+interface CodexBuiltInSlashCommandDefinition {
+  name: string;
+  description: string;
+  argumentHint: string;
+  parseInvocation: (args?: string) => CodexBuiltInSlashCommandInvocation;
+  invoke: (
+    session: CodexAppServerAgentSession,
+    invocation: CodexBuiltInSlashCommandInvocation,
+  ) => Promise<void>;
 }
 
 const MODE_PRESETS: Record<string, CodexModePreset> = {
@@ -765,6 +784,89 @@ export async function listCodexSkills(
 
   return Array.from(commandsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
+
+function listCodexBuiltInSlashCommands(): AgentSlashCommand[] {
+  return Array.from(CODEX_BUILT_IN_SLASH_COMMANDS.values())
+    .map((definition) => ({
+      name: definition.name,
+      description: definition.description,
+      argumentHint: definition.argumentHint,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function parseCodexBuiltInSlashCommandInvocation(
+  commandName: string,
+  args?: string,
+): CodexBuiltInSlashCommandInvocation | null {
+  return CODEX_BUILT_IN_SLASH_COMMANDS.get(commandName)?.parseInvocation(args) ?? null;
+}
+
+const CODEX_BUILT_IN_SLASH_COMMANDS = new Map<string, CodexBuiltInSlashCommandDefinition>([
+  [
+    CODEX_COMPACT_COMMAND_NAME,
+    {
+      name: CODEX_COMPACT_COMMAND_NAME,
+      description: "Compact the current Codex thread.",
+      argumentHint: "",
+      parseInvocation: () => ({ name: CODEX_COMPACT_COMMAND_NAME }),
+      invoke: async (session) => {
+        await session.requestBuiltInCompact();
+      },
+    },
+  ],
+  [
+    CODEX_REVIEW_COMMAND_NAME,
+    {
+      name: CODEX_REVIEW_COMMAND_NAME,
+      description: "Review changes with Codex's built-in review flow.",
+      argumentHint: "[--uncommitted | --base <branch> | --commit <sha> | <instructions>]",
+      parseInvocation: (args?: string) => {
+        const trimmedArgs = args?.trim() ?? "";
+        if (!trimmedArgs) {
+          return {
+            name: CODEX_REVIEW_COMMAND_NAME,
+            payload: { target: { type: "uncommittedChanges" } satisfies AgentReviewTarget },
+          };
+        }
+
+        const tokens = tokenizeCommandArgs(trimmedArgs);
+        if (tokens.length === 1 && tokens[0] === "--uncommitted") {
+          return {
+            name: CODEX_REVIEW_COMMAND_NAME,
+            payload: { target: { type: "uncommittedChanges" } satisfies AgentReviewTarget },
+          };
+        }
+        if (tokens.length === 2 && tokens[0] === "--base" && tokens[1]) {
+          return {
+            name: CODEX_REVIEW_COMMAND_NAME,
+            payload: {
+              target: { type: "baseBranch", branch: tokens[1] } satisfies AgentReviewTarget,
+            },
+          };
+        }
+        if (tokens.length === 2 && tokens[0] === "--commit" && tokens[1]) {
+          return {
+            name: CODEX_REVIEW_COMMAND_NAME,
+            payload: {
+              target: { type: "commit", sha: tokens[1], title: null } satisfies AgentReviewTarget,
+            },
+          };
+        }
+
+        return {
+          name: CODEX_REVIEW_COMMAND_NAME,
+          payload: {
+            target: { type: "custom", instructions: trimmedArgs } satisfies AgentReviewTarget,
+          },
+        };
+      },
+      invoke: async (session, invocation) => {
+        await session.requestBuiltInReview(invocation.payload?.target as AgentReviewTarget);
+      },
+    },
+  ],
+]);
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2108,6 +2210,13 @@ const TurnStartedNotificationSchema = z
   })
   .passthrough();
 
+const ThreadCompactedNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    turnId: z.string(),
+  })
+  .passthrough();
+
 const TurnCompletedNotificationSchema = z
   .object({
     threadId: z.string().optional(),
@@ -2402,6 +2511,7 @@ const CodexEventThreadRolledBackNotificationSchema = z
 
 type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
+  | { kind: "thread_compacted"; threadId: string; turnId: string }
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
       kind: "turn_completed";
@@ -2532,6 +2642,22 @@ const CodexNotificationSchema = z.union([
       }),
     ),
   z.object({ method: z.literal("thread/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({ method: z.literal("thread/compacted"), params: ThreadCompactedNotificationSchema })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "thread_compacted",
+        threadId: params.threadId,
+        turnId: params.turnId,
+      }),
+    ),
+  z.object({ method: z.literal("thread/compacted"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -3317,6 +3443,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingPermissionHandlers = new Map<string, CodexPendingPermissionHandler>();
   private resolvedPermissionRequests = new Set<string>();
   private pendingAgentMessages = new Map<string, string>();
+  private pendingReviewTarget: AgentReviewTarget | null = null;
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
@@ -4163,9 +4290,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
 
       const slashCommand = await this.resolveSlashCommandInvocation(prompt);
-      const effectivePrompt = slashCommand
-        ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
-        : prompt;
+      const builtInSlashCommand = slashCommand
+        ? parseCodexBuiltInSlashCommandInvocation(slashCommand.commandName, slashCommand.args)
+        : null;
 
       if (this.currentThreadId) {
         await this.ensureThreadLoaded();
@@ -4173,7 +4300,6 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.ensureThread();
       }
 
-      const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
@@ -4189,19 +4315,27 @@ export class CodexAppServerAgentSession implements AgentSession {
         resolve: resolveTurnIdentification,
       };
 
-      this.logTurnStartSummary({
-        turnId,
-        thinkingOptionId: turnStart.thinkingOptionId,
-        approvalPolicy: turnStart.approvalPolicy,
-        sandboxPolicyType: turnStart.sandboxPolicyType,
-        hasOutputSchema: turnStart.hasOutputSchema,
-        hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
-        hasCodexConfig: turnStart.hasCodexConfig,
-      });
-      if (pendingStart.cancelRequested) {
-        throw new Error("Codex turn start was interrupted before reaching Codex");
+      if (builtInSlashCommand) {
+        await this.startBuiltInSlashCommandTurn(builtInSlashCommand);
+      } else {
+        const effectivePrompt = slashCommand
+          ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
+          : prompt;
+        const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+        this.logTurnStartSummary({
+          turnId,
+          thinkingOptionId: turnStart.thinkingOptionId,
+          approvalPolicy: turnStart.approvalPolicy,
+          sandboxPolicyType: turnStart.sandboxPolicyType,
+          hasOutputSchema: turnStart.hasOutputSchema,
+          hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
+          hasCodexConfig: turnStart.hasCodexConfig,
+        });
+        if (pendingStart.cancelRequested) {
+          throw new Error("Codex turn start was interrupted before reaching Codex");
+        }
+        await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       }
-      await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
       this.pendingForegroundTurnIdentification?.resolve(null);
@@ -4215,6 +4349,52 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       pendingStart.resolve();
     }
+  }
+  private async startBuiltInSlashCommandTurn(
+    command: CodexBuiltInSlashCommandInvocation,
+  ): Promise<void> {
+    const definition = CODEX_BUILT_IN_SLASH_COMMANDS.get(command.name);
+    if (!definition) {
+      throw new Error(`Unknown Codex built-in slash command: ${command.name}`);
+    }
+    await definition.invoke(this, command);
+  }
+
+  async requestBuiltInReview(target: AgentReviewTarget): Promise<void> {
+    if (!this.client) {
+      throw new Error("Codex client not initialized");
+    }
+    this.pendingReviewTarget = target;
+    try {
+      await this.client.request(
+        "review/start",
+        {
+          threadId: this.currentThreadId,
+          target,
+          delivery: "inline",
+        },
+        TURN_START_TIMEOUT_MS,
+      );
+    } catch (error) {
+      // If review/start never lands we must clear the pending target; otherwise
+      // the next unrelated assistant_message would be misattributed as a review
+      // result (see the pendingReviewTarget check on the timeline path).
+      this.pendingReviewTarget = null;
+      throw error;
+    }
+  }
+
+  async requestBuiltInCompact(): Promise<void> {
+    if (!this.client) {
+      throw new Error("Codex client not initialized");
+    }
+    await this.client.request(
+      "thread/compact/start",
+      {
+        threadId: this.currentThreadId,
+      },
+      TURN_START_TIMEOUT_MS,
+    );
   }
 
   async steerActiveTurn(
@@ -4805,6 +4985,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async listCommands(): Promise<AgentSlashCommand[]> {
     const prompts = await listCodexCustomPrompts();
+    const builtIns = listCodexBuiltInSlashCommands();
     if (!this.connected) {
       await this.connect();
     } else {
@@ -4820,14 +5001,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.cachedSkills === null
         ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
         : [];
-    const builtin: AgentSlashCommand[] = [
-      {
-        name: "compact",
-        description: "Summarize conversation to prevent hitting the context limit",
-        argumentHint: "",
-        kind: "command",
-      },
-    ];
+    const builtin: AgentSlashCommand[] = builtIns.map(({ name, description, argumentHint }) => ({
+      name,
+      description,
+      argumentHint,
+      kind: "command" as const,
+    }));
     if (this.goalsEnabled) {
       builtin.push({
         name: "goal",
@@ -5215,6 +5394,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     switch (parsed.kind) {
       case "thread_started":
         this.handleThreadStartedNotification(parsed);
+        return;
+      case "thread_compacted":
+        this.handleThreadCompactedNotification(parsed);
         return;
       case "turn_started":
         this.handleTurnStartedNotification(parsed);
@@ -5831,6 +6013,20 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  private handleThreadCompactedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "thread_compacted" }>,
+  ): void {
+    this.currentThreadId = parsed.threadId;
+    this.currentTurnId = parsed.turnId;
+    this.emitEvent({
+      type: "turn_completed",
+      provider: CODEX_PROVIDER,
+      usage: this.latestUsage,
+    });
+    this.activeForegroundTurnId = null;
+    this.resetTurnTrackingState();
+  }
+
   private handleTurnStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_started" }>,
   ): void {
@@ -5896,6 +6092,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private resetTurnTrackingState(): void {
     this.latestPlanResult = null;
+    this.pendingReviewTarget = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
     this.emittedProviderSubagentUserMessageKeys.clear();
@@ -6287,6 +6484,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.applyBufferedDeltaTextToTimelineItem(timelineItem, itemId);
+    const finalItem = this.toReviewResultIfPending(timelineItem);
     if (timelineItem.type === "tool_call") {
       if (timelineItem.detail.type === "plan") {
         this.rememberPlanResult(timelineItem);
@@ -6298,7 +6496,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: finalItem });
     if (timelineItem.type === "assistant_message") {
       this.pendingAssistantMessageBoundary = true;
     }
@@ -6313,6 +6511,19 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingFileChangeOutputDeltas.delete(itemId);
     }
     this.replayPendingSubAgentNotifications(registeredChildThreadIds);
+  }
+
+  // A completed assistant message that answers an in-flight review request is
+  // rendered as a review_result card instead of a plain message.
+  private toReviewResultIfPending(timelineItem: AgentTimelineItem): AgentTimelineItem {
+    if (timelineItem.type === "assistant_message" && this.pendingReviewTarget) {
+      return {
+        type: "review_result",
+        text: timelineItem.text,
+        target: this.pendingReviewTarget,
+      };
+    }
+    return timelineItem;
   }
 
   private consumeStreamedTextCompletion(
@@ -7291,3 +7502,7 @@ function resolveSkillDescription(skill: Record<string, unknown>): string {
   }
   return "Skill";
 }
+
+export const __codexAppServerInternals = {
+  listCodexBuiltInSlashCommands,
+};

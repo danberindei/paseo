@@ -577,6 +577,61 @@ function parseClientCapabilities(
   return new Set(result);
 }
 
+// Structural copy-on-write rewrite used by the outbound wire-compat downgrades.
+// `rewriteNode` runs on every object node (top-down) and returns a replacement
+// object to swap the node out, or the same reference to leave it untouched; the
+// walk then recurses into the resulting node's own values. A node is only
+// reallocated when the transform or one of its descendants actually changed, so
+// unchanged subtrees are returned by reference and never mutated (they are
+// shared with server-side logic such as workspace bucketing).
+function rewriteOutbound<T>(
+  value: T,
+  rewriteNode: (node: Record<string, unknown>) => Record<string, unknown>,
+): T {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const mapped = rewriteOutbound(item, rewriteNode);
+      if (mapped !== item) {
+        changed = true;
+      }
+      return mapped;
+    });
+    return (changed ? next : value) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const replaced = rewriteNode(record);
+    let changed = replaced !== record;
+    const next: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(replaced)) {
+      const mapped = rewriteOutbound(item, rewriteNode);
+      if (mapped !== item) {
+        changed = true;
+      }
+      next[key] = mapped;
+    }
+    return (changed ? next : value) as T;
+  }
+  return value;
+}
+
+// COMPAT(reviewResult): added in v0.2.0. Old clients use a closed
+// AgentTimelineItem union and reject any timeline array carrying the unknown
+// "review_result" variant (the whole array fails inbound validation
+// client-side), which can freeze that agent's updates. Every "review_result"
+// item is rewritten to a plain "assistant_message" carrying the same text for
+// all clients, so the review still shows (matching the pre-feature behavior
+// where a review was just an assistant reply). Remove after 2027-01-22
+// once floor >= v0.2.0.
+function downgradeReviewResult<T>(value: T): T {
+  return rewriteOutbound(value, (node) =>
+    node.type === "review_result"
+      ? { type: "assistant_message", text: typeof node.text === "string" ? node.text : "" }
+      : node,
+  );
+}
+
 function sessionRequestId(message: SessionInboundMessage): string | null {
   if ("requestId" in message && typeof message.requestId === "string") {
     return message.requestId;
@@ -1206,7 +1261,7 @@ export class Session {
       if (isNotification && !capabilities.has(CLIENT_CAPS.timelineNotifications)) continue;
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
-        this.onMessageToSource(source, {
+        this.sendToSource(source, {
           type: "agent_attention_required",
           payload: {
             agentId: event.agentId,
@@ -1224,7 +1279,7 @@ export class Session {
       ) {
         continue;
       }
-      this.onMessageToSource(source, {
+      this.sendToSource(source, {
         type: "agent_stream",
         payload: this.buildAgentStreamPayload(event, serializedEvent),
       });
@@ -1264,7 +1319,7 @@ export class Session {
     }
     for (const [source, capabilities] of this.clientCapabilitiesBySource) {
       if (capabilities.has(CLIENT_CAPS.projectUpdates)) {
-        this.onMessageToSource(source, message);
+        this.sendToSource(source, message);
       }
     }
   }
@@ -2319,7 +2374,7 @@ export class Session {
           type: "agent.timeline.set_subscription.response",
           payload: { agentIds, requestId: msg.requestId },
         };
-        if (source && this.onMessageToSource) this.onMessageToSource(source, response);
+        if (source && this.onMessageToSource) this.sendToSource(source, response);
         else this.emit(response);
         return undefined;
       }
@@ -4060,7 +4115,7 @@ export class Session {
       const isSubscribed = this.viewedTimelineAgentIdsBySource.get(source)?.has(agentId) === true;
       if (supportsReplacement) {
         if (isSubscribed && !isInitiator) {
-          this.onMessageToSource(source, {
+          this.sendToSource(source, {
             type: "agent.timeline.replacement",
             payload: { agentId, epoch },
           });
@@ -7692,7 +7747,19 @@ export class Session {
   // transform to this pipeline (see the downgrade helpers near the top of the
   // file); with no gate active it returns the message unchanged.
   private applyOutboundCompat(msg: SessionOutboundMessage): SessionOutboundMessage {
-    return msg;
+    return this.applyReviewResultCompat(msg);
+  }
+
+  // COMPAT(reviewResult): added in v0.2.0. See downgradeReviewResult above.
+  // Downgraded unconditionally for every client: old clients use a closed
+  // AgentTimelineItem union and reject any timeline array carrying the unknown
+  // "review_result" variant, and the daemon has no per-message way to tell a
+  // capable client from a legacy one across every delivery path. The live
+  // "timeline" stream event also carries an AgentTimelineItem that can be a
+  // "review_result" variant, so the agent_stream path is downgraded here too.
+  // Remove after 2027-01-22 once floor >= v0.2.0.
+  private applyReviewResultCompat(msg: SessionOutboundMessage): SessionOutboundMessage {
+    return downgradeReviewResult(msg);
   }
 
   private emitBinary(frame: Uint8Array): void {
@@ -7716,10 +7783,17 @@ export class Session {
 
   private emitForSource(msg: SessionOutboundMessage, source?: object): void {
     if (source && this.onMessageToSource) {
-      this.onMessageToSource(source, msg);
+      this.sendToSource(source, msg);
       return;
     }
     this.emit(msg);
+  }
+
+  // Single choke point for direct per-source sends: applies the outbound
+  // wire-compat downgrades before handing the message to the source callback, so
+  // no source-specific path can leak a message shape a legacy client rejects.
+  private sendToSource(source: object, msg: SessionOutboundMessage): void {
+    this.onMessageToSource?.(source, this.applyOutboundCompat(msg));
   }
 
   /**
