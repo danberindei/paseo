@@ -28,6 +28,7 @@ import { useAgentControlCommandCenterActions } from "@/command-center/agent-cont
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
+import { DraftAgentProfileChips } from "@/composer/draft/agent-profile-chips";
 import {
   shouldAllowEmptyDraftText,
   validateDraftSubmission,
@@ -699,6 +700,22 @@ export function WorkspaceDraftAgentTab({
       </View>
 
       <KeyboardTranslateView style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
+        <DraftAgentProfileChips
+          serverId={serverId}
+          provider={composerState.selectedProvider}
+          effectiveModelId={composerState.effectiveModelId}
+          selectedMode={composerState.selectedMode}
+          effectiveThinkingOptionId={composerState.effectiveThinkingOptionId}
+          featureValues={composerState.featureValues}
+          providerDefinitionMap={composerState.providerDefinitionMap}
+          allProviderModels={composerState.allProviderModels}
+          availableModels={composerState.availableModels}
+          modeOptions={composerState.modeOptions}
+          modelSelectorProviders={composerState.modelSelectorProviders}
+          isModelLoading={composerState.isModelLoading}
+          isFeaturesLoading={composerState.isFeaturesLoading}
+          onApplyProfile={composerState.agentControls.onApplyAgentProfile}
+        />
         {importPillPress ? (
           <View style={styles.importPillRow}>
             <View style={styles.importPillContent}>
@@ -739,6 +756,7 @@ export function WorkspaceDraftAgentTab({
 const animatedStaticStyles = RNStyleSheet.create({
   inputAreaWrapper: {
     width: "100%",
+    flexShrink: 1,
   },
 });
 

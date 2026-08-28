@@ -49,6 +49,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
+  isFeaturesLoading: boolean;
   agentControls: DraftAgentControlsProps;
   commandDraftConfig: DraftCommandConfig | undefined;
 };
@@ -258,6 +259,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const {
     features: draftFeatures,
     featureValues: draftFeatureValues,
+    isLoading: isDraftFeaturesLoading,
     setFeatureValue: setDraftFeatureValue,
     applyProfileFeatureValues,
   } = useDraftAgentFeatures({
@@ -310,6 +312,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModelId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
+      isFeaturesLoading: isDraftFeaturesLoading,
       agentControls: buildDraftAgentControls({
         formState,
         features: draftFeatures,
@@ -325,6 +328,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveThinkingOptionId,
     draftFeatures,
     draftFeatureValues,
+    isDraftFeaturesLoading,
     applyDraftAgentProfile,
     formState,
     setDraftFeatureValue,

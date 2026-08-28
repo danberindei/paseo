@@ -41,6 +41,7 @@ import {
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
+export type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 
 export interface UseAgentFormStateOptions {
   initialServerId?: string | null;
