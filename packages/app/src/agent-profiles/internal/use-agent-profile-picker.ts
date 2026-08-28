@@ -14,6 +14,10 @@ import {
   type MaterializedAgentProfile,
 } from "./materialize-profile";
 import { buildAgentProfileTags } from "./profile-summary";
+import {
+  matchesAgentProfileDefaultSelection,
+  type AgentProfileDefaultSelection,
+} from "./default-match";
 import { useAgentProfiles } from "./use-agent-profiles";
 
 /** The draft composer owns profile application as one state transition. */
@@ -37,6 +41,7 @@ export interface AgentProfilePickerRow {
   name: string;
   /** "Claude Code · Opus 5 · Plan · Think hard" */
   summary: string;
+  matchesDefault: boolean;
 }
 
 export interface AgentProfilePicker {
@@ -54,6 +59,7 @@ export interface UseAgentProfilePickerInput {
    */
   availableProviders: readonly string[];
   target: AgentProfileApplyTarget;
+  defaultSelection?: AgentProfileDefaultSelection | null;
 }
 
 /**
@@ -65,7 +71,7 @@ export interface UseAgentProfilePickerInput {
 export function useAgentProfilePicker(
   input: UseAgentProfilePickerInput,
 ): AgentProfilePicker | null {
-  const { serverId, availableProviders, target } = input;
+  const { serverId, availableProviders, target, defaultSelection } = input;
   const { t } = useTranslation();
   const { profiles, isSupported } = useAgentProfiles(serverId);
   // Profiles are host config, so their labels read from the host-wide catalog
@@ -94,18 +100,28 @@ export function useAgentProfilePicker(
 
   const rows = useMemo<AgentProfilePickerRow[]>(
     () =>
-      applicableProfiles.map((profile) => ({
-        id: profile.id,
-        provider: profile.provider,
-        modelId: profile.model?.trim() ?? "",
-        icon: profile.icon ?? "",
-        color: profile.color ?? "",
-        name: profile.name,
-        summary: buildAgentProfileTags({ profile, entries, formatFeatureCount })
-          .map((tag) => tag.label)
-          .join(" · "),
-      })),
-    [applicableProfiles, entries, formatFeatureCount],
+      applicableProfiles.map((profile) => {
+        const materialized = materializeAgentProfile(profile);
+        const matchesDefault = defaultSelection
+          ? matchesAgentProfileDefaultSelection({
+              profile: materialized,
+              selection: defaultSelection,
+            })
+          : false;
+        return {
+          id: profile.id,
+          provider: profile.provider,
+          modelId: profile.model?.trim() ?? "",
+          icon: profile.icon ?? "",
+          color: profile.color ?? "",
+          name: profile.name,
+          summary: buildAgentProfileTags({ profile, entries, formatFeatureCount })
+            .map((tag) => tag.label)
+            .join(" · "),
+          matchesDefault,
+        };
+      }),
+    [applicableProfiles, entries, formatFeatureCount, defaultSelection],
   );
 
   const persistSelection = useCallback(

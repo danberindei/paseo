@@ -58,6 +58,9 @@ type DraftComposerState = UseAgentFormStateResult & {
   providerOptions: Record<string, unknown> | undefined;
   /** What plugins set on the agent this draft creates. */
   metadata: Record<string, JsonValue>;
+  isProviderOptionsLoading: boolean;
+  /** The option keys the daemon listed for the draft's current request. */
+  drawnOptionKeys: readonly string[];
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -293,6 +296,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     optionControls: draftOptionControls,
     options: draftOptions,
     shownOptions: draftShownOptions,
+    isLoading: isProviderOptionsLoading,
+    drawnOptionKeys,
     setOption: setDraftOption,
     retainLegacyUltracode,
     applyProfile: applyProfileOptions,
@@ -355,6 +360,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveThinkingOptionId,
       providerOptions: draftOptions,
       metadata,
+      isProviderOptionsLoading,
+      drawnOptionKeys,
       agentControls: buildDraftAgentControls({
         formState: draftForm,
         effectiveModelId,
@@ -379,6 +386,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     draftShownOptions,
     setDraftOption,
     setDraftThinking,
+    isProviderOptionsLoading,
+    drawnOptionKeys,
     applyDraftAgentProfile,
     formState,
     metadata,

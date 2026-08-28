@@ -25,6 +25,7 @@ import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
+import { DraftAgentProfileChips } from "@/composer/draft/agent-profile-chips";
 import {
   resolveDraftWorkingDirectory,
   shouldAllowEmptyDraftText,
@@ -557,6 +558,23 @@ export function WorkspaceDraftComposer({
           </View>
         </View>
       ) : null}
+      <DraftAgentProfileChips
+        serverId={serverId}
+        provider={composerState.selectedProvider}
+        effectiveModelId={composerState.effectiveModelId}
+        selectedMode={composerState.selectedMode}
+        effectiveThinkingOptionId={composerState.effectiveThinkingOptionId}
+        providerOptions={composerState.providerOptions}
+        drawnOptionKeys={composerState.drawnOptionKeys}
+        providerDefinitionMap={composerState.providerDefinitionMap}
+        allProviderModels={composerState.allProviderModels}
+        availableModels={composerState.availableModels}
+        modeOptions={composerState.modeOptions}
+        modelSelectorProviders={composerState.modelSelectorProviders}
+        isModelLoading={composerState.isModelLoading}
+        isProviderOptionsLoading={composerState.isProviderOptionsLoading}
+        onApplyProfile={composerState.agentControls.onApplyAgentProfile}
+      />
       {importPillPress && !isComposerFullscreen ? (
         <View style={styles.importPillRow} dataSet={CHAT_COLUMN_RAIL_DATASET}>
           <View style={styles.importPillContent}>

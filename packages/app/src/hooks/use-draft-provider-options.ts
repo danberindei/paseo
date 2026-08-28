@@ -78,7 +78,7 @@ export function useDraftProviderOptions(input: {
     [model, requestKey, thinkingOptionId],
   );
 
-  const { data } = useFetchQuery({
+  const { data, isLoading } = useFetchQuery({
     queryKey,
     dataShape: "value",
     staleTimeMs: 5 * 60 * 1000,
@@ -129,6 +129,11 @@ export function useDraftProviderOptions(input: {
     [setOption, viewControls, viewOptions],
   );
 
+  // The control keys the daemon listed for the current request. The model keeps the last
+  // answer up while a newer one is in flight, so the view can name a previous model's keys;
+  // the selection must only compare against the answer that is actually current.
+  const drawnOptionKeys = useMemo(() => data?.controls.map((control) => control.key) ?? [], [data]);
+
   // What the draft will create with, the plugin's own edits included, before the daemon answers.
   const shownOptions = shownDraftOptions(state, { provider, requestKey });
 
@@ -136,6 +141,8 @@ export function useDraftProviderOptions(input: {
     optionControls,
     options: ownOptions,
     shownOptions,
+    isLoading,
+    drawnOptionKeys,
     setOption,
     retainLegacyUltracode,
     applyProfile: model.applyProfile,

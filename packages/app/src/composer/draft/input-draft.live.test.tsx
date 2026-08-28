@@ -31,6 +31,16 @@ vi.mock("@/attachments/service", () => ({
   garbageCollectAttachments: async () => undefined,
 }));
 
+const hostRuntime = vi.hoisted(() => ({
+  client: null as { listProviderControls: (request: unknown) => Promise<unknown> } | null,
+  isConnected: false,
+}));
+
+vi.mock("@/runtime/host-runtime", () => ({
+  useHostRuntimeClient: () => hostRuntime.client,
+  useHostRuntimeIsConnected: () => hostRuntime.isConnected,
+}));
+
 vi.mock("@/hooks/use-agent-form-state", () => ({
   useAgentFormState: () => ({
     selectedServerId: "host-1",
@@ -139,6 +149,8 @@ describe("useAgentInputDraft live contract", () => {
     asyncStorage.clear();
     document.body.innerHTML = "<div id='root'></div>";
     localStorage.clear();
+    hostRuntime.client = null;
+    hostRuntime.isConnected = false;
 
     useDraftStore.setState({
       drafts: {},
@@ -195,6 +207,9 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     expect(getLatest().composerState?.agentControls.selectedProvider).toBe("codex");
+    // The request cannot start without a host client; a disabled request is not loading.
+    expect(getLatest().composerState?.isProviderOptionsLoading).toBe(false);
+    expect(getLatest().composerState?.drawnOptionKeys).toEqual([]);
     expect(getLatest().composerState?.commandDraft).toEqual({
       status: "ready",
       config: {
@@ -244,6 +259,53 @@ describe("useAgentInputDraft live contract", () => {
 
     expect(getLatest().textSource.getSnapshot()).toBe("hello world");
     expect(getLatest().attachments).toEqual([{ kind: "image", metadata: image }]);
+  });
+
+  it("reports provider options loading only while the current request is in flight", async () => {
+    let resolveControls: ((payload: unknown) => void) | null = null;
+    const controls = new Promise<unknown>((resolve) => {
+      resolveControls = resolve;
+    });
+    hostRuntime.client = { listProviderControls: () => controls };
+    hostRuntime.isConnected = true;
+
+    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
+    function getLatest(): ReturnType<typeof useAgentInputDraft> {
+      if (!latest) throw new Error("Expected hook result");
+      return latest;
+    }
+    const isLoading = () => getLatest().composerState?.isProviderOptionsLoading;
+    function Probe() {
+      latest = useAgentInputDraft({
+        draftKey: "draft:loading",
+        composer: { initialServerId: "host-1", isVisible: true, lockedWorkingDir: "/repo" },
+      });
+      return null;
+    }
+
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing root container");
+    const root = createTestRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <Probe />
+        </QueryClientProvider>,
+      );
+    });
+
+    await act(async () => {
+      await expect.poll(isLoading).toBe(true);
+    });
+
+    await act(async () => {
+      resolveControls?.({ controls: [], options: {} });
+      await expect.poll(isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
   });
 
   it("migrates legacy image drafts to image attachments on hydration", async () => {

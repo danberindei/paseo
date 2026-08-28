@@ -40,6 +40,7 @@ import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
+export type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 
 export interface UseAgentFormStateOptions {
   serverId: string | null;
