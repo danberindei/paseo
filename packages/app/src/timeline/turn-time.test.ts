@@ -75,6 +75,25 @@ describe("deriveStreamTurnTiming", () => {
     });
   });
 
+  it("times a turn with no user anchor from its last item, leaving start and duration unknown", () => {
+    const firstAssistantAt = new Date("2026-05-15T00:00:03.000Z");
+    const lastAssistantAt = new Date("2026-05-15T00:00:07.000Z");
+
+    const timing = deriveStreamTurnTiming({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: [assistant("a1", firstAssistantAt), assistant("a2", lastAssistantAt)],
+      head: [],
+    });
+
+    const expected = {
+      completedAt: lastAssistantAt,
+      durationMs: null,
+    };
+    assert.deepEqual(timing.byAssistantId.get("a1"), expected);
+    assert.deepEqual(timing.byAssistantId.get("a2"), expected);
+  });
+
   it("maps multiple assistant chunks in one turn to the same timing", () => {
     const userAt = new Date("2026-05-15T00:00:00.000Z");
     const firstAssistantAt = new Date("2026-05-15T00:00:03.000Z");
