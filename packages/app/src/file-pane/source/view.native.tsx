@@ -5,6 +5,7 @@ import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
+import { computeHighlightedLineRange } from "./highlighted-line-range";
 import { selectSourcePresentation } from "./presentation";
 
 interface FileSourceViewProps {
@@ -20,6 +21,7 @@ interface FileSourceViewProps {
 interface SourceLine {
   number: number;
   tokens: HighlightToken[];
+  highlighted: boolean;
 }
 
 export function FileSourceView({
@@ -60,15 +62,26 @@ function VirtualizedSource({
 }) {
   const listRef = useRef<FlatList<SourceLine>>(null);
   const lines = useMemo(() => {
-    if (presentation === "highlighted")
-      return highlightCode(content, filename).map((tokens, index) => ({
-        number: index + 1,
-        tokens,
-      }));
-    return content
-      .split("\n")
-      .map((text, index) => ({ number: index + 1, tokens: [{ text, style: null }] }));
-  }, [content, filename, presentation]);
+    const rawLines =
+      presentation === "highlighted"
+        ? highlightCode(content, filename).map((tokens, index) => ({
+            number: index + 1,
+            tokens,
+          }))
+        : content
+            .split("\n")
+            .map((text, index) => ({ number: index + 1, tokens: [{ text, style: null }] }));
+    const range = computeHighlightedLineRange(
+      location.lineStart,
+      location.lineEnd,
+      rawLines.length,
+    );
+    return rawLines.map((line) => ({
+      number: line.number,
+      tokens: line.tokens,
+      highlighted: range !== null && line.number >= range.start && line.number <= range.end,
+    }));
+  }, [content, filename, presentation, location.lineStart, location.lineEnd]);
   useEffect(() => {
     if (!location.lineStart) return;
     listRef.current?.scrollToIndex({
@@ -76,7 +89,7 @@ function VirtualizedSource({
       animated: false,
       viewPosition: 0.5,
     });
-  }, [lines.length, location.lineStart, navigationRevision]);
+  }, [lines.length, location.lineStart, location.lineEnd, navigationRevision]);
   return (
     <FlatList
       ref={listRef}
@@ -92,7 +105,7 @@ function VirtualizedSource({
 
 function SourceLineView({ line }: { line: SourceLine }) {
   return (
-    <View style={styles.line}>
+    <View style={[styles.line, line.highlighted && styles.lineHighlighted]}>
       <Text style={styles.gutter}>{line.number}</Text>
       <Text selectable style={styles.text}>
         {line.tokens.map((token) => (
@@ -124,6 +137,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
   line: { flexDirection: "row", minHeight: theme.fontSize.code * 1.45 },
+  lineHighlighted: { backgroundColor: theme.colors.terminal.selectionBackground },
   gutter: {
     width: 56,
     paddingRight: theme.spacing[3],
