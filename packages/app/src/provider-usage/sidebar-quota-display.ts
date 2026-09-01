@@ -282,35 +282,22 @@ function getElapsedFraction(window: QuotaWindowView, now: number): number | null
   return elapsedFraction > 0 ? elapsedFraction : null;
 }
 
-function getExpectedRemainingPercent(window: QuotaWindowView, now: number): number | null {
-  const elapsedFraction = getElapsedFraction(window, now);
-  if (elapsedFraction == null) {
-    return null;
-  }
-  return Math.max(0, 100 - elapsedFraction * 100);
+// Tone boundary curve: the used-fraction threshold at elapsed fraction t for a
+// given leak e. Linear-fractional form through (0, e), (TONE_MID_T, e + TONE_MID_T),
+// (1, 1), so every tone shares one shape and differs only by e.
+const TONE_MID_T = 0.9;
+function toneBoundary(t: number, e: number): number {
+  const c = e / (1 - TONE_MID_T - e);
+  const a = c + 1 - e;
+  return (a * t + e) / (c * t + 1);
 }
 
-// Pace score = (1 - u) / (1 - t): remaining quota as a multiple of the remaining
-// time, where u is the fraction used and t the fraction elapsed.
-// Score > 1 means under pace, score < 1 means over pace, score = 1 means on pace.
-function getPaceScore(window: QuotaWindowView, now: number): number | null {
-  const remainingPercent = getWindowRemainingPercent(window);
-  const expectedRemainingPercent = getExpectedRemainingPercent(window, now);
-
-  if (
-    remainingPercent == null ||
-    expectedRemainingPercent == null ||
-    expectedRemainingPercent <= 0
-  ) {
-    return null;
-  }
-
-  return remainingPercent / expectedRemainingPercent;
-}
-
-// Tone reflects how fast the window is being spent, graded by the pace score.
-// Past its reset a window is stale (muted); with no utilization data or at the
-// very end of the window the signal is too noisy to grade, so it stays neutral.
+// Tone compares the used fraction u against the boundary curves at elapsed
+// fraction t: at or above the red curve (e = 0.06) is red, else at or above the
+// amber curve (e = 0.03) is amber, else at or below the purple curve (e = -0.12)
+// is purple. Past its reset a window is stale (muted); before any time has
+// elapsed or without the data to place it (utilization, duration, reset) it
+// stays neutral.
 // (ProviderUsageWindow.tone is ignored: providers derive it from usedPct, so it
 // adds nothing here.)
 export function getWindowTone(window: QuotaWindowView, now: number): WindowTone {
@@ -318,17 +305,19 @@ export function getWindowTone(window: QuotaWindowView, now: number): WindowTone 
     return "muted";
   }
 
-  const paceScore = getPaceScore(window, now);
-  if (paceScore == null) {
+  const t = getElapsedFraction(window, now);
+  if (t == null || typeof window.utilization !== "number") {
     return "neutral";
   }
-  if (paceScore < 0.6) {
+
+  const u = window.utilization / 100;
+  if (u >= toneBoundary(t, 0.06)) {
     return "red";
   }
-  if (paceScore < 0.9) {
+  if (u >= toneBoundary(t, 0.03)) {
     return "amber";
   }
-  if (paceScore > 1.9) {
+  if (u <= toneBoundary(t, -0.12)) {
     return "purple";
   }
   return "neutral";

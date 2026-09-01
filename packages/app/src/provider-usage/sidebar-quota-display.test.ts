@@ -127,13 +127,13 @@ describe("getWindowTone", () => {
     expect(getWindowTone(v, NOW)).toBe("muted");
   });
 
-  it("returns red when the pace score is far below the expected pace", () => {
+  it("returns red when used is at or above the red boundary", () => {
     const v = view({ id: "five_hour", usedPct: 90, resetsAt: iso(2.5 * HOUR) });
     expect(getWindowTone(v, NOW)).toBe("red");
   });
 
-  it("returns amber when the score is over pace but not yet red", () => {
-    const v = view({ id: "five_hour", usedPct: 69, resetsAt: iso(2.5 * HOUR) });
+  it("returns amber when used is between the amber and red boundaries", () => {
+    const v = view({ id: "five_hour", usedPct: 65, resetsAt: iso(2.5 * HOUR) });
     expect(getWindowTone(v, NOW)).toBe("amber");
   });
 
@@ -142,7 +142,7 @@ describe("getWindowTone", () => {
     expect(getWindowTone(v, NOW)).toBe("purple");
   });
 
-  it("stays neutral when the score is near one", () => {
+  it("stays neutral when used sits between the purple and amber boundaries", () => {
     const v = view({ id: "five_hour", usedPct: 50, resetsAt: iso(2.5 * HOUR) });
     expect(getWindowTone(v, NOW)).toBe("neutral");
   });
