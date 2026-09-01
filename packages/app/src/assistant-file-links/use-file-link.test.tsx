@@ -243,6 +243,48 @@ describe("useFileLink", () => {
     });
   });
 
+  it("gives each link its own line number from a shared basename resolution", async () => {
+    const getDirectorySuggestions = vi.fn(async () =>
+      resolvedSuggestions([{ path: "docs/file.ts", kind: "file" }]),
+    );
+    const openedFiles: OpenedFile[] = [];
+    const withLine = { href: "file.ts:12", text: "file.ts:12", sourceType: "inline-code" as const };
+    const withOtherLine = {
+      href: "file.ts:99",
+      text: "file.ts:99",
+      sourceType: "inline-code" as const,
+    };
+    const withoutLine = { href: "file.ts", text: "file.ts", sourceType: "inline-code" as const };
+    const { result } = renderHook(
+      () => ({
+        withLine: useFileLink(withLine),
+        withOtherLine: useFileLink(withOtherLine),
+        withoutLine: useFileLink(withoutLine),
+      }),
+      {
+        wrapper: createWrapper({
+          client: { getDirectorySuggestions },
+          openedFiles,
+        }),
+      },
+    );
+
+    act(() => {
+      result.current.withLine.onHoverIn();
+      result.current.withOtherLine.onHoverIn();
+      result.current.withoutLine.onHoverIn();
+    });
+    await waitFor(() => {
+      expect(result.current.withLine.target?.lineStart).toBe(12);
+      expect(result.current.withOtherLine.target?.lineStart).toBe(99);
+      expect(result.current.withoutLine.target?.lineStart).toBeUndefined();
+    });
+    expect(result.current.withLine.target?.path).toBe("/Users/test/project/docs/file.ts");
+    expect(result.current.withOtherLine.target?.path).toBe("/Users/test/project/docs/file.ts");
+    expect(result.current.withoutLine.target?.path).toBe("/Users/test/project/docs/file.ts");
+    expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
+  });
+
   it("hover then click uses the prefetched result", async () => {
     const getDirectorySuggestions = vi.fn(async () =>
       resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]),

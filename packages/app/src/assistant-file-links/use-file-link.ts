@@ -74,7 +74,6 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
       return fetchDaemonResolution({
         ambiguousQuery: resolution.ambiguousQuery,
         token: resolution.token,
-        target: resolution.target,
         workspaceRoot,
         getDirectorySuggestions: context.getDirectorySuggestions,
       });
@@ -107,7 +106,6 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
         fetchDaemonResolution({
           ambiguousQuery: resolution.ambiguousQuery,
           token: resolution.token,
-          target: resolution.target,
           workspaceRoot,
           getDirectorySuggestions: context.getDirectorySuggestions,
         }),
@@ -124,7 +122,7 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     if (resolution.kind === "resolved") {
       return resolution.value.kind === "file" ? resolution.value.target : null;
     }
-    return query.data ?? null;
+    return query.data ? { ...resolution.target, path: query.data } : null;
   }, [query.data, resolution]);
 
   return useMemo(() => ({ target, onHoverIn, onPress, open }), [target, onHoverIn, onPress, open]);
@@ -184,13 +182,12 @@ function openAssistantFileLink(input: {
 
   const run = async () => {
     try {
-      const target = await input.queryClient.fetchQuery({
+      const path = await input.queryClient.fetchQuery({
         queryKey: capturedQueryKey,
         queryFn: () =>
           fetchDaemonResolution({
             ambiguousQuery: capturedResolution.ambiguousQuery,
             token: capturedResolution.token,
-            target: capturedResolution.target,
             workspaceRoot: capturedConfig.workspaceRoot,
             getDirectorySuggestions: input.context.getDirectorySuggestions,
           }),
@@ -198,7 +195,7 @@ function openAssistantFileLink(input: {
         staleTime: Infinity,
       });
       await dispatchFileTarget({
-        target,
+        target: { ...capturedResolution.target, path },
         disposition: input.disposition,
         capturedServerId: capturedConfig.serverId,
         capturedWorkspaceRoot: capturedConfig.workspaceRoot,

@@ -902,13 +902,13 @@ export function TerminalPane({
         return null;
       }
       try {
-        return await fetchDaemonResolution({
+        const path = await fetchDaemonResolution({
           ambiguousQuery: resolution.ambiguousQuery,
           token: resolution.token,
-          target: resolution.target,
           workspaceRoot: cwd,
           getDirectorySuggestions: (input) => client.getDirectorySuggestions(input),
         });
+        return { ...resolution.target, path };
       } catch {
         return null;
       }

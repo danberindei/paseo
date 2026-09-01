@@ -55,7 +55,6 @@ export type AssistantFileLinkResolution =
 export interface FetchDaemonResolutionInput {
   ambiguousQuery: string;
   token: string;
-  target: InlinePathTarget;
   workspaceRoot?: string;
   getDirectorySuggestions: GetDirectorySuggestions;
 }
@@ -70,10 +69,9 @@ export class UnresolvedFileLinkError extends Error {
 export async function fetchDaemonResolution({
   ambiguousQuery,
   token,
-  target,
   workspaceRoot,
   getDirectorySuggestions,
-}: FetchDaemonResolutionInput): Promise<InlinePathTarget> {
+}: FetchDaemonResolutionInput): Promise<string> {
   const trimmedRoot = workspaceRoot?.trim();
   if (!trimmedRoot) {
     throw new UnresolvedFileLinkError(token);
@@ -98,10 +96,7 @@ export async function fetchDaemonResolution({
     throw new UnresolvedFileLinkError(token);
   }
 
-  return {
-    ...target,
-    path: joinWorkspacePath(trimmedRoot, match.path),
-  };
+  return joinWorkspacePath(trimmedRoot, match.path);
 }
 
 export function classifyForResolution(
