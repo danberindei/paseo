@@ -30,6 +30,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 
 type Side = "top" | "bottom" | "left" | "right";
 type Align = "start" | "center" | "end";
@@ -249,6 +250,22 @@ export function Tooltip({
 
   const isCompact = useIsCompactFormFactor();
   const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
+
+  // A trigger scrolled out from under a still cursor never fires pointerleave,
+  // so scroll closes the tooltip too. Capture: scroll doesn't bubble.
+  const retainedPanelActive = useRetainedPanelActive();
+  useEffect(() => {
+    if (!isWeb || typeof window === "undefined" || !isOpen) return;
+    const close = () => setIsOpen(false);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [isOpen, setIsOpen]);
+
+  // A hidden tab keeps this mounted (display:none); the content portals outside
+  // that subtree and escapes the hide. Close when the panel goes inactive.
+  useEffect(() => {
+    if (!retainedPanelActive && isOpen) setIsOpen(false);
+  }, [retainedPanelActive, isOpen, setIsOpen]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
