@@ -268,6 +268,15 @@ export function Tooltip({
     if (!active && isOpen) setIsOpen(false);
   }, [active, isOpen, setIsOpen]);
 
+  // A trigger scrolled out from under a still cursor never fires pointerleave,
+  // so scroll closes the tooltip too. Capture: scroll doesn't bubble.
+  useEffect(() => {
+    if (!isWeb || typeof window === "undefined" || !isOpen) return;
+    const close = () => setIsOpen(false);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [isOpen, setIsOpen]);
+
   const value = useMemo<TooltipContextValue>(
     () => ({
       open: isOpen,
