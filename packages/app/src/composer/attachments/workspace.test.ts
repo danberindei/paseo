@@ -1,11 +1,48 @@
-import { describe, expect, it } from "vitest";
+/** @vitest-environment jsdom */
+import { act } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   buildDraftWorkspaceAttachmentScopeKey,
   resetWorkspaceAttachmentsStore,
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
+import { composerWorkspaceAttachment } from "./workspace";
 import { removeSentContextAttachments } from "./workspace-cleanup";
+
+// jsdom has no matchMedia; react-native-web's layout hooks read it at import.
+vi.hoisted(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: "",
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
+// react-native-unistyles does not load under this suite's jsdom graph.
+vi.mock("react-native-unistyles", () => ({
+  StyleSheet: { create: <T>(styles: T) => styles },
+  withUnistyles: <T>(Component: T) => Component,
+  useUnistyles: () => ({ theme: {}, rt: {}, breakpoint: undefined }),
+}));
+// Neither does lucide-react-native.
+vi.mock("lucide-react-native", () => ({
+  CircleDot: () => null,
+  FileText: () => null,
+  GitPullRequest: () => null,
+  MessageSquareCode: () => null,
+  MousePointer2: () => null,
+  X: () => null,
+}));
 
 function chatHistoryAttachment(): WorkspaceComposerAttachment {
   return {
@@ -68,5 +105,54 @@ describe("workspace composer attachment cleanup", () => {
     removeSentContextAttachments([chatHistory, pullRequestContext, browserElement]);
 
     expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey]).toBeUndefined();
+  });
+});
+
+describe("workspace composer attachment binding", () => {
+  it("expands a tapped chat history pill into composer text and removes the pill", () => {
+    resetWorkspaceAttachmentsStore();
+    const scopeKey = buildDraftWorkspaceAttachmentScopeKey("draft-1");
+    const chatHistory = chatHistoryAttachment();
+    useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+      scopeKey,
+      attachments: [chatHistory],
+    });
+    const onExpandChatHistoryAttachment = vi.fn();
+    const onOpenWorkspaceAttachment = vi.fn();
+    const { result } = renderHook(() =>
+      composerWorkspaceAttachment.useBinding({
+        normalAttachments: [],
+        workspaceAttachments: [chatHistory],
+        onOpenWorkspaceAttachment,
+        onExpandChatHistoryAttachment,
+      }),
+    );
+
+    let opened = false;
+    act(() => {
+      opened = result.current.openAttachment({ attachment: chatHistory });
+    });
+
+    expect(opened).toBe(true);
+    expect(onExpandChatHistoryAttachment).toHaveBeenCalledWith("Previous chat.");
+    expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey]).toBeUndefined();
+    expect(onOpenWorkspaceAttachment).not.toHaveBeenCalled();
+  });
+
+  it("leaves browser element pills inert on tap", () => {
+    const browserElement = browserElementAttachment();
+    const { result } = renderHook(() =>
+      composerWorkspaceAttachment.useBinding({
+        normalAttachments: [],
+        workspaceAttachments: [browserElement],
+      }),
+    );
+
+    let opened = true;
+    act(() => {
+      opened = result.current.openAttachment({ attachment: browserElement });
+    });
+
+    expect(opened).toBe(false);
   });
 });

@@ -3623,6 +3623,7 @@ export class Session {
       const { provisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
+        attachments,
       });
 
       const firstAgentContext: FirstAgentContext = {
@@ -7493,6 +7494,7 @@ export class Session {
           ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
           : null,
         boundaryMessageId: msg.boundaryMessageId,
+        agentId: msg.agentId,
         agentTitle: agentPayload.title,
         cwd: snapshot.cwd,
       });

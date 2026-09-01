@@ -596,9 +596,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     // The in-flight turn forks with no boundary at all: `selectForkContextRows`
-    // projects the whole timeline when neither boundary field is given, so the
-    // fork carries everything up to now, including the response still streaming
-    // in front of the user.
+    // copies the last turn when neither boundary field is given, so the fork
+    // carries the current turn, including the response still streaming in front
+    // of the user.
     const handleForkInFlightTurn: InFlightTurnForkHandler = useStableEvent(async (target) => {
       await forkAgent({
         agentId,

@@ -221,48 +221,69 @@ interface ForkCursorBoundary {
   cursor: { epoch: string; seq: number };
 }
 
+function findTurnStartIndex(rows: readonly AgentTimelineRow[], endIndex: number): number {
+  for (let index = endIndex; index >= 0; index--) {
+    if (rows[index].item.type === "user_message") {
+      return index + 1;
+    }
+  }
+  return 0;
+}
+
 function selectForkContextRows(input: {
   rows: readonly AgentTimelineRow[];
   cursorBoundary?: ForkCursorBoundary | null;
   boundaryMessageId?: string | null;
 }): {
+  precedingUserItems: AgentTimelineItem[];
   items: AgentTimelineItem[];
   boundaryCursor: { epoch: string; seq: number } | null;
   boundaryMessageId: string | null;
 } {
   const boundaryCursor = input.cursorBoundary?.cursor ?? null;
   const boundaryMessageId = input.boundaryMessageId?.trim() || null;
-  if (!boundaryCursor && !boundaryMessageId) {
-    const projected = projectTimelineRows({ rows: input.rows, mode: "projected" });
-    return {
-      items: projected.map((entry) => entry.item),
-      boundaryCursor: null,
-      boundaryMessageId: null,
-    };
-  }
 
-  if (
-    input.cursorBoundary &&
-    input.cursorBoundary.cursor.epoch !== input.cursorBoundary.timelineEpoch
-  ) {
-    throw new Error("Selected timeline position is no longer available.");
-  }
-  const boundaryIndex = boundaryCursor
-    ? input.rows.findIndex((row) => row.seq === boundaryCursor.seq)
-    : input.rows.findLastIndex(
+  const resolveBoundaryIndex = (): number => {
+    if (boundaryCursor) {
+      if (
+        input.cursorBoundary &&
+        input.cursorBoundary.cursor.epoch !== input.cursorBoundary.timelineEpoch
+      ) {
+        throw new Error("Selected timeline position is no longer available.");
+      }
+      const index = input.rows.findIndex((row) => row.seq === boundaryCursor.seq);
+      if (index < 0) {
+        throw new Error("Selected timeline position is no longer available.");
+      }
+      return index;
+    }
+    if (boundaryMessageId) {
+      const index = input.rows.findLastIndex(
         (row) => row.item.type === "assistant_message" && row.item.messageId === boundaryMessageId,
       );
-  if (boundaryIndex < 0) {
-    throw new Error(
-      boundaryCursor
-        ? "Selected timeline position is no longer available."
-        : "Selected assistant message is no longer available.",
-    );
-  }
-  const selectedRows = input.rows.slice(0, boundaryIndex + 1);
-  const projected = projectTimelineRows({ rows: selectedRows, mode: "projected" });
+      if (index < 0) {
+        throw new Error("Selected assistant message is no longer available.");
+      }
+      return index;
+    }
+    return input.rows.length - 1;
+  };
+
+  const boundaryIndex = resolveBoundaryIndex();
+  const turnStartIndex = findTurnStartIndex(input.rows, boundaryIndex);
+  const precedingUserItems = projectTimelineRows({
+    rows: input.rows.slice(0, turnStartIndex),
+    mode: "projected",
+  })
+    .map((entry) => entry.item)
+    .filter((item) => item.type === "user_message");
+  const projected = projectTimelineRows({
+    rows: input.rows.slice(turnStartIndex, boundaryIndex + 1),
+    mode: "projected",
+  });
 
   return {
+    precedingUserItems,
     items: projected.map((entry) => entry.item),
     boundaryCursor,
     boundaryMessageId,
@@ -276,14 +297,19 @@ function trimContextMetadata(value: string | null | undefined): string | null {
 
 function buildForkContextText(input: {
   body: string;
+  agentId?: string | null;
   agentTitle?: string | null;
   cwd?: string | null;
 }): string {
   const header = ["Chat history from a previous Paseo agent."];
+  const agentId = trimContextMetadata(input.agentId);
   const agentTitle = trimContextMetadata(input.agentTitle);
   const cwd = trimContextMetadata(input.cwd);
   if (agentTitle) {
     header.push(`Source agent: ${agentTitle}`);
+  }
+  if (agentId) {
+    header.push(`Source agent id: ${agentId}`);
   }
   if (cwd) {
     header.push(`Source directory: ${cwd}`);
@@ -295,6 +321,7 @@ export function buildAgentForkContextAttachment(input: {
   rows: readonly AgentTimelineRow[];
   cursorBoundary?: ForkCursorBoundary | null;
   boundaryMessageId?: string | null;
+  agentId?: string | null;
   agentTitle?: string | null;
   cwd?: string | null;
 }): {
@@ -308,12 +335,17 @@ export function buildAgentForkContextAttachment(input: {
     cursorBoundary: input.cursorBoundary,
     boundaryMessageId: input.boundaryMessageId,
   });
-  const entries = curateProjectedActivityEntries(selected.items, {
+  const userEntries = curateProjectedActivityEntries(selected.precedingUserItems, {
+    maxItems: 0,
+    includeKinds: ["user_message"],
+  });
+  const turnEntries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
     labelAssistantMessages: true,
-    includeKinds: ["user_message", "assistant_message", "tool_call"],
+    includeKinds: ["assistant_message", "tool_call"],
     includeExternalToolInput: false,
   });
+  const entries = [...userEntries, ...turnEntries];
   const body =
     entries.length > 0
       ? entries.map((entry) => entry.text).join("\n")
@@ -323,14 +355,15 @@ export function buildAgentForkContextAttachment(input: {
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
-      title: "Chat history",
+      title: trimContextMetadata(input.agentTitle) ?? "Chat history",
       text: buildForkContextText({
         body,
+        agentId: input.agentId,
         agentTitle: input.agentTitle,
         cwd: input.cwd,
       }),
     },
-    itemCount: selected.items.length,
+    itemCount: selected.precedingUserItems.length + selected.items.length,
     boundaryCursor: selected.boundaryCursor,
     boundaryMessageId: selected.boundaryMessageId,
   };

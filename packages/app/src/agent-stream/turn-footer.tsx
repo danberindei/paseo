@@ -33,10 +33,11 @@ export type AssistantTurnForkHandler = (input: {
 }) => Promise<void> | void;
 /**
  * Fork handler for the turn that is still streaming. It deliberately takes no
- * boundary: `selectForkContextRows` projects the entire timeline when neither
- * boundary field is given, which is what captures the partially streamed text
- * the user is watching. Pinning a boundary here would silently drop the live
- * response — the opposite of what a fork button next to the loader promises.
+ * boundary: `selectForkContextRows` copies the last turn when neither boundary
+ * field is given, which is what captures the partially streamed text the user
+ * is watching. Pinning a boundary here would target an earlier turn and drop
+ * the live response, the opposite of what a fork button next to the loader
+ * promises.
  *
  * Kept separate from `AssistantTurnForkHandler` (whose `boundary` stays
  * required) so the compiler keeps enforcing that completed turns always pin one.

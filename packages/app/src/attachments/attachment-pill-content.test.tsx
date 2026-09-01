@@ -18,7 +18,7 @@ vi.mock("lucide-react-native", () => ({
 type ChatHistorySource = Extract<WorkspaceComposerAttachment, { kind: "chat_history" }>["source"];
 
 function chatHistoryAttachment(
-  source: Partial<ChatHistorySource> = {},
+  overrides: { title?: string | null; source?: Partial<ChatHistorySource> } = {},
 ): WorkspaceComposerAttachment {
   return {
     kind: "chat_history",
@@ -27,13 +27,13 @@ function chatHistoryAttachment(
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
-      title: "Chat history",
+      title: overrides.title === undefined ? "Fix the sidebar quota" : overrides.title,
       text: "Previous chat.",
     },
     source: {
       serverId: "local",
       agentId: "0123456789abcdef",
-      ...source,
+      ...overrides.source,
     },
   };
 }
@@ -65,23 +65,20 @@ describe("agent attachment pill content", () => {
 });
 
 describe("getWorkspaceAttachmentPillContent", () => {
-  it("names the source agent and its short id for chat history", () => {
-    const content = getWorkspaceAttachmentPillContent(
-      chatHistoryAttachment({ agentTitle: "Fix the sidebar quota" }),
-      i18n.t,
-    );
+  it("renders the source attachment title and shared previous-conversation subtitle", () => {
+    const content = getWorkspaceAttachmentPillContent(chatHistoryAttachment(), i18n.t);
 
     expect(content.title).toBe("Fix the sidebar quota");
-    expect(content.subtitle).toBe("Chat history (0123456)");
+    expect(content.subtitle).toBe("From previous conversation");
   });
 
-  it("falls back to the attachment title when the source agent has no title", () => {
+  it("falls back to the generic text label when the attachment has no title", () => {
     const content = getWorkspaceAttachmentPillContent(
-      chatHistoryAttachment({ agentTitle: "   " }),
+      chatHistoryAttachment({ title: null }),
       i18n.t,
     );
 
-    expect(content.title).toBe("Chat history");
-    expect(content.subtitle).toBe("Chat history (0123456)");
+    expect(content.title).toBe(i18n.t("message.attachments.textAttachment"));
+    expect(content.subtitle).toBe("From previous conversation");
   });
 });

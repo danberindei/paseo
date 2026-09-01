@@ -49,7 +49,7 @@ function getTextAttachmentSubtitle(
   t: TFunction,
 ): string {
   if (attachment.contextKind === "chat_history") {
-    return "Previous conversation";
+    return "From previous conversation";
   }
   return t("message.attachments.text");
 }
@@ -127,11 +127,10 @@ export function getWorkspaceAttachmentPillContent(
     };
   }
   if (attachment.kind === "chat_history") {
-    const sourceTitle = attachment.source.agentTitle?.trim();
     return {
       icon: attachmentFileIcon,
-      title: sourceTitle || attachment.attachment.title || t("message.attachments.textAttachment"),
-      subtitle: `Chat history (${attachment.source.agentId.slice(0, 7)})`,
+      title: attachment.attachment.title ?? t("message.attachments.textAttachment"),
+      subtitle: getTextAttachmentSubtitle(attachment.attachment, t),
     };
   }
   return {

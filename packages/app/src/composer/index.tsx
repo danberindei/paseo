@@ -1219,6 +1219,10 @@ function ComposerContentImpl({
   const userInput = value;
   const setUserInput = onChangeText;
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
+  const expandChatHistoryRef = useRef<(text: string) => void>(() => {});
+  const handleExpandChatHistoryAttachment = useCallback((text: string) => {
+    expandChatHistoryRef.current(text);
+  }, []);
   const {
     selectedAttachments,
     buildOutgoingAttachments,
@@ -1232,6 +1236,7 @@ function ComposerContentImpl({
     normalAttachments: attachments,
     workspaceAttachments,
     onOpenWorkspaceAttachment,
+    onExpandChatHistoryAttachment: handleExpandChatHistoryAttachment,
   });
   const setSelectedAttachments = onChangeAttachments;
   const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
@@ -1291,6 +1296,10 @@ function ComposerContentImpl({
     },
     [onChangeText],
   );
+
+  expandChatHistoryRef.current = (text: string) => {
+    replaceUserInput(userInput ? `${userInput}\n\n${text}` : text);
+  };
 
   const runClientSlashCommand = useCallback(
     (command: ClientSlashCommand): boolean => {

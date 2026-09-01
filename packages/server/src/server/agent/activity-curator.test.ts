@@ -267,16 +267,19 @@ second line'`,
     expect(curateAgentActivity([])).toBe("No activity to display.");
   });
 
-  it("builds fork context from user messages, assistant messages, and tool summaries", () => {
+  it("carries every user message and the boundary turn's assistant and tool summaries", () => {
     const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
       agentTitle: "Source Agent",
       cwd: "/repo",
-      boundaryMessageId: "assistant-1",
+      boundaryMessageId: "assistant-2",
       rows: [
-        row(1, { type: "user_message", text: "Ship the thing", messageId: "user-1" }),
-        row(2, { type: "reasoning", text: "private chain of thought" }),
+        row(1, { type: "user_message", text: "Earlier task", messageId: "user-0" }),
+        row(2, { type: "assistant_message", text: "Earlier answer.", messageId: "assistant-1" }),
+        row(3, { type: "user_message", text: "Ship the thing", messageId: "user-1" }),
+        row(4, { type: "reasoning", text: "private chain of thought" }),
         row(
-          3,
+          5,
           toolCallItem({
             callId: "read-1",
             name: "read_file",
@@ -288,59 +291,97 @@ second line'`,
           }),
         ),
         row(
-          4,
+          6,
           toolCallItem({
             callId: "external-1",
             name: "paseo__create_agent",
             input: { initialPrompt: "do not include raw external tool input" },
           }),
         ),
-        row(5, {
+        row(7, {
           type: "assistant_message",
           text: "Done.",
-          messageId: "assistant-1",
+          messageId: "assistant-2",
         }),
-        row(6, {
+        row(8, {
           type: "assistant_message",
           text: "Later answer.",
-          messageId: "assistant-2",
+          messageId: "assistant-3",
         }),
       ],
     });
 
-    expect(result.boundaryMessageId).toBe("assistant-1");
+    expect(result.boundaryMessageId).toBe("assistant-2");
     expect(result.attachment).toMatchObject({
       type: "text",
       mimeType: "text/plain",
       contextKind: "chat_history",
-      title: "Chat history",
+      title: "Source Agent",
     });
     expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
     expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
     expect(result.attachment.text).toContain("Source agent: Source Agent");
+    expect(result.attachment.text).toContain("Source agent id: agent-1234");
     expect(result.attachment.text).toContain("Source directory: /repo");
-    expect(result.attachment.text).toContain("[User] Ship the thing");
     expect(result.attachment.text).toContain("[Read] src/index.ts");
     expect(result.attachment.text).toContain("[paseo__create_agent]");
     expect(result.attachment.text).toContain("[Assistant] Done.");
+    expect(result.attachment.text).toContain("[User] Earlier task");
+    expect(result.attachment.text).toContain("[User] Ship the thing");
+    expect(result.attachment.text).not.toContain("Earlier answer.");
     expect(result.attachment.text).not.toContain("private chain of thought");
     expect(result.attachment.text).not.toContain("do not include raw external tool input");
     expect(result.attachment.text).not.toContain("Later answer.");
   });
 
-  it("does not cap fork context to the generic recent activity limit", () => {
-    const messageRows = Array.from({ length: 25 }, (_, index) =>
-      row(index + 1, {
-        type: "user_message",
-        text: `Message ${index + 1}`,
-        messageId: `user-${index + 1}`,
+  it("keeps the sub-agent log of the forked turn", () => {
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Investigate", messageId: "user-1" }),
+        row(
+          2,
+          toolCallItem({
+            callId: "task-1",
+            name: "Task",
+            detail: {
+              type: "sub_agent",
+              subAgentType: "Explore",
+              description: "Investigate repository",
+              log: "[Read] README.md",
+            },
+          }),
+        ),
+        row(3, { type: "assistant_message", text: "Done.", messageId: "assistant-1" }),
+      ],
+    });
+
+    expect(result.attachment.title).toBe("Chat history");
+    expect(result.attachment.text).toContain("[Explore] Investigate repository");
+    expect(result.attachment.text).toContain("[Read] README.md");
+    expect(result.attachment.text).toContain("[Assistant] Done.");
+  });
+
+  it("does not cap a long turn to the generic recent activity limit", () => {
+    const toolRows = Array.from({ length: 30 }, (_, index) =>
+      row(index + 2, {
+        ...toolCallItem({
+          callId: `read-${index}`,
+          name: "read_file",
+          detail: {
+            type: "read",
+            filePath: `file-${index}.ts`,
+            content: "x",
+          },
+        }),
       }),
     );
     const result = buildAgentForkContextAttachment({
       boundaryMessageId: "assistant-1",
       rows: [
-        ...messageRows,
-        row(26, {
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        ...toolRows,
+        row(32, {
           type: "assistant_message",
           text: "Done.",
           messageId: "assistant-1",
@@ -348,9 +389,10 @@ second line'`,
       ],
     });
 
-    expect(result.itemCount).toBe(26);
-    expect(result.attachment.text).toContain("[User] Message 1");
-    expect(result.attachment.text).toContain("[User] Message 25");
+    expect(result.itemCount).toBe(32);
+    expect(result.attachment.text).toContain("[User] Go");
+    expect(result.attachment.text).toContain("[Read] file-0.ts");
+    expect(result.attachment.text).toContain("[Read] file-29.ts");
     expect(result.attachment.text).toContain("[Assistant] Done.");
   });
 
