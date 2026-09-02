@@ -334,6 +334,60 @@ second line'`,
     expect(result.attachment.text).not.toContain("Later answer.");
   });
 
+  it("points the fork target at the source transcript when a path is given", () => {
+    const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
+      cwd: "/repo",
+      transcriptPath: "/home/dev/.claude/projects/-repo/session-1.jsonl",
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Done.", messageId: "assistant-1" }),
+        row(3, { type: "user_message", text: "Later task", messageId: "user-2" }),
+        row(4, { type: "assistant_message", text: "Later answer.", messageId: "assistant-2" }),
+      ],
+    });
+
+    expect(result.attachment.text).toContain(
+      "The source agent's full session transcript is at /home/dev/.claude/projects/-repo/session-1.jsonl.",
+    );
+    expect(result.attachment.text).toContain(
+      "Read only through assistant message ID assistant-1. Do not read or use transcript entries after that message.",
+    );
+    expect(result.attachment.text).toContain("Read within that boundary");
+    expect(result.attachment.text).not.toContain("Later task");
+    expect(result.attachment.text).not.toContain("Later answer.");
+    expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+  });
+
+  it("limits an in-flight fork to transcript content represented by the summary", () => {
+    const result = buildAgentForkContextAttachment({
+      transcriptPath: "/home/dev/.codex/sessions/rollout-session-1.jsonl",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Still working" }),
+      ],
+    });
+
+    expect(result.attachment.text).toContain(
+      "Read only transcript content represented by the summary above. Do not read or use later content, including anything appended after this fork context was created.",
+    );
+  });
+
+  it("omits the transcript guidance when no path is given", () => {
+    const result = buildAgentForkContextAttachment({
+      agentId: "agent-1234",
+      cwd: "/repo",
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Go", messageId: "user-1" }),
+        row(2, { type: "assistant_message", text: "Done.", messageId: "assistant-1" }),
+      ],
+    });
+
+    expect(result.attachment.text).not.toContain("full session transcript");
+  });
+
   it("keeps the sub-agent log of the forked turn", () => {
     const result = buildAgentForkContextAttachment({
       boundaryMessageId: "assistant-1",

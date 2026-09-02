@@ -582,6 +582,7 @@ function wrapClientProvider(
           };
         }
       : undefined,
+    resolveSessionTranscriptPath: inner.resolveSessionTranscriptPath?.bind(inner),
     isAvailable: (signal) => inner.isAvailable(signal),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };

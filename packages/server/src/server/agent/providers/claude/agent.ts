@@ -1606,10 +1606,7 @@ export class ClaudeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const configDir =
-      this.runtimeSettings?.env?.["CLAUDE_CONFIG_DIR"] ??
-      process.env.CLAUDE_CONFIG_DIR ??
-      path.join(os.homedir(), ".claude");
+    const configDir = resolveClaudeConfigDir(this.runtimeSettings);
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
       : path.join(configDir, "projects");
@@ -1636,6 +1633,20 @@ export class ClaudeAgentClient implements AgentClient {
       context,
       resumeSession: this.resumeSession.bind(this),
     });
+  }
+
+  async resolveSessionTranscriptPath(input: {
+    handle: AgentPersistenceHandle;
+    cwd: string;
+  }): Promise<string | null> {
+    const sessionId = input.handle.sessionId?.trim();
+    if (!sessionId) {
+      return null;
+    }
+    const configDir = resolveClaudeConfigDir(this.runtimeSettings);
+    const projectDir = claudeProjectDirSync(input.cwd, { configDir });
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+    return (await pathExists(transcriptPath)) ? transcriptPath : null;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -1687,6 +1698,14 @@ export class ClaudeAgentClient implements AgentClient {
       providerOptions,
     };
   }
+}
+
+function resolveClaudeConfigDir(runtimeSettings?: ProviderRuntimeSettings): string {
+  return (
+    runtimeSettings?.env?.["CLAUDE_CONFIG_DIR"] ??
+    process.env.CLAUDE_CONFIG_DIR ??
+    path.join(os.homedir(), ".claude")
+  );
 }
 
 async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
@@ -4965,10 +4984,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir =
-      this.runtimeSettings?.env?.["CLAUDE_CONFIG_DIR"] ??
-      process.env.CLAUDE_CONFIG_DIR ??
-      path.join(os.homedir(), ".claude");
+    const configDir = resolveClaudeConfigDir(this.runtimeSettings);
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);

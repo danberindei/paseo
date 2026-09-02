@@ -122,6 +122,14 @@ vi.mock("./providers/claude/agent.js", async () => {
         return resolveConfiguredClaudeModel(model);
       }
 
+      async resolveSessionTranscriptPath(input: {
+        handle: { sessionId?: string };
+      }): Promise<string | null> {
+        return input.handle.sessionId
+          ? `/transcripts/${this.provider}/${input.handle.sessionId}.jsonl`
+          : null;
+      }
+
       async isAvailable(): Promise<boolean> {
         const command: { mode?: string; argv?: string[] } | undefined =
           typeof this.runtimeSettings === "object" && this.runtimeSettings !== null
@@ -649,6 +657,25 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.label).toBe("ZAI");
   expect(registry.zai.description).toBe("Claude with ZAI defaults");
   expect(registry.zai.createClient(logger).provider).toBe("zai");
+});
+
+test("new provider extending claude forwards transcript path resolution", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+      },
+    },
+  });
+
+  const client = registry.zai.createClient(logger);
+  await expect(
+    client.resolveSessionTranscriptPath?.({
+      handle: { provider: "zai", sessionId: "session-1" },
+      cwd: "/repo",
+    }),
+  ).resolves.toBe("/transcripts/claude/session-1.jsonl");
 });
 
 test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {

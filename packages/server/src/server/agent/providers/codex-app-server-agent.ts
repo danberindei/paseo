@@ -295,6 +295,7 @@ interface CodexAppServerClientLike {
 }
 
 interface CodexAppServerAgentDeps {
+  runtimeSettings?: ProviderRuntimeSettings;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   customProvider?: {
     id: string;
@@ -609,8 +610,47 @@ async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
   });
 }
 
-function resolveCodexHomeDir(): string {
-  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+function resolveCodexHomeDir(runtimeSettings?: ProviderRuntimeSettings): string {
+  return (
+    runtimeSettings?.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex")
+  );
+}
+
+async function findCodexRolloutPath(input: {
+  sessionsRoot: string;
+  sessionId: string;
+}): Promise<string | null> {
+  const { sessionsRoot, sessionId } = input;
+  const suffix = `-${sessionId}.jsonl`;
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const directories: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile()) {
+      if (entry.name.startsWith("rollout-") && entry.name.endsWith(suffix)) {
+        return path.join(sessionsRoot, entry.name);
+      }
+    } else if (entry.isDirectory()) {
+      directories.push(entry.name);
+    }
+  }
+  // Codex nests rollouts under sessions/YYYY/MM/DD; scan newest dates first so a
+  // recent session resolves without walking the whole tree.
+  directories.sort((a, b) => b.localeCompare(a));
+  for (const name of directories) {
+    const found = await findCodexRolloutPath({
+      sessionsRoot: path.join(sessionsRoot, name),
+      sessionId,
+    });
+    if (found) {
+      return found;
+    }
+  }
+  return null;
 }
 
 function decodeEscapedChar(next: string): string {
@@ -720,8 +760,10 @@ function parseFrontMatter(markdown: string): {
   return { frontMatter, body };
 }
 
-async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
-  const codexHome = resolveCodexHomeDir();
+async function listCodexCustomPrompts(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<AgentSlashCommand[]> {
+  const codexHome = resolveCodexHomeDir(runtimeSettings);
   const promptsDir = path.join(codexHome, "prompts");
   let entries: Dirent[];
   try {
@@ -764,6 +806,7 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
 export async function listCodexSkills(
   cwd: string,
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
+  runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<AgentSlashCommand[]> {
   const candidates: string[] = [];
   candidates.push(path.join(cwd, ".codex", "skills"));
@@ -776,7 +819,7 @@ export async function listCodexSkills(
     candidates.push(path.join(repoRoot, ".codex", "skills"));
   }
 
-  candidates.push(path.join(resolveCodexHomeDir(), "skills"));
+  candidates.push(path.join(resolveCodexHomeDir(runtimeSettings), "skills"));
 
   const candidateReads = await Promise.all(
     candidates.map(async (dir) => {
@@ -4168,7 +4211,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<CodexPromptInput> {
     if (commandName.startsWith("prompts:")) {
       const promptName = commandName.slice("prompts:".length);
-      const codexHome = resolveCodexHomeDir();
+      const codexHome = resolveCodexHomeDir(this.deps.runtimeSettings);
       const promptPath = path.join(codexHome, "prompts", `${promptName}.md`);
       const raw = await fs.readFile(promptPath, "utf8");
       const parsed = parseFrontMatter(raw);
@@ -5186,7 +5229,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    const prompts = await listCodexCustomPrompts();
+    const prompts = await listCodexCustomPrompts(this.deps.runtimeSettings);
     const builtIns = listCodexBuiltInSlashCommands();
     if (!this.connected) {
       await this.connect();
@@ -5201,7 +5244,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     }));
     const fallbackSkills =
       this.cachedSkills === null
-        ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
+        ? await listCodexSkills(
+            this.config.cwd,
+            this.deps.workspaceGitService,
+            this.deps.runtimeSettings,
+          )
         : [];
     const builtin: AgentSlashCommand[] = builtIns.map(({ name, description, argumentHint }) => ({
       name,
@@ -7390,6 +7437,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   private sessionDeps(): CodexAppServerAgentDeps {
     return {
       ...this.deps,
+      runtimeSettings: this.runtimeSettings,
       customCodexConfig: buildCodexCustomProviderConfig(
         this.runtimeSettings,
         this.deps.customProvider,
@@ -7599,6 +7647,18 @@ export class CodexAppServerAgentClient implements AgentClient {
       context,
       resumeSession: this.resumeSession.bind(this),
     });
+  }
+
+  async resolveSessionTranscriptPath(input: {
+    handle: AgentPersistenceHandle;
+    cwd: string;
+  }): Promise<string | null> {
+    const sessionId = input.handle.sessionId?.trim();
+    if (!sessionId) {
+      return null;
+    }
+    const sessionsRoot = path.join(resolveCodexHomeDir(this.runtimeSettings), "sessions");
+    return findCodexRolloutPath({ sessionsRoot, sessionId });
   }
 
   async fetchCatalog(

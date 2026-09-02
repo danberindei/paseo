@@ -2071,6 +2071,48 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("resolves the session transcript path from the per-provider CODEX_HOME", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-transcript-"));
+    const sessionId = "01a051ef-8ede-7402-8df9-8f6630a93837";
+    const rolloutDir = path.join(tempDir, "sessions", "2026", "08", "30");
+    const rolloutPath = path.join(rolloutDir, `rollout-2026-08-30T12-10-49-${sessionId}.jsonl`);
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(rolloutPath, "{}\n");
+    const client = new CodexAppServerAgentClient(createTestLogger(), {
+      env: { CODEX_HOME: tempDir },
+    });
+
+    try {
+      await expect(
+        client.resolveSessionTranscriptPath({
+          handle: { provider: "codex", sessionId },
+          cwd: "/repo",
+        }),
+      ).resolves.toBe(rolloutPath);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns null when no rollout matches the session id", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-transcript-"));
+    mkdirSync(path.join(tempDir, "sessions"), { recursive: true });
+    const client = new CodexAppServerAgentClient(createTestLogger(), {
+      env: { CODEX_HOME: tempDir },
+    });
+
+    try {
+      await expect(
+        client.resolveSessionTranscriptPath({
+          handle: { provider: "codex", sessionId: "missing-session" },
+          cwd: "/repo",
+        }),
+      ).resolves.toBeNull();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("lists built-in slash commands", () => {
     expect(__codexAppServerInternals.listCodexBuiltInSlashCommands()).toEqual([
       {

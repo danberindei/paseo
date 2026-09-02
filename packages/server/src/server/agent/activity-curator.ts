@@ -300,6 +300,8 @@ function buildForkContextText(input: {
   agentId?: string | null;
   agentTitle?: string | null;
   cwd?: string | null;
+  transcriptPath?: string | null;
+  transcriptBoundaryMessageId?: string | null;
 }): string {
   const header = ["Chat history from a previous Paseo agent."];
   const agentId = trimContextMetadata(input.agentId);
@@ -314,7 +316,22 @@ function buildForkContextText(input: {
   if (cwd) {
     header.push(`Source directory: ${cwd}`);
   }
-  return `<chat-history-summary>\n${header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
+  const sections = [header.join("\n"), input.body];
+  const transcriptPath = trimContextMetadata(input.transcriptPath);
+  if (transcriptPath) {
+    const transcriptBoundaryMessageId = trimContextMetadata(input.transcriptBoundaryMessageId);
+    sections.push(
+      [
+        "This summary is condensed: it drops tool inputs, tool output, reasoning, and earlier-turn assistant messages such as review findings.",
+        `The source agent's full session transcript is at ${transcriptPath}.`,
+        transcriptBoundaryMessageId
+          ? `Read only through assistant message ID ${transcriptBoundaryMessageId}. Do not read or use transcript entries after that message.`
+          : "Read only transcript content represented by the summary above. Do not read or use later content, including anything appended after this fork context was created.",
+        "Read within that boundary when you need detail this summary omits.",
+      ].join("\n"),
+    );
+  }
+  return `<chat-history-summary>\n${sections.join("\n\n")}\n</chat-history-summary>`;
 }
 
 const CHAT_HISTORY_SUMMARY_BLOCK = /<chat-history-summary>[\s\S]*?<\/chat-history-summary>/g;
@@ -341,6 +358,7 @@ export function buildAgentForkContextAttachment(input: {
   agentId?: string | null;
   agentTitle?: string | null;
   cwd?: string | null;
+  transcriptPath?: string | null;
 }): {
   attachment: TextAgentAttachment;
   itemCount: number;
@@ -381,6 +399,8 @@ export function buildAgentForkContextAttachment(input: {
         agentId: input.agentId,
         agentTitle: input.agentTitle,
         cwd: input.cwd,
+        transcriptPath: input.transcriptPath,
+        transcriptBoundaryMessageId: selected.boundaryMessageId,
       }),
     },
     itemCount: selected.precedingUserItems.length + selected.items.length,

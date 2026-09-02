@@ -792,6 +792,16 @@ export interface AgentClient {
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession>;
   /**
+   * Resolve the absolute path of the provider-native session transcript for a
+   * persisted agent, or null when the provider has no readable transcript or
+   * the file is absent. Used to point a fork target at the source agent's full
+   * log when its condensed fork summary omits detail.
+   */
+  resolveSessionTranscriptPath?(input: {
+    handle: AgentPersistenceHandle;
+    cwd: string;
+  }): Promise<string | null>;
+  /**
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.
    */

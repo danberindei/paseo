@@ -7488,6 +7488,7 @@ export class Session {
         direction: "tail",
         limit: 0,
       });
+      const transcriptPath = await this.agentManager.resolveAgentTranscriptPath(msg.agentId);
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
@@ -7497,6 +7498,7 @@ export class Session {
         agentId: msg.agentId,
         agentTitle: agentPayload.title,
         cwd: snapshot.cwd,
+        transcriptPath,
       });
 
       this.emit({

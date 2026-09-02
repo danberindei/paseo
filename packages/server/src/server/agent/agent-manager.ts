@@ -1123,6 +1123,29 @@ export class AgentManager {
     }
   }
 
+  async resolveAgentTranscriptPath(agentId: string): Promise<string | null> {
+    const agent = this.getAgent(agentId);
+    if (!agent?.persistence) {
+      return null;
+    }
+    const client = this.clients.get(agent.persistence.provider);
+    if (!client?.resolveSessionTranscriptPath) {
+      return null;
+    }
+    try {
+      return await client.resolveSessionTranscriptPath({
+        handle: agent.persistence,
+        cwd: agent.cwd,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId, provider: agent.persistence.provider },
+        "Failed to resolve agent transcript path",
+      );
+      return null;
+    }
+  }
+
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
