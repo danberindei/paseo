@@ -481,4 +481,29 @@ second line'`,
       }),
     ).toThrow("Selected assistant message is no longer available.");
   });
+
+  it("strips a nested chat-history-summary from a preceding user message", () => {
+    const nested = [
+      "<chat-history-summary>",
+      "Chat history from a previous Paseo agent.",
+      "Source agent id: old-agent-id",
+      "Source directory: /home/user/worklog",
+      "",
+      "[Read] docs/old.md",
+      "</chat-history-summary>",
+    ].join("\n");
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: nested, messageId: "user-1" }),
+        row(2, { type: "user_message", text: "Continue the work", messageId: "user-2" }),
+        row(3, { type: "assistant_message", text: "Working.", messageId: "assistant-1" }),
+      ],
+    });
+
+    expect((result.attachment.text.match(/<chat-history-summary>/g) ?? []).length).toBe(1);
+    expect(result.attachment.text).toContain("[User] Continue the work");
+    expect(result.attachment.text).not.toContain("old-agent-id");
+    expect(result.attachment.text).not.toContain("[Read] docs/old.md");
+  });
 });

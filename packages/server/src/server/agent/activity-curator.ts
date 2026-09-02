@@ -317,6 +317,23 @@ function buildForkContextText(input: {
   return `<chat-history-summary>\n${header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
 }
 
+const CHAT_HISTORY_SUMMARY_BLOCK = /<chat-history-summary>[\s\S]*?<\/chat-history-summary>/g;
+
+function stripNestedChatHistorySummaries(items: AgentTimelineItem[]): AgentTimelineItem[] {
+  const result: AgentTimelineItem[] = [];
+  for (const item of items) {
+    if (item.type !== "user_message") {
+      result.push(item);
+      continue;
+    }
+    const stripped = item.text.replace(CHAT_HISTORY_SUMMARY_BLOCK, "").trim();
+    if (stripped) {
+      result.push({ ...item, text: stripped });
+    }
+  }
+  return result;
+}
+
 export function buildAgentForkContextAttachment(input: {
   rows: readonly AgentTimelineRow[];
   cursorBoundary?: ForkCursorBoundary | null;
@@ -335,10 +352,13 @@ export function buildAgentForkContextAttachment(input: {
     cursorBoundary: input.cursorBoundary,
     boundaryMessageId: input.boundaryMessageId,
   });
-  const userEntries = curateProjectedActivityEntries(selected.precedingUserItems, {
-    maxItems: 0,
-    includeKinds: ["user_message"],
-  });
+  const userEntries = curateProjectedActivityEntries(
+    stripNestedChatHistorySummaries(selected.precedingUserItems),
+    {
+      maxItems: 0,
+      includeKinds: ["user_message"],
+    },
+  );
   const turnEntries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
     labelAssistantMessages: true,
