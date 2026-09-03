@@ -7637,6 +7637,54 @@ test("subscribe hides provider subagents of internal parents from global subscri
   expect(manager.listProviderSubagentActivity()).toEqual([]);
 });
 
+test("timeline replacements stay scoped and hide internal agents from global subscribers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-replacement-subscription-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const first = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const second = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const internal = await manager.createAgent(
+      { provider: "codex", cwd: workdir, internal: true },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const scopedEvents: AgentManagerEvent[] = [];
+    const globalEvents: AgentManagerEvent[] = [];
+    manager.subscribe((event) => scopedEvents.push(event), {
+      agentId: first.id,
+      replayState: false,
+    });
+    manager.subscribe((event) => globalEvents.push(event), { replayState: false });
+
+    await manager.replaceTimelineFromProvider(second.id);
+
+    expect(scopedEvents).toEqual([]);
+    expect(globalEvents).toContainEqual(
+      expect.objectContaining({ type: "timeline_replacement", agentId: second.id }),
+    );
+
+    await manager.replaceTimelineFromProvider(internal.id);
+
+    expect(globalEvents.filter((event) => event.type === "timeline_replacement")).toEqual([
+      expect.objectContaining({ agentId: second.id }),
+    ]);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("subscribe emits state events for internal agents when subscribed by agentId", async () => {
   const internalAgentId = "00000000-0000-4000-8000-000000000110";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
@@ -9822,7 +9870,7 @@ test("ensureUnarchivedAgentLoaded fences an archived agent after joining a share
   }
 });
 
-test("a shared agent load upgrades provider history hydration to broadcast", async () => {
+test("a shared agent load upgrades restored subagent hydration to broadcast", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-load-broadcast-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const historyStarted = deferred<void>();
@@ -9836,6 +9884,11 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
         override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
           historyStarted.resolve();
           await historyAllowed.promise;
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child-1", title: "Recovered subagent" },
+          };
           yield {
             type: "timeline",
             provider: "codex",
@@ -9865,7 +9918,7 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
     const broadcastingLoad = ensureAgentLoaded(agent.id, {
       agentManager: manager,
       agentStorage: storage,
-      broadcastTimeline: true,
+      broadcastRestoredSubagents: true,
       logger,
     });
     historyAllowed.resolve();
@@ -9873,16 +9926,129 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
 
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "agent_stream",
-        agentId: agent.id,
+        type: "provider_subagent",
         event: expect.objectContaining({
-          type: "timeline",
-          item: { type: "assistant_message", text: "Recovered history" },
+          type: "upsert",
+          subagent: expect.objectContaining({ id: "child-1", parentAgentId: agent.id }),
         }),
       }),
     );
+    expect(
+      events.filter((event) => event.type === "agent_stream" && event.event.type === "timeline"),
+    ).toEqual([]);
   } finally {
     historyAllowed.resolve();
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("replaceTimelineFromProvider dispatches a replacement instead of streaming rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-replace-timeline-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "Recovered history" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.closeAgent(agent.id);
+    await manager.deleteAgentState(agent.id);
+    await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+    const initialEpoch = manager.fetchTimeline(agent.id, { limit: 0 }).epoch;
+
+    await manager.replaceTimelineFromProvider(agent.id);
+
+    expect(manager.getTimeline(agent.id)).not.toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline_replacement",
+        agentId: agent.id,
+        epoch: expect.not.stringMatching(new RegExp(`^${initialEpoch}$`)),
+      }),
+    );
+    expect(
+      events.filter((event) => event.type === "agent_stream" && event.event.type === "timeline"),
+    ).toEqual([]);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("ensureAgentLoaded with hydrateTimeline false leaves history for the caller to rebuild", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-skip-hydration-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let historyReads = 0;
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyReads += 1;
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "Recovered history" },
+          };
+        }
+      })({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.closeAgent(agent.id);
+    await manager.deleteAgentState(agent.id);
+
+    await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      hydrateTimeline: false,
+      logger,
+    });
+
+    expect(historyReads).toBe(0);
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+
+    await manager.replaceTimelineFromProvider(agent.id);
+
+    expect(historyReads).toBe(1);
+    expect(manager.getTimeline(agent.id)).toEqual([
+      { type: "assistant_message", text: "Recovered history" },
+    ]);
+  } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

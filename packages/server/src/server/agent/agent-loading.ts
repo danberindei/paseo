@@ -13,7 +13,7 @@ import {
 
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
-  options: { broadcastTimeline: boolean };
+  options: { broadcastRestoredSubagents: boolean; hydrateTimeline: boolean };
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
@@ -32,7 +32,11 @@ export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
-  broadcastTimeline?: boolean;
+  broadcastRestoredSubagents?: boolean;
+  // Defaults to true. Callers that rebuild the timeline themselves right after
+  // loading set this to false so provider history is read once, not twice. A
+  // concurrent caller that wants hydration still gets it.
+  hydrateTimeline?: boolean;
   logger: Logger;
 }
 
@@ -67,7 +71,8 @@ export async function ensureAgentLoaded(
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    inflight.options.broadcastRestoredSubagents ||= deps.broadcastRestoredSubagents === true;
+    inflight.options.hydrateTimeline ||= deps.hydrateTimeline !== false;
     return inflight.promise;
   }
 
@@ -83,12 +88,14 @@ export async function ensureAgentLoaded(
 
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
-    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+    laterInflight.options.broadcastRestoredSubagents ||= deps.broadcastRestoredSubagents === true;
+    laterInflight.options.hydrateTimeline ||= deps.hydrateTimeline !== false;
     return laterInflight.promise;
   }
 
   const pendingOptions = {
-    broadcastTimeline: deps.broadcastTimeline === true,
+    broadcastRestoredSubagents: deps.broadcastRestoredSubagents === true,
+    hydrateTimeline: deps.hydrateTimeline !== false,
   };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
@@ -128,9 +135,12 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
+    if (pendingOptions.hydrateTimeline) {
+      await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+        broadcast: () => pendingOptions.broadcastRestoredSubagents,
+        broadcastTimeline: false,
+      });
+    }
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 

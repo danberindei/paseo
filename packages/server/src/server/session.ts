@@ -3981,11 +3981,14 @@ export class Session {
         snapshot = await ensureAgentLoaded(agentId, {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
-          broadcastTimeline: true,
+          hydrateTimeline: false,
           logger: this.sessionLogger,
         });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+      await this.agentManager.replaceTimelineFromProvider(agentId);
+      // The rebuild recomputes lastUserMessageAt and updatedAt on the live
+      // agent, so forwarding the pre-rebuild copy would undo it.
+      snapshot = this.agentManager.getAgent(agentId) ?? snapshot;
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
       if (requestId) {

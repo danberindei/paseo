@@ -113,6 +113,10 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+function resolveBroadcastFlag(flag: boolean | (() => boolean)): boolean {
+  return typeof flag === "function" ? flag() : flag;
+}
+
 export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
@@ -3070,6 +3074,21 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  // Rebuilding mints a new epoch, so subscribers are told to refetch instead of
+  // being streamed rows they would append to the epoch they already hold.
+  async replaceTimelineFromProvider(agentId: string): Promise<void> {
+    await this.hydrateTimelineFromProvider(agentId, {
+      force: true,
+      broadcast: true,
+      broadcastTimeline: false,
+    });
+    this.dispatch({
+      type: "timeline_replacement",
+      agentId,
+      epoch: this.timelineStore.getEpoch(agentId),
+    });
+  }
+
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
     const submittedRow = this.timelineStore
@@ -3097,16 +3116,7 @@ export class AgentManager {
       );
       await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
       if (mode !== "files") {
-        await this.hydrateTimelineFromProvider(agentId, {
-          force: true,
-          broadcast: true,
-          broadcastTimeline: false,
-        });
-        this.dispatch({
-          type: "timeline_replacement",
-          agentId,
-          epoch: this.timelineStore.getEpoch(agentId),
-        });
+        await this.replaceTimelineFromProvider(agentId);
       }
       await this.refreshRuntimeInfo(agent);
       await this.persistSnapshot(agent);
@@ -3906,13 +3916,13 @@ export class AgentManager {
     if (options?.force) {
       await this.forceHydrateTimelineFromLegacyProviderHistory(
         agent,
-        typeof broadcast === "function" ? broadcast() : broadcast,
-        typeof broadcastTimeline === "function" ? broadcastTimeline() : broadcastTimeline,
+        resolveBroadcastFlag(broadcast),
+        resolveBroadcastFlag(broadcastTimeline),
       );
       return;
     }
 
-    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
+    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast, broadcastTimeline);
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
@@ -3981,8 +3991,10 @@ export class AgentManager {
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
+    broadcastTimeline: boolean | (() => boolean),
   ): Promise<void> {
-    const deferredBroadcast = typeof broadcast === "function";
+    const deferProviderSubagentBroadcast = typeof broadcast === "function";
+    const deferTimelineBroadcast = typeof broadcastTimeline === "function";
     const timelineEvents: Array<{
       event: Extract<AgentStreamEvent, { type: "timeline" }>;
       row: AgentTimelineRow;
@@ -3995,7 +4007,7 @@ export class AgentManager {
         if (event.type === "provider_subagent") {
           const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
           const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-          if (deferredBroadcast) {
+          if (deferProviderSubagentBroadcast) {
             providerSubagentEvents.push(managerEvent);
           } else if (broadcast) {
             this.dispatch(managerEvent);
@@ -4013,9 +4025,9 @@ export class AgentManager {
           event.item,
           event.timestamp ? { timestamp: event.timestamp } : undefined,
         );
-        if (deferredBroadcast) {
+        if (deferTimelineBroadcast) {
           timelineEvents.push({ event, row });
-        } else if (broadcast) {
+        } else if (broadcastTimeline) {
           this.dispatchStream(agent.id, event, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
@@ -4029,18 +4041,19 @@ export class AgentManager {
     }
     agent.historyPrimed = true;
 
-    if (typeof broadcast !== "function" || !broadcast()) {
-      return;
+    if (deferProviderSubagentBroadcast && resolveBroadcastFlag(broadcast)) {
+      for (const event of providerSubagentEvents) {
+        this.dispatch(event);
+      }
     }
-    for (const event of providerSubagentEvents) {
-      this.dispatch(event);
-    }
-    for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
+    if (deferTimelineBroadcast && resolveBroadcastFlag(broadcastTimeline)) {
+      for (const { event, row } of timelineEvents) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
     }
   }
 
@@ -4991,6 +5004,13 @@ export class AgentManager {
       }
       if (
         subscriber.agentId &&
+        event.type === "timeline_replacement" &&
+        subscriber.agentId !== event.agentId
+      ) {
+        continue;
+      }
+      if (
+        subscriber.agentId &&
         event.type === "provider_subagent" &&
         subscriber.agentId !==
           (event.event.type === "upsert"
@@ -5010,6 +5030,9 @@ export class AgentManager {
   private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
     if (event.type === "agent_state") return event.agent.internal === true;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
+    if (event.type === "timeline_replacement") {
+      return this.agents.get(event.agentId)?.internal === true;
+    }
     if (event.type !== "provider_subagent") return false;
     const parentAgentId =
       event.event.type === "upsert"
