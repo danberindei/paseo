@@ -283,18 +283,15 @@ function getElapsedFraction(window: QuotaWindowView, now: number): number | null
 }
 
 // Tone boundary curve: the used-fraction threshold at elapsed fraction t for a
-// given leak e. Linear-fractional form through (0, e), (TONE_MID_T, e + TONE_MID_T),
-// (1, 1), so every tone shares one shape and differs only by e.
-const TONE_MID_T = 0.9;
-function toneBoundary(t: number, e: number): number {
-  const c = e / (1 - TONE_MID_T - e);
-  const a = c + 1 - e;
-  return (a * t + e) / (c * t + 1);
+// given start value a. Linear-fractional form through (0, a), (0.5 - a, 0.5),
+// (1, 1), so every tone shares one shape and differs only by a.
+function toneBoundary(t: number, a: number): number {
+  return ((1 + a) * t + a) / (2 * a * t + 1);
 }
 
 // Tone compares the used fraction u against the boundary curves at elapsed
-// fraction t: at or above the red curve (e = 0.06) is red, else at or above the
-// amber curve (e = 0.03) is amber, else at or below the purple curve (e = -0.12)
+// fraction t: at or above the red curve (a = 0.3) is red, else at or above the
+// amber curve (a = 0.1) is amber, else at or below the purple curve (a = -0.3)
 // is purple. Past its reset a window is stale (muted); before any time has
 // elapsed or without the data to place it (utilization, duration, reset) it
 // stays neutral.
@@ -311,13 +308,13 @@ export function getWindowTone(window: QuotaWindowView, now: number): WindowTone 
   }
 
   const u = window.utilization / 100;
-  if (u >= toneBoundary(t, 0.06)) {
+  if (u >= toneBoundary(t, 0.3)) {
     return "red";
   }
-  if (u >= toneBoundary(t, 0.03)) {
+  if (u >= toneBoundary(t, 0.1)) {
     return "amber";
   }
-  if (u <= toneBoundary(t, -0.12)) {
+  if (u <= toneBoundary(t, -0.3)) {
     return "purple";
   }
   return "neutral";
