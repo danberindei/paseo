@@ -141,6 +141,22 @@ function readTaskNotificationTagValue(input: ReadTaskNotificationTagInput): stri
   return toNonEmptyString(match[1]);
 }
 
+function readTaskNotificationTagFromText(
+  text: string | null,
+  ...tagNames: string[]
+): string | null {
+  if (!text) {
+    return null;
+  }
+  for (const tagName of tagNames) {
+    const value = readTaskNotificationTagValue({ text, tagName });
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function parseTaskNotificationFromUserContent(
   input: MapTaskNotificationUserContentToToolCallInput,
 ): TaskNotificationEnvelope | null {
@@ -183,30 +199,26 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
     return null;
   }
   const rawText = toNonEmptyString(systemRecord.content);
+  // Prompt-queue bookkeeping shares the queue-operation type, so only content
+  // carrying the marker identifies one of these rows as a notification.
+  if (isQueueOperation && !rawText?.includes(TASK_NOTIFICATION_MARKER)) {
+    return null;
+  }
 
   return TaskNotificationEnvelopeSchema.parse({
     messageId: toNonEmptyString(systemRecord.uuid) ?? toNonEmptyString(systemRecord.message_id),
     taskId:
-      toNonEmptyString(systemRecord.task_id) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }) : null),
+      toNonEmptyString(systemRecord.task_id) ?? readTaskNotificationTagFromText(rawText, "task-id"),
     toolUseId:
       toNonEmptyString(systemRecord.tool_use_id) ??
-      (rawText
-        ? (readTaskNotificationTagValue({ text: rawText, tagName: "tool-use-id" }) ??
-          readTaskNotificationTagValue({ text: rawText, tagName: "tool_use_id" }))
-        : null),
+      readTaskNotificationTagFromText(rawText, "tool-use-id", "tool_use_id"),
     status:
-      toNonEmptyString(systemRecord.status) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "status" }) : null),
+      toNonEmptyString(systemRecord.status) ?? readTaskNotificationTagFromText(rawText, "status"),
     summary:
-      toNonEmptyString(systemRecord.summary) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "summary" }) : null),
+      toNonEmptyString(systemRecord.summary) ?? readTaskNotificationTagFromText(rawText, "summary"),
     outputFile:
       toNonEmptyString(systemRecord.output_file) ??
-      (rawText
-        ? (readTaskNotificationTagValue({ text: rawText, tagName: "output-file" }) ??
-          readTaskNotificationTagValue({ text: rawText, tagName: "output_file" }))
-        : null),
+      readTaskNotificationTagFromText(rawText, "output-file", "output_file"),
     rawText,
   });
 }
@@ -216,7 +228,7 @@ function normalizeTaskNotificationCallIdSegment(segment: string): string | null 
   return normalized.length > 0 ? normalized : null;
 }
 
-function buildTaskNotificationCallId(envelope: TaskNotificationEnvelope): string {
+function buildTaskNotificationCallId(envelope: TaskNotificationEnvelope): string | null {
   const messageSegment = envelope.messageId
     ? normalizeTaskNotificationCallIdSegment(envelope.messageId)
     : null;
@@ -231,10 +243,12 @@ function buildTaskNotificationCallId(envelope: TaskNotificationEnvelope): string
     return `task_notification_${taskSegment}`;
   }
 
-  const seed =
-    [envelope.status, envelope.summary, envelope.outputFile, envelope.rawText]
-      .filter((value): value is string => typeof value === "string")
-      .join("|") || "task_notification";
+  const seed = [envelope.status, envelope.summary, envelope.outputFile, envelope.rawText]
+    .filter((value): value is string => typeof value === "string")
+    .join("|");
+  if (!seed) {
+    return null;
+  }
   const digest = createHash("sha1").update(seed).digest("hex").slice(0, 12);
   return `task_notification_${digest}`;
 }
@@ -267,7 +281,11 @@ function buildTaskNotificationStatus(
 
 function toTaskNotificationToolCall(
   envelope: TaskNotificationEnvelope,
-): TaskNotificationToolCallItem {
+): TaskNotificationToolCallItem | null {
+  const callId = buildTaskNotificationCallId(envelope);
+  if (!callId) {
+    return null;
+  }
   const lifecycle = buildTaskNotificationStatus({
     status: envelope.status,
     summary: envelope.summary,
@@ -284,7 +302,7 @@ function toTaskNotificationToolCall(
 
   const base = {
     type: "tool_call" as const,
-    callId: buildTaskNotificationCallId(envelope),
+    callId,
     name: "task_notification",
     detail: {
       type: "plain_text" as const,

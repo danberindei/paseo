@@ -85,4 +85,42 @@ describe("task-notification-tool-call", () => {
 
     expect(item).toBeNull();
   });
+
+  it("returns null for a queue-operation record without the notification marker", () => {
+    const item = mapTaskNotificationSystemRecordToToolCall({
+      type: "queue-operation",
+    });
+
+    expect(item).toBeNull();
+  });
+
+  it("maps a queue-operation record carrying the notification marker", () => {
+    const content =
+      "<task-notification>\n<tool-use-id>toolu_q1</tool-use-id>\n<task-id>bg-q1</task-id>\n<status>completed</status>\n</task-notification>";
+    const item = mapTaskNotificationSystemRecordToToolCall({
+      type: "queue-operation",
+      uuid: "task-note-queue-1",
+      content,
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "task_notification_task-note-queue-1",
+      name: "task_notification",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label: "Background task completed",
+        icon: "wrench",
+        text: content,
+      },
+      metadata: {
+        synthetic: true,
+        source: "claude_task_notification",
+        taskId: "bg-q1",
+        status: "completed",
+      },
+    });
+  });
 });
