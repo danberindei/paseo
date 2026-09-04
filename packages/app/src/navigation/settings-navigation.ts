@@ -14,7 +14,6 @@ export type SettingsView =
   | { kind: "root" }
   | { kind: "section"; section: SettingsSectionSlug }
   | { kind: "host"; serverId: string; section: HostSectionSlug }
-  | { kind: "projects" }
   | { kind: "project"; serverId: string; projectId: string }
   | { kind: "spaces" }
   | { kind: "space"; spaceId: string };

@@ -207,6 +207,8 @@ function renderHostSettingsContent(
   onHostRemoved: () => void,
 ): ReactNode {
   switch (view.section) {
+    case "projects":
+      return <ProjectsScreen serverId={view.serverId} />;
     case "connections":
       return <HostConnectionsPage serverId={view.serverId} />;
     case "agents":
@@ -1147,7 +1149,7 @@ function SettingsSidebar({
   const selectedSectionId = view.kind === "section" ? view.section : null;
   const selectedHostSection = view.kind === "host" ? view.section : null;
   const isSpacesSelected = view.kind === "spaces" || view.kind === "space";
-  const isProjectsSelected = view.kind === "projects" || view.kind === "project";
+  const isProjectsSelected = view.kind === "project";
 
   const sidebarBody = (
     <>
@@ -1561,7 +1563,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       if (!item) return null;
       return { title: t(item.labelKey), Icon: item.icon };
     }
-    if (view.kind === "project" || view.kind === "projects") {
+    if (view.kind === "project") {
       return { title: t("settings.projects"), Icon: FolderGit2 };
     }
     if (view.kind === "space" || view.kind === "spaces") {
@@ -1578,9 +1580,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     content = (() => {
       if (view.kind === "host") {
         return renderHostSettingsContent(view, handleHostRemoved);
-      }
-      if (view.kind === "projects") {
-        return <ProjectsScreen serverId={activeHostServerId ?? ""} />;
       }
       if (view.kind === "project") {
         return (
