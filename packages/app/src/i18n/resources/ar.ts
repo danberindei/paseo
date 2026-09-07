@@ -3301,6 +3301,7 @@ export const ar: TranslationResources = {
           add: "إضافة البرنامج النصي",
           edit: "يحرر",
           remove: "يزيل",
+          done: "منتهي",
         },
       },
       metadata: {

@@ -3325,6 +3325,7 @@ export const ru: TranslationResources = {
           add: "Добавить скрипт",
           edit: "Редактировать",
           remove: "Удалить",
+          done: "Готово",
         },
       },
       metadata: {

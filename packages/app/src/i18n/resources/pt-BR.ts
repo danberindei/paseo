@@ -3313,6 +3313,7 @@ export const ptBR: TranslationResources = {
           add: "Adicionar script",
           edit: "Editar",
           remove: "Remover",
+          done: "Concluído",
         },
       },
       metadata: {

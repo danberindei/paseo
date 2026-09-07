@@ -3339,6 +3339,7 @@ export const fr: TranslationResources = {
           add: "Ajouter un script",
           edit: "Modifier",
           remove: "Supprimer",
+          done: "Fait",
         },
       },
       metadata: {

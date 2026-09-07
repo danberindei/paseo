@@ -3229,6 +3229,7 @@ export const zhCN: TranslationResources = {
           add: "添加 script",
           edit: "编辑",
           remove: "移除",
+          done: "完成",
         },
       },
       metadata: {

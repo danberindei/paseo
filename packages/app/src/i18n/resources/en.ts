@@ -3401,6 +3401,7 @@ export const en = {
           add: "Add script",
           edit: "Edit",
           remove: "Remove",
+          done: "Done",
         },
       },
       metadata: {

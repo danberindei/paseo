@@ -3299,6 +3299,7 @@ export const ja: TranslationResources = {
           add: "スクリプトを追加",
           edit: "編集",
           remove: "削除",
+          done: "完了",
         },
       },
       metadata: {

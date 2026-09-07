@@ -3284,6 +3284,7 @@ export const ko: TranslationResources = {
           add: "스크립트 추가",
           edit: "편집",
           remove: "제거",
+          done: "완료",
         },
       },
       metadata: {

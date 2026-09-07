@@ -1101,7 +1101,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
           {t("settings.project.actions.cancel")}
         </Button>
         <Button onPress={handleSavePress} variant="default" testID="script-edit-save">
-          {t("settings.project.actions.save")}
+          {t("settings.project.scripts.actions.done")}
         </Button>
       </View>
     </AdaptiveModalSheet>

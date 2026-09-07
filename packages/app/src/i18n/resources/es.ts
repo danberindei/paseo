@@ -3332,6 +3332,7 @@ export const es: TranslationResources = {
           add: "Agregar guión",
           edit: "Editar",
           remove: "Eliminar",
+          done: "Hecho",
         },
       },
       metadata: {
