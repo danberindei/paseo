@@ -317,6 +317,13 @@ class SessionEvents {
       .map((event) => event.item);
   }
 
+  timelineEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline",
+    );
+  }
+
   timelineAndCompletionEvents() {
     return this.events.flatMap((event) => {
       if (event.type === "timeline") {
@@ -781,6 +788,7 @@ describe("PiRpcAgentSession", () => {
     const fakeSession = pi.latestSession();
 
     await session.startTurn("hello");
+    fakeSession.emit({ type: "agent_start" });
     fakeSession.emit({
       type: "extension_ui_request",
       id: "notify-live",
@@ -1155,8 +1163,21 @@ describe("PiRpcAgentSession", () => {
     });
     await session.interrupt();
     const cancellation = await events.nextTurnCancellation();
+    expect(events.timelineEvents()).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId: firstTurn.turnId,
+        item: { type: "notification", level: "info", message: "Search finished" },
+      },
+    ]);
+    expect(events.eventTypes()).toEqual(["timeline", "turn_canceled"]);
     await session.startTurn("next request");
+    fakeSession.emit({ type: "agent_start" });
     await fakeSession.failHeldPrompt(new Error("Canceled prompt timed out"));
+    expect(events.timelineItems()).toEqual([
+      { type: "notification", level: "info", message: "Search finished" },
+    ]);
 
     expect(cancellation).toEqual({
       type: "turn_canceled",
@@ -2255,7 +2276,10 @@ describe("PiRpcAgentSession", () => {
     const usageCompletion = await events.nextTurnCompletion();
     expect(usageCompletion).toMatchObject({ type: "turn_completed", turnId: usageTurnId });
     expect(events.timelineAndCompletionEvents()).toEqual([
-      { type: "timeline", item: { type: "user_message", text: "/usage" } },
+      {
+        type: "timeline",
+        item: { type: "user_message", text: "/usage" },
+      },
       { type: "timeline", item: { type: "assistant_message", text: "Usage 12%" } },
       { type: "turn_completed" },
     ]);
@@ -2267,6 +2291,58 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnCompletedEvents()[1]).toMatchObject({
       type: "turn_completed",
       turnId: helloTurnId,
+    });
+  });
+
+  test("completes an input-blocked ordinary prompt and reports the exact hook reason", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const reason =
+      "Blocked: 61 min since the last assistant reply (>3570s). Add 'ignore idle' to the message to proceed.";
+
+    const { turnId } = await session.startTurn("continue work", {
+      clientMessageId: "client-blocked",
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-blocked",
+      method: "notify",
+      message: reason,
+      notifyType: "warning",
+    });
+
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toEqual([
+      expect.objectContaining({ type: "turn_completed", turnId }),
+    ]);
+    expect(events.timelineEvents()).toEqual([
+      expect.objectContaining({
+        turnId,
+        item: { type: "user_message", text: "continue work", clientMessageId: "client-blocked" },
+      }),
+      expect.objectContaining({
+        turnId,
+        rejectedClientMessageId: "client-blocked",
+        item: { type: "error", message: reason },
+      }),
+    ]);
+
+    // The blocked prompt never reached Pi's transcript, so it must not be replayed
+    // from local rows after a reload.
+    fakeSession.historyUserEntries = [];
+    fakeSession.messages = [];
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(history).toEqual([]);
+
+    const { turnId: recoveryTurnId } = await session.startTurn("try again");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toHaveLength(2);
+    expect(events.turnCompletedEvents()[1]).toMatchObject({
+      type: "turn_completed",
+      turnId: recoveryTurnId,
     });
   });
 
@@ -2288,7 +2364,7 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnCompletedEvents()).toHaveLength(1);
   });
 
-  test("probes slash prompts without agentInvoked and surfaces notify output immediately", async () => {
+  test("probes slash prompts without agentInvoked and reports the no-turn notice as an error", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -2306,14 +2382,146 @@ describe("PiRpcAgentSession", () => {
     expect(events.timelineAndCompletionEvents()).toEqual([
       {
         type: "timeline",
-        item: { type: "notification", level: "info", message: "Plan mode enabled" },
+        item: { type: "user_message", text: "/plan on" },
       },
-      { type: "timeline", item: { type: "user_message", text: "/plan on" } },
+      {
+        type: "timeline",
+        item: { type: "error", message: "Plan mode enabled" },
+      },
       { type: "turn_completed" },
     ]);
+    expect(events.timelineEvents().at(-1)?.rejectedClientMessageId).toBeUndefined();
   });
 
-  test("surfaces notify requests immediately even when the turn has started", async () => {
+  test.each([
+    { error: "Input hook failed", terminal: "turn_failed" },
+    { error: "Request was aborted", terminal: "turn_canceled" },
+  ])(
+    "flushes pending notices before $terminal when the prompt rejects",
+    async ({ error, terminal }) => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+      fakeSession.holdNextPrompt();
+
+      const { turnId } = await session.startTurn("continue work");
+      fakeSession.emit({
+        type: "extension_ui_request",
+        id: "notify-pending",
+        method: "notify",
+        message: "Input hook diagnostic",
+        notifyType: "warning",
+      });
+      expect(events.timelineItems()).toEqual([]);
+
+      await fakeSession.failHeldPrompt(new Error(error));
+
+      expect(events.timelineEvents()).toEqual([
+        {
+          type: "timeline",
+          provider: "pi",
+          turnId,
+          item: { type: "notification", level: "warning", message: "Input hook diagnostic" },
+        },
+      ]);
+      expect(events.eventTypes()).toEqual(["timeline", terminal]);
+    },
+  );
+
+  test("flushes pending notices before a process exit fails the turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("continue work");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-exit",
+      method: "notify",
+      message: "Process diagnostic",
+      notifyType: "error",
+    });
+
+    fakeSession.emit({ type: "process_exit", error: "Pi exited" });
+    await fakeSession.failHeldPrompt(new Error("Pi exited"));
+
+    expect(events.timelineEvents()).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId,
+        item: { type: "notification", level: "error", message: "Process diagnostic" },
+      },
+    ]);
+    expect(events.eventTypes()).toEqual(["timeline", "turn_failed"]);
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({ turnId, error: "Pi exited" });
+  });
+
+  test("flushes pending notices before reporting a terminal error when abort rejects", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("continue work");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-interrupt",
+      method: "notify",
+      message: "Input hook diagnostic",
+      notifyType: "warning",
+    });
+    fakeSession.abort = async () => {
+      fakeSession.finishTurn({
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Provider disconnected",
+        content: [],
+      });
+      throw new Error("Abort failed");
+    };
+
+    await expect(session.interrupt()).rejects.toThrow("Abort failed");
+    await fakeSession.failHeldPrompt(new Error("Prompt failed"));
+
+    expect(events.timelineEvents()).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId,
+        item: { type: "notification", level: "warning", message: "Input hook diagnostic" },
+      },
+    ]);
+    expect(events.eventTypes()).toEqual(["timeline", "turn_failed"]);
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      turnId,
+      error: expect.stringContaining("Provider disconnected"),
+    });
+  });
+
+  test("flushes pending notices when a turn settles without a start event", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("continue work");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-settled",
+      method: "notify",
+      message: "Input hook diagnostic",
+    });
+
+    fakeSession.finishTurn();
+    await fakeSession.failHeldPrompt(new Error("Late prompt failure"));
+
+    expect(events.timelineEvents()).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId,
+        item: { type: "notification", level: "info", message: "Input hook diagnostic" },
+      },
+    ]);
+    expect(events.eventTypes().slice(0, 2)).toEqual(["timeline", "turn_completed"]);
+  });
+
+  test("holds a notify emitted before the turn starts until the turn starts", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -2324,8 +2532,9 @@ describe("PiRpcAgentSession", () => {
       method: "notify",
       message: "Shown despite turn start",
     });
-    fakeSession.emit({ type: "agent_start" });
+    expect(events.timelineItems()).toEqual([]);
 
+    fakeSession.emit({ type: "agent_start" });
     await flushTurnScheduling();
     expect(events.turnCompletedEvents()).toHaveLength(0);
     expect(events.timelineItems()).toEqual([
@@ -2362,14 +2571,16 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
-  test("does not probe non-slash prompts when agentInvoked is missing", async () => {
+  test("does not complete an ordinary prompt without agentInvoked while the runtime is streaming", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
+    fakeSession.state = { ...fakeSession.state, isStreaming: true };
 
-    const { turnId } = await session.startTurn("hello");
+    const { turnId } = await session.startTurn("long task");
     await flushTurnScheduling();
     expect(events.turnCompletedEvents()).toHaveLength(0);
 
+    fakeSession.state = { ...fakeSession.state, isStreaming: false };
     fakeSession.finishTurn();
     await flushTurnScheduling();
     const completion = await events.nextTurnCompletion();
@@ -2388,6 +2599,7 @@ describe("PiRpcAgentSession", () => {
     };
 
     const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({ type: "agent_start" });
     scheduler.poll();
     await flushTurnScheduling();
 
@@ -2450,6 +2662,7 @@ describe("PiRpcAgentSession", () => {
     fakeSession.getSessionStatsError = new Error("stats unavailable");
 
     const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({ type: "agent_start" });
     scheduler.poll();
     await flushTurnScheduling();
     expect(events.turnCompletedEvents()).toHaveLength(0);
@@ -3415,6 +3628,78 @@ describe("PiRpcAgentClient", () => {
     expect(fakeSession.treeNavigationRequests).toEqual(["entry-1"]);
   });
 
+  test("rejects rewinding a prompt that never reached the Pi tree", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.treeUserEntries = [{ id: "entry-1", parentId: null, text: "first prompt" }];
+    fakeSession.historyUserEntries = fakeSession.treeUserEntries;
+    fakeSession.emitEntryCapture();
+
+    await session.startTurn("blocked prompt", { clientMessageId: "client-blocked" });
+    await events.nextTurnCompletion();
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: "blocked prompt",
+      clientMessageId: "client-blocked",
+    });
+
+    await expect(session.revertConversation({ messageId: "client-blocked" })).rejects.toThrow(
+      "Pi rewind target client-blocked is not in the captured Pi conversation tree",
+    );
+    expect(fakeSession.treeNavigationRequests).toEqual([]);
+  });
+
+  test("rejects a rewind target that is not a known Pi user row", async () => {
+    const { pi, session } = await createSession();
+
+    await expect(session.revertConversation({ messageId: "unknown" })).rejects.toThrow(
+      "Pi rewind target unknown is not in the captured Pi conversation tree",
+    );
+
+    expect(pi.latestSession().treeNavigationRequests).toEqual([]);
+  });
+
+  test("rewinding a captured entry keeps local command rows recorded before it", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.promptAck = { agentInvoked: false };
+
+    await session.startTurn("/usage");
+    fakeSession.emit({ type: "command_output", text: "Usage 12%" });
+    await events.nextTurnCompletion();
+
+    fakeSession.treeUserEntries = [{ id: "entry-1", parentId: null, text: "accepted prompt" }];
+    fakeSession.historyUserEntries = fakeSession.treeUserEntries;
+    fakeSession.messages = [{ role: "user", content: "accepted prompt" }];
+    fakeSession.emitEntryCapture();
+
+    await session.startTurn("/status");
+    fakeSession.emit({ type: "command_output", text: "Status ok" });
+    await flushTurnScheduling();
+
+    const historyBefore: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) historyBefore.push(event);
+    expect(historyBefore).toMatchObject([
+      { type: "timeline", item: { type: "user_message", text: "/usage" } },
+      { type: "timeline", item: { type: "assistant_message", text: "Usage 12%" } },
+      { type: "timeline", item: { type: "user_message", text: "accepted prompt" } },
+      { type: "timeline", item: { type: "user_message", text: "/status" } },
+      { type: "timeline", item: { type: "assistant_message", text: "Status ok" } },
+    ]);
+
+    await session.revertConversation({ messageId: "entry-1" });
+    fakeSession.historyUserEntries = [];
+    fakeSession.messages = [];
+    const historyAfter: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) historyAfter.push(event);
+
+    expect(fakeSession.treeNavigationRequests).toEqual(["entry-1"]);
+    expect(historyAfter).toMatchObject([
+      { type: "timeline", item: { type: "user_message", text: "/usage" } },
+      { type: "timeline", item: { type: "assistant_message", text: "Usage 12%" } },
+    ]);
+  });
+
   test("injects MCP servers without replacing the Pi global MCP config", async () => {
     const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-agent-"));
     onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
@@ -4208,6 +4493,9 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
   });
   native.finishTurn();
   await session.interrupt();
+  // Pi flips isStreaming with the prompt ack, so the follow-up owns a turn instead of
+  // looking like a prompt an input hook handled without one.
+  native.state = { ...native.state, isStreaming: true };
   const followup = await session.startTurn("follow-up after image");
   await waitForImmediate();
   await waitForImmediate();

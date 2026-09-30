@@ -311,6 +311,11 @@ interface PiCapturedEntry extends PiCapturedUserMessageEntry {
   parentId: string | null;
 }
 
+interface PiLocalUserRow {
+  precedingEntryIds: Set<string>;
+  events: Extract<AgentStreamEvent, { type: "timeline" }>[];
+}
+
 interface PendingExtensionResult {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -1193,11 +1198,17 @@ export class PiRpcAgentSession implements AgentSession {
   private pendingSettledMessages: PiAgentMessage[] | null = null;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
+  private readonly pendingNoTurnNotices: Array<{
+    turnId: string;
+    level: "info" | "warning" | "error";
+    message: string;
+  }> = [];
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
+  private readonly localUserRows: PiLocalUserRow[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private compactionPromise: Promise<void> | null = null;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
@@ -1314,7 +1325,6 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.closed) throw new Error("Pi session is closed");
     if (this.activeTurnId !== turnId) return { turnId };
     this.activeNoTurnPromptText = payload.text;
-    const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
     void (async () => {
       try {
@@ -1340,13 +1350,17 @@ export class PiRpcAgentSession implements AgentSession {
           await this.completeNoTurnPrompt(turnId);
           return;
         }
-        if (agentInvoked === undefined && shouldProbeForNoTurnPrompt) {
+        // Pi emits the prompt ack and flips isStreaming in the same synchronous block
+        // (Pi 0.85.1), so a get_state probe right after the ack cannot complete a prompt
+        // that is about to stream; prompts an input hook handled never flip it at all.
+        if (agentInvoked === undefined) {
           await this.completePromptIfHandledWithoutTurn(turnId);
         }
       } catch (error) {
         if (this.activeTurnId !== turnId) {
           return;
         }
+        this.flushNoTurnNotices();
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
@@ -1447,7 +1461,8 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       await this.requestEntryCapture("history");
       const history = await this.runtimeSession.getHistory();
-      yield* streamPiHistory(
+      let localUserRowIndex = 0;
+      for await (const event of streamPiHistory(
         this.provider,
         history.messages,
         history.userEntries,
@@ -1455,7 +1470,22 @@ export class PiRpcAgentSession implements AgentSession {
         // At most eight 2 MiB child files per replay; later cards retain their summaries.
         createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
         this.closeController.signal,
-      );
+      )) {
+        if (event.type === "timeline" && event.item.type === "user_message") {
+          const entryId = event.item.messageId;
+          while (localUserRowIndex < this.localUserRows.length) {
+            const row = this.localUserRows[localUserRowIndex];
+            // eslint-disable-next-line max-depth
+            if (!row || !entryId || row.precedingEntryIds.has(entryId)) break;
+            yield* row.events;
+            localUserRowIndex += 1;
+          }
+        }
+        yield event;
+      }
+      for (const row of this.localUserRows.slice(localUserRowIndex)) {
+        yield* row.events;
+      }
     } finally {
       if (this.closeAfterHistory) await this.close();
     }
@@ -1546,6 +1576,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.interruptingTurn = null;
       }
       if (terminalError) {
+        this.flushNoTurnNotices();
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
@@ -1570,6 +1601,7 @@ export class PiRpcAgentSession implements AgentSession {
       (this.activeTurnId || this.activeTurnStarted) &&
       (this.activeTurnId ?? undefined) === turnId
     ) {
+      this.flushNoTurnNotices();
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
@@ -1597,17 +1629,29 @@ export class PiRpcAgentSession implements AgentSession {
     }
     await this.refreshState().catch(() => undefined);
     await this.requestEntryCapture("rewind");
-    const targetEntry = this.treeUserEntriesById.get(input.messageId);
-    if (!targetEntry) {
-      throw new Error(`Pi rewind target ${input.messageId} was not found in captured tree entries`);
+    // Only a captured Pi tree entry is a safe target. A prompt that never reached the tree
+    // has no entry to navigate to, and guessing one abandons the wrong branch.
+    const entry = this.treeUserEntriesById.get(input.messageId);
+    if (!entry) {
+      throw new Error(
+        `Pi rewind target ${input.messageId} is not in the captured Pi conversation tree`,
+      );
     }
     await revertPiConversation({
-      messageId: input.messageId,
+      messageId: entry.id,
       navigator: {
         navigateTree: (treeEntryId) => this.runPiTreeExtensionCommand(treeEntryId),
       },
     });
-    this.currentLeafOverrideId = targetEntry.parentId;
+    this.currentLeafOverrideId = entry.parentId;
+    // Navigating to an entry abandons it and everything after it, so drop the locally
+    // handled command rows recorded once that entry existed.
+    const localUserRowIndex = this.localUserRows.findIndex((row) =>
+      row.precedingEntryIds.has(entry.id),
+    );
+    this.localUserRows.splice(
+      localUserRowIndex < 0 ? this.localUserRows.length : localUserRowIndex,
+    );
     this.activeToolCalls.clear();
   }
 
@@ -1800,26 +1844,47 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeNoTurnPromptText = null;
     this.activePromptRequestId = null;
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
+    this.pendingNoTurnNotices.splice(0, this.pendingNoTurnNotices.length);
+  }
+
+  private flushNoTurnNotices(): void {
+    const notices = this.pendingNoTurnNotices.splice(0);
+    for (const notice of notices) {
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: notice.turnId,
+        item: { type: "notification", level: notice.level, message: notice.message },
+      });
+    }
   }
 
   private emitBufferedNoTurnOutputs(turnId: string): void {
     const promptText = this.activeNoTurnPromptText;
+    const clientMessageId = this.activeClientMessageId;
+    // Locally handled slash commands keep a local row: their prompt and output never reach
+    // Pi's transcript, so replay is the only thing that keeps them across a reload.
+    const keepsLocalRow = promptText ? this.parseSlashCommandInput(promptText) !== null : false;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
+    const notices = this.pendingNoTurnNotices.filter((notice) => notice.turnId === turnId);
     this.clearNoTurnBuffers();
+    const events: PiLocalUserRow["events"] = [];
     if (promptText) {
-      this.emit({
+      events.push({
         type: "timeline",
         provider: this.provider,
         turnId,
         item: {
           type: "user_message",
           text: promptText,
-          ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+          // No provider message id: the prompt never became a Pi tree entry, so rewind
+          // must not treat it as acknowledged.
+          ...(clientMessageId ? { clientMessageId } : {}),
         },
       });
     }
     for (const output of outputs) {
-      this.emit({
+      events.push({
         type: "timeline",
         provider: this.provider,
         turnId,
@@ -1828,6 +1893,29 @@ export class PiRpcAgentSession implements AgentSession {
           text: output.message,
         },
       });
+    }
+    // A notice held while the prompt was pending is the reason it produced no turn: an
+    // input hook blocked it, or the command handled itself. Report it after the prompt so
+    // the manager can remove a blocked submission on rewind. Local commands are not marked
+    // rejected: their local row survives, and removing only the timeline row would let a
+    // later replay bring the command back.
+    for (const notice of notices) {
+      events.push({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: { type: "error", message: notice.message },
+        ...(clientMessageId && !keepsLocalRow ? { rejectedClientMessageId: clientMessageId } : {}),
+      });
+    }
+    if (keepsLocalRow) {
+      this.localUserRows.push({
+        precedingEntryIds: new Set(this.treeUserEntriesById.keys()),
+        events,
+      });
+    }
+    for (const event of events) {
+      this.emit(event);
     }
   }
 
@@ -2086,6 +2174,16 @@ export class PiRpcAgentSession implements AgentSession {
       ) {
         return;
       }
+      // A notice that arrives before the turn starts may be the reason the prompt never
+      // started. Hold it until the outcome is known instead of showing it as a warning.
+      if (this.activeTurnId && !this.activeTurnStarted) {
+        this.pendingNoTurnNotices.push({
+          turnId: this.activeTurnId,
+          level: toNotificationLevel(event.notifyType),
+          message,
+        });
+        return;
+      }
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -2187,6 +2285,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     const turnId = this.activeTurnId ?? undefined;
+    this.flushNoTurnNotices();
     this.usagePoller.stopTurn();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
@@ -2221,6 +2320,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "agent_start":
+        this.flushNoTurnNotices();
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         this.emit({
@@ -2230,6 +2330,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "turn_start":
+        this.flushNoTurnNotices();
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         if (this.activeTurnStartedEmitted) {
@@ -2546,6 +2647,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.interruptingTurn.error = errorMessage ?? "Pi turn failed";
       return;
     }
+    this.flushNoTurnNotices();
     this.interruptingTurn = null;
     this.activeTurnId = null;
     this.activeClientMessageId = null;
