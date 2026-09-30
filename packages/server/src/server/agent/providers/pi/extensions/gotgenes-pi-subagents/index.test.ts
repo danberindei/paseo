@@ -176,6 +176,7 @@ describe("@gotgenes/pi-subagents adapter", () => {
     expect(events).toContainEqual({
       type: "timeline",
       provider: "pi",
+      timestamp: "2026-09-23T21:08:20.057Z",
       item: {
         type: "tool_call",
         callId: "pi-custom-1",

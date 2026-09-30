@@ -37,6 +37,7 @@ export type PiAgentMessage =
   | {
       role: "user";
       content: string | Array<PiTextContent | PiImageContent>;
+      timestamp?: number;
     }
   | {
       role: "custom";
@@ -44,6 +45,7 @@ export type PiAgentMessage =
       customType?: string;
       details?: unknown;
       display?: boolean;
+      timestamp?: number;
     }
   | {
       role: "assistant";
@@ -54,6 +56,7 @@ export type PiAgentMessage =
       responseModel?: string;
       errorMessage?: string | null;
       stopReason?: string;
+      timestamp?: number;
     }
   | {
       role: "toolResult";
@@ -62,6 +65,7 @@ export type PiAgentMessage =
       content: unknown;
       isError?: boolean;
       details?: unknown;
+      timestamp?: number;
     }
   | {
       role: "bashExecution";

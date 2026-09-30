@@ -147,6 +147,7 @@ describe("Pi history mapper", () => {
       {
         type: "timeline",
         provider: "pi",
+        timestamp: "1970-01-01T00:02:03.000Z",
         item: {
           type: "tool_call",
           callId: "pi-bash-123",
@@ -157,6 +158,89 @@ describe("Pi history mapper", () => {
         },
       },
     ]);
+  });
+
+  test("attaches each message's own timestamp to its replayed timeline events", async () => {
+    await expect(
+      collectHistory([
+        { role: "user", content: "hello", timestamp: 1735689600000 },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "hi" },
+            { type: "toolCall", id: "tool-2", name: "read", arguments: { path: "a.txt" } },
+          ],
+          timestamp: 1735689660000,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-2",
+          toolName: "read",
+          content: [{ type: "text", text: "contents" }],
+          timestamp: 1735689720000,
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        item: { type: "user_message", text: "hello" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        timestamp: "2025-01-01T00:01:00.000Z",
+        item: { type: "assistant_message", text: "hi", messageId: "pi-history-assistant-1" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        timestamp: "2025-01-01T00:01:00.000Z",
+        item: {
+          type: "tool_call",
+          callId: "tool-2",
+          name: "read",
+          status: "running",
+          detail: {
+            type: "read",
+            filePath: "a.txt",
+            content: undefined,
+            offset: undefined,
+            limit: undefined,
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        timestamp: "2025-01-01T00:02:00.000Z",
+        item: {
+          type: "tool_call",
+          callId: "tool-2",
+          name: "read",
+          status: "completed",
+          detail: {
+            type: "read",
+            filePath: "a.txt",
+            content: "contents",
+            offset: undefined,
+            limit: undefined,
+          },
+          error: null,
+        },
+      },
+    ]);
+  });
+
+  test("omits the timestamp when the provider message has none", async () => {
+    const events = await collectHistory([{ role: "user", content: "hello" }]);
+
+    expect(events).toEqual([
+      { type: "timeline", provider: "pi", item: { type: "user_message", text: "hello" } },
+    ]);
+    expect(events[0]).not.toHaveProperty("timestamp");
   });
 
   test("replays custom messages as completed tools, matching the live path", async () => {

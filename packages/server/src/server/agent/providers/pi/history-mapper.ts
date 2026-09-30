@@ -1,5 +1,6 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
@@ -80,23 +81,9 @@ export class PiHistoryMapper {
     const events: AgentStreamEvent[] = [];
 
     for (const message of messages) {
-      switch (message.role) {
-        case "user":
-          events.push(...this.mapUserMessage(message));
-          break;
-        case "custom":
-          events.push(...this.mapCustomMessage(message));
-          break;
-        case "assistant":
-          events.push(...this.mapAssistantMessage(message));
-          break;
-        case "toolResult": {
-          events.push(...(await this.mapToolResultMessage(message)));
-          break;
-        }
-        case "bashExecution":
-          events.push(this.mapBashExecutionMessage(message));
-          break;
+      const timestamp = normalizeProviderReplayTimestamp(message.timestamp);
+      for (const event of await this.mapMessage(message)) {
+        events.push(timestamp && event.type === "timeline" ? { ...event, timestamp } : event);
       }
     }
 
@@ -105,6 +92,21 @@ export class PiHistoryMapper {
 
   async hydrate(): Promise<AgentStreamEvent[]> {
     return (await Promise.all(this.hydrations)).flat();
+  }
+
+  private async mapMessage(message: PiAgentMessage): Promise<AgentStreamEvent[]> {
+    switch (message.role) {
+      case "user":
+        return this.mapUserMessage(message);
+      case "custom":
+        return this.mapCustomMessage(message);
+      case "assistant":
+        return this.mapAssistantMessage(message);
+      case "toolResult":
+        return this.mapToolResultMessage(message);
+      case "bashExecution":
+        return [this.mapBashExecutionMessage(message)];
+    }
   }
 
   private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
