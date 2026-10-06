@@ -1,9 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useLayoutEffect, useState } from "react";
-import { create } from "zustand";
+import { create, type StateCreator } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
+import { createWorkspaceLayoutSyncTracker } from "./workspace-layout-sync";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -69,6 +70,7 @@ import { isSheetTabModified, resolveCompactSheetPolicy } from "@/workspace-tabs/
 import { panelResourceKey, type CompactSheetPolicy } from "@/panels/panel-manifest";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
+import { createHydrationSettlement } from "@/stores/hydration-settlement";
 
 export {
   AMBIENT_PLACEMENT,
@@ -134,6 +136,12 @@ export type WorkspaceTabDestination =
 interface WorkspaceLayoutStore {
   /** Deliberate focus, including reselecting the current tab. Never persisted. */
   focusRequest: { workspaceKey: string; tabId: string } | null;
+  applyExternallyPersistedState: (
+    state: WorkspaceLayoutStore,
+    snapshot: WorkspaceLayoutPersistedState,
+  ) => void;
+  getSyncSnapshot: () => WorkspaceLayoutPersistedState;
+  readSyncSnapshot: () => Promise<WorkspaceLayoutPersistedState | null>;
   panelRevisionByWorkspace: Record<string, Record<string, number>>;
   /** Published once by the app shell; callers never pass a form factor to open a tab. */
   layoutMode: WorkspaceLayoutMode;
@@ -240,7 +248,7 @@ const MAX_TREE_DEPTH = 5;
 
 const LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH = 1440;
 const WORKSPACE_LAYOUT_PERSIST_VERSION = 2;
-type WorkspaceLayoutPersistedState = z.infer<typeof WorkspaceLayoutPersistedStateSchema>;
+export type WorkspaceLayoutPersistedState = z.infer<typeof WorkspaceLayoutPersistedStateSchema>;
 
 function convertLegacyExplorerSidebarRatios(
   ratiosByWorkspace: Record<string, number>,
@@ -999,41 +1007,107 @@ const PERSISTED_SLICES = [
   "pullRequestTabAutoOpenedByWorkspace",
 ] as const;
 
+export const WORKSPACE_LAYOUT_STORE_STORAGE_KEY = "workspace-layout-state";
+
+export function partializeWorkspaceLayoutState(
+  state: WorkspaceLayoutStore,
+): WorkspaceLayoutPersistedState {
+  const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
+  for (const key in state.layoutByWorkspace) {
+    // Strip ephemeral (commit diff) tabs before persisting so they are
+    // dropped on reload rather than restored pointing at a rebased SHA.
+    layoutByWorkspace[key] = stripEphemeralTabsFromLayout(
+      normalizeLayout(state.layoutByWorkspace[key]),
+    );
+  }
+  return {
+    layoutByWorkspace,
+    pinnedAgentIdsByWorkspace: Object.fromEntries(
+      Object.entries(state.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
+        key,
+        Array.from(agentIds),
+      ]),
+    ),
+    splitSizesByWorkspace: state.splitSizesByWorkspace,
+    explorerSidebarWidthByWorkspace: state.explorerSidebarWidthByWorkspace,
+    explorerPaneIdByWorkspace: state.explorerSidebarPaneIdByWorkspace,
+    sidePaneIdByWorkspace: state.sidePaneIdByWorkspace,
+    pullRequestTabAutoOpenedByWorkspace: state.pullRequestTabAutoOpenedByWorkspace,
+  };
+}
+
+export function mergeWorkspaceLayoutPersistedState(
+  persistedState: unknown,
+  currentState: WorkspaceLayoutStore,
+  ids: WorkspaceLayoutIdSource,
+): WorkspaceLayoutStore {
+  const result = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
+  if (!result.success) {
+    return currentState;
+  }
+  const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
+  const explorerSidebarPaneIdByWorkspace: Record<string, string | null> = {
+    ...(result.data.explorerSidebarPaneIdByWorkspace ?? result.data.explorerPaneIdByWorkspace),
+  };
+  for (const [workspaceKey, persistedLayout] of Object.entries(result.data.layoutByWorkspace)) {
+    const restoredLayout = restoreWorkspaceLayout(
+      stripEphemeralTabsFromLayout(persistedLayout),
+      resolveExplorerSidebarPaneId(persistedLayout, explorerSidebarPaneIdByWorkspace[workspaceKey]),
+      ids.createNodeId,
+    );
+    const explorerSidebar = ensurePersistedExplorerSidebarPane({
+      layout: restoredLayout,
+      registeredPaneId: explorerSidebarPaneIdByWorkspace[workspaceKey],
+      ids,
+    });
+    layoutByWorkspace[workspaceKey] = explorerSidebar?.layout ?? restoredLayout;
+    if (explorerSidebar) {
+      explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
+    }
+  }
+  return {
+    ...currentState,
+    layoutByWorkspace,
+    pinnedAgentIdsByWorkspace: Object.fromEntries(
+      Object.entries(result.data.pinnedAgentIdsByWorkspace ?? {}).map(([key, agentIds]) => [
+        key,
+        new Set(agentIds),
+      ]),
+    ),
+    splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
+    explorerSidebarWidthByWorkspace:
+      result.data.explorerSidebarWidthByWorkspace ??
+      convertLegacyExplorerSidebarRatios(
+        result.data.explorerSidebarRatioByWorkspace ?? result.data.sidePanelRatioByWorkspace ?? {},
+      ),
+    explorerSidebarPaneIdByWorkspace,
+    sidePaneIdByWorkspace: result.data.sidePaneIdByWorkspace ?? {},
+    pullRequestTabAutoOpenedByWorkspace: result.data.pullRequestTabAutoOpenedByWorkspace ?? {},
+  };
+}
+
 // Zustand persist re-runs partialize after every set, including ones that return the state
 // untouched. Reusing the previous projection while every persisted slice is the same
 // reference lets validated storage skip unchanged writes before validation and serialization.
-function createPersistedStateProjection() {
+function createPersistedStateProjection(
+  tracker: ReturnType<typeof createWorkspaceLayoutSyncTracker>,
+) {
   let previous: { source: WorkspaceLayoutStore; state: WorkspaceLayoutPersistedState } | null =
     null;
-  return (source: WorkspaceLayoutStore): WorkspaceLayoutPersistedState => {
+  const project = (source: WorkspaceLayoutStore): WorkspaceLayoutPersistedState => {
     const last = previous;
     if (last && PERSISTED_SLICES.every((slice) => last.source[slice] === source[slice])) {
       return last.state;
     }
-    const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
-    for (const key in source.layoutByWorkspace) {
-      // Strip ephemeral (commit diff) tabs before persisting so they are
-      // dropped on reload rather than restored pointing at a rebased SHA.
-      layoutByWorkspace[key] = stripEphemeralTabsFromLayout(
-        normalizeLayout(source.layoutByWorkspace[key]),
-      );
-    }
-    const state: WorkspaceLayoutPersistedState = {
-      layoutByWorkspace,
-      pinnedAgentIdsByWorkspace: Object.fromEntries(
-        Object.entries(source.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
-          key,
-          Array.from(agentIds),
-        ]),
-      ),
-      splitSizesByWorkspace: source.splitSizesByWorkspace,
-      explorerSidebarWidthByWorkspace: source.explorerSidebarWidthByWorkspace,
-      explorerPaneIdByWorkspace: source.explorerSidebarPaneIdByWorkspace,
-      sidePaneIdByWorkspace: source.sidePaneIdByWorkspace,
-      pullRequestTabAutoOpenedByWorkspace: source.pullRequestTabAutoOpenedByWorkspace,
-    };
+    const state = tracker.project(partializeWorkspaceLayoutState(source));
     previous = { source, state };
     return state;
+  };
+  return {
+    project,
+    invalidate: () => {
+      previous = null;
+    },
   };
 }
 
@@ -1057,9 +1131,32 @@ export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
   storage: StateStorage = AsyncStorage,
 ) {
-  return create<WorkspaceLayoutStore>()(
-    persist(
+  const tracker = createWorkspaceLayoutSyncTracker();
+  const hydrationSettlement = createHydrationSettlement();
+  const projection = createPersistedStateProjection(tracker);
+  const persistStorage = createValidatedPersistStorage(
+    storage,
+    WorkspaceLayoutPersistedStateSchema,
+    {
+      skipUnchanged: true,
+    },
+  );
+  const initialize: StateCreator<
+    WorkspaceLayoutStore,
+    [],
+    [["zustand/persist", WorkspaceLayoutPersistedState]]
+  > = (setExternalState, getExternalState, api) =>
+    persist<WorkspaceLayoutStore, [], [], WorkspaceLayoutPersistedState>(
       (set, get) => ({
+        applyExternallyPersistedState: (state, snapshot) => {
+          tracker.accept(snapshot);
+          projection.invalidate();
+          projection.project(state);
+          if (state !== get()) setExternalState(state);
+        },
+        getSyncSnapshot: () => projection.project(get()),
+        readSyncSnapshot: async () =>
+          (await persistStorage.readForSync(WORKSPACE_LAYOUT_STORE_STORAGE_KEY))?.state ?? null,
         autoOpenPullRequestTab: (workspaceKey, resolvePlacement) => {
           const key = trimNonEmpty(workspaceKey);
           if (!key || get().pullRequestTabAutoOpenedByWorkspace[key]) return null;
@@ -2326,71 +2423,28 @@ export function createWorkspaceLayoutStore(
         },
       }),
       {
-        name: "workspace-layout-state",
+        name: WORKSPACE_LAYOUT_STORE_STORAGE_KEY,
         version: WORKSPACE_LAYOUT_PERSIST_VERSION,
-        storage: createValidatedPersistStorage(storage, WorkspaceLayoutPersistedStateSchema, {
-          skipUnchanged: true,
-        }),
+        storage: persistStorage,
         migrate: (persistedState, version) =>
           migrateWorkspaceLayoutPersistedState(persistedState, version, ids),
-        partialize: createPersistedStateProjection(),
+        partialize: projection.project,
+        onRehydrateStorage: () => hydrationSettlement.start(),
         merge: (persistedState, currentState) => {
-          const result = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
-          if (!result.success) {
-            return currentState;
-          }
-          const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
-          const explorerSidebarPaneIdByWorkspace: Record<string, string | null> = {
-            ...(result.data.explorerSidebarPaneIdByWorkspace ??
-              result.data.explorerPaneIdByWorkspace),
-          };
-          for (const [workspaceKey, persistedLayout] of Object.entries(
-            result.data.layoutByWorkspace,
-          )) {
-            const restoredLayout = restoreWorkspaceLayout(
-              stripEphemeralTabsFromLayout(persistedLayout),
-              resolveExplorerSidebarPaneId(
-                persistedLayout,
-                explorerSidebarPaneIdByWorkspace[workspaceKey],
-              ),
-              ids.createNodeId,
-            );
-            const explorerSidebar = ensurePersistedExplorerSidebarPane({
-              layout: restoredLayout,
-              registeredPaneId: explorerSidebarPaneIdByWorkspace[workspaceKey],
-              ids,
-            });
-            layoutByWorkspace[workspaceKey] = explorerSidebar?.layout ?? restoredLayout;
-            if (explorerSidebar) {
-              explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
-            }
-          }
-          return {
-            ...currentState,
-            layoutByWorkspace,
-            pinnedAgentIdsByWorkspace: Object.fromEntries(
-              Object.entries(result.data.pinnedAgentIdsByWorkspace ?? {}).map(([key, agentIds]) => [
-                key,
-                new Set(agentIds),
-              ]),
-            ),
-            splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
-            explorerSidebarWidthByWorkspace:
-              result.data.explorerSidebarWidthByWorkspace ??
-              convertLegacyExplorerSidebarRatios(
-                result.data.explorerSidebarRatioByWorkspace ??
-                  result.data.sidePanelRatioByWorkspace ??
-                  {},
-              ),
-            explorerSidebarPaneIdByWorkspace,
-            sidePaneIdByWorkspace: result.data.sidePaneIdByWorkspace ?? {},
-            pullRequestTabAutoOpenedByWorkspace:
-              result.data.pullRequestTabAutoOpenedByWorkspace ?? {},
-          };
+          const merged = mergeWorkspaceLayoutPersistedState(persistedState, currentState, ids);
+          const parsed = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
+          tracker.accept({
+            ...partializeWorkspaceLayoutState(merged),
+            syncRevisions: parsed.success ? parsed.data.syncRevisions : undefined,
+          });
+          projection.invalidate();
+          return merged;
         },
       },
-    ),
-  );
+    )(setExternalState, getExternalState, api);
+  return Object.assign(create<WorkspaceLayoutStore>()(initialize), {
+    waitForHydration: hydrationSettlement.wait,
+  });
 }
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();

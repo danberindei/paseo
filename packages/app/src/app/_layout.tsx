@@ -131,7 +131,12 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore, type LeftSidebarPresentation } from "@/stores/panel-store";
-import { flushDraftPersistStorage } from "@/stores/draft-store";
+import {
+  applyExternallyPersistedDrafts,
+  DRAFT_STORE_STORAGE_KEY,
+  flushDraftPersistStorage,
+} from "@/stores/draft-store";
+import { installCrossWindowStoreSync } from "@/stores/cross-window-store-sync";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { WorkspaceLayoutModePublisher } from "@/workspace-tabs/layout-mode-publisher";
@@ -1052,6 +1057,14 @@ function RootAppTree() {
 
 export default function RootLayout() {
   useEffect(() => installWebScrollbarStyles(), []);
+  useEffect(
+    () =>
+      installCrossWindowStoreSync({
+        storageKey: DRAFT_STORE_STORAGE_KEY,
+        reconcile: applyExternallyPersistedDrafts,
+      }),
+    [],
+  );
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {

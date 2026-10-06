@@ -6,7 +6,7 @@ export function createValidatedPersistStorage<State>(
   stateSchema: z.ZodType<State>,
   // Opt in only when callers preserve state references until values change.
   options: { skipUnchanged?: boolean } = {},
-): PersistStorage<State> {
+): PersistStorage<State> & { readForSync: (name: string) => Promise<StorageValue<State> | null> } {
   const envelopeSchema = z.strictObject({
     state: stateSchema,
     version: z.number().int().nonnegative().optional(),
@@ -36,6 +36,7 @@ export function createValidatedPersistStorage<State>(
   }
 
   return {
+    readForSync: read,
     getItem: async (name) => {
       accepted.delete(name);
       reading.add(name);

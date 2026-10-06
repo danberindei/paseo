@@ -1367,8 +1367,7 @@ function WorkspaceScreenContent({
         void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
       }
       if (input.target?.kind === "draft") {
-        // The tab is the draft. Closing it discards the text, so tombstone the record
-        // for the finalized TTL to prune instead of restoring it on every launch.
+        // Closing the draft tab discards its text. Retain the tombstone so delayed windows cannot restore it.
         useDraftStore.getState().clearDraftInput({
           draftKey: buildDraftStoreKey({
             serverId: normalizedServerId,

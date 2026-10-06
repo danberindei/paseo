@@ -7,7 +7,6 @@ import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
 
 export const DRAFT_STORE_VERSION = 5;
-export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {
   uri: string;
@@ -21,6 +20,7 @@ export interface DraftInput {
   attachments: UserComposerAttachment[];
 }
 
+/** Finalized records remain as tombstones so delayed windows cannot restore cleared drafts. */
 export type DraftLifecycleState = "active" | "abandoned" | "sent" | "removed";
 
 export type CanonicalDraftInput = DraftInput;
@@ -234,22 +234,6 @@ export function collectReferencedAttachmentIdsFromState(state: DraftStoreState):
   return referencedIds;
 }
 
-export function pruneFinalizedDraftRecords(input: {
-  drafts: Record<string, DraftRecord>;
-  nowMs: number;
-}): Record<string, DraftRecord> {
-  let changed = false;
-  const next: Record<string, DraftRecord> = {};
-  for (const [draftKey, record] of Object.entries(input.drafts)) {
-    if (record.lifecycle !== "active" && input.nowMs - record.updatedAt >= FINALIZED_DRAFT_TTL_MS) {
-      changed = true;
-      continue;
-    }
-    next[draftKey] = record;
-  }
-  return changed ? next : input.drafts;
-}
-
 export function applyClearDraftRecord(input: {
   record: DraftRecord;
   lifecycle?: Exclude<DraftLifecycleState, "active">;
@@ -266,4 +250,67 @@ export function applyClearDraftRecord(input: {
     updatedAt: input.nowMs,
     version: input.record.version + 1,
   };
+}
+
+export function draftStatesNeedStorageRepair(a: DraftStoreState, b: DraftStoreState): boolean {
+  const aKeys = Object.keys(a.drafts);
+  if (aKeys.length !== Object.keys(b.drafts).length) return true;
+  for (const draftKey of aKeys) {
+    const aRecord = a.drafts[draftKey];
+    const bRecord = b.drafts[draftKey];
+    if (!bRecord) return true;
+    if (aRecord !== bRecord && JSON.stringify(aRecord) !== JSON.stringify(bRecord)) return true;
+  }
+  return false;
+}
+
+function pickNewerDraftRecord(
+  current: DraftRecord | undefined,
+  incoming: DraftRecord | undefined,
+): DraftRecord | undefined {
+  if (!current) return incoming;
+  if (!incoming) return current;
+  // Versions advance independently across windows, so timestamps order cross-window edits.
+  if (current.updatedAt !== incoming.updatedAt) {
+    return current.updatedAt > incoming.updatedAt ? current : incoming;
+  }
+  if (current.version !== incoming.version) {
+    return current.version > incoming.version ? current : incoming;
+  }
+  return JSON.stringify(current) >= JSON.stringify(incoming) ? current : incoming;
+}
+
+/**
+ * Merges another window's draft snapshot by timestamp, version, and serialized record content.
+ */
+export function mergeDraftStoreStates(input: {
+  current: DraftStoreState;
+  incoming: DraftStoreState;
+}): DraftStoreState {
+  const draftKeys = new Set([
+    ...Object.keys(input.current.drafts),
+    ...Object.keys(input.incoming.drafts),
+  ]);
+  const drafts: Record<string, DraftRecord> = {};
+  let changed = false;
+  for (const draftKey of draftKeys) {
+    const currentRecord = input.current.drafts[draftKey];
+    const chosen = pickNewerDraftRecord(currentRecord, input.incoming.drafts[draftKey]);
+    if (!chosen) continue;
+    drafts[draftKey] = chosen;
+    if (chosen !== currentRecord) changed = true;
+  }
+
+  // `createModalDraft` has no tombstone, so a null on either side stays local: preferring the
+  // record would restore a modal draft another window cleared.
+  const currentModalDraft = input.current.createModalDraft;
+  const incomingModalDraft = input.incoming.createModalDraft;
+  const createModalDraft =
+    !currentModalDraft || !incomingModalDraft
+      ? currentModalDraft
+      : (pickNewerDraftRecord(currentModalDraft, incomingModalDraft) ?? currentModalDraft);
+  if (createModalDraft !== currentModalDraft) changed = true;
+
+  if (!changed) return input.current;
+  return { drafts, createModalDraft };
 }

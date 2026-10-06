@@ -17,11 +17,13 @@ import {
   editDraftRecordText,
   collectReferencedAttachmentIdsFromState,
   DRAFT_STORE_VERSION,
+  DraftStoreStateSchema,
   isAttachmentMetadata,
   isCanonicalDraftInput,
   isLegacyDraftImage,
+  mergeDraftStoreStates,
+  draftStatesNeedStorageRepair,
   normalizeComposerAttachment,
-  pruneFinalizedDraftRecords,
   toDraftInputIfReady,
   type DraftInput,
   type DraftLifecycleState,
@@ -39,6 +41,7 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
 import { hasDraftContent } from "@/composer/draft/input-draft-core";
+import { createHydrationSettlement } from "@/stores/hydration-settlement";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -88,12 +91,47 @@ interface DraftStoreRuntimeState {
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
 
 let gcScheduled = false;
+const hydrationSettlement = createHydrationSettlement();
 const draftPersistStorage = createDraftPersistStorage(
   createValidatedPersistStorage(AsyncStorage, PersistedDraftStoreSchema),
 );
 
+export const DRAFT_STORE_STORAGE_KEY = "paseo-drafts";
+
 export function flushDraftPersistStorage(): Promise<void> {
   return draftPersistStorage?.flush() ?? Promise.resolve();
+}
+
+/**
+ * Merges in-memory drafts with the latest value persisted by another window.
+ * Store writes replace the whole drafts map, so reconciliation must preserve newer records.
+ */
+export async function applyExternallyPersistedDrafts(): Promise<void> {
+  await hydrationSettlement.wait();
+  const storage = useDraftStore.persist.getOptions().storage;
+  if (!storage) return;
+
+  const item = await storage.getItem(DRAFT_STORE_STORAGE_KEY);
+  if (!item) return;
+  const parsed = DraftStoreStateSchema.safeParse(item.state);
+  if (!parsed.success) return;
+
+  const current = useDraftStore.getState();
+  const merged = mergeDraftStoreStates({
+    current: { drafts: current.drafts, createModalDraft: current.createModalDraft },
+    incoming: parsed.data,
+  });
+  if (merged.drafts === current.drafts && merged.createModalDraft === current.createModalDraft) {
+    // Modal deletion has no convergent merge rule, so only keyed drafts trigger repairs.
+    if (draftStatesNeedStorageRepair(current, parsed.data)) {
+      useDraftStore.setState({
+        drafts: current.drafts,
+        createModalDraft: current.createModalDraft,
+      });
+    }
+    return;
+  }
+  useDraftStore.setState(merged);
 }
 
 function createDraftRecord(input: {
@@ -153,18 +191,6 @@ const migrateLegacyImages: MigrateLegacyImages = async (images) => {
 
 async function runAttachmentGc(): Promise<void> {
   gcScheduled = false;
-  const nowMs = Date.now();
-
-  useDraftStore.setState((state) => {
-    const prunedDrafts = pruneFinalizedDraftRecords({ drafts: state.drafts, nowMs });
-    if (prunedDrafts === state.drafts) {
-      return state;
-    }
-    return {
-      ...state,
-      drafts: prunedDrafts,
-    };
-  });
 
   const referencedIds = new Set<string>();
   for (const id of useDraftStore.getState().collectActiveAttachmentIds()) {
@@ -486,7 +512,7 @@ export const useDraftStore = create<DraftStore>()(
       },
     }),
     {
-      name: "paseo-drafts",
+      name: DRAFT_STORE_STORAGE_KEY,
       version: DRAFT_STORE_VERSION,
       storage: draftPersistStorage,
       partialize: ({ drafts, createModalDraft }) => ({ drafts, createModalDraft }),
@@ -496,7 +522,10 @@ export const useDraftStore = create<DraftStore>()(
           nowMs: Date.now(),
         }),
       onRehydrateStorage: () => {
-        return () => {
+        const finish = hydrationSettlement.start();
+        return (_state, error) => {
+          finish();
+          if (error) return;
           void migrateAllLegacyDrafts();
           scheduleAttachmentGc();
         };

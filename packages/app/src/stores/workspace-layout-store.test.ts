@@ -596,6 +596,7 @@ describe("workspace-layout-store version 2 migration", () => {
         "pullRequestTabAutoOpenedByWorkspace",
         "sidePaneIdByWorkspace",
         "splitSizesByWorkspace",
+        "syncRevisions",
       ]);
       expect(persisted.state.explorerPaneIdByWorkspace).toEqual({
         [workspaceKey]: "explorer",
@@ -3270,6 +3271,7 @@ describe("workspace-layout-store actions", () => {
     const persisted = partialize(currentState);
 
     expect(persisted).toEqual({
+      syncRevisions: expect.any(Object),
       layoutByWorkspace: { [workspaceKey]: layout },
       pinnedAgentIdsByWorkspace: {},
       splitSizesByWorkspace: currentState.splitSizesByWorkspace,
@@ -3572,7 +3574,8 @@ describe("workspace-layout-store actions", () => {
 
     const partialize = workspaceLayoutStore.persist.getOptions().partialize;
     expect(partialize).toBeTypeOf("function");
-    expect(partialize?.(state)).toEqual({
+    const { syncRevisions: _syncRevisions, ...persisted } = partialize!(state);
+    expect(persisted).toEqual({
       pullRequestTabAutoOpenedByWorkspace: {},
       layoutByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
