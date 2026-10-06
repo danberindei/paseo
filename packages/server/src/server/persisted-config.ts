@@ -180,6 +180,7 @@ const StructuredGenerationProviderConfigSchema = z
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
+    generateAgentTitles: z.boolean().optional(),
   })
   .strict();
 

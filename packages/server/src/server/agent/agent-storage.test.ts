@@ -128,6 +128,8 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
+    ...(overrides.background ? { background: true } : {}),
+    ...(overrides.workspaceTitleFromFirstPrompt ? { workspaceTitleFromFirstPrompt: true } : {}),
   };
 }
 
@@ -414,6 +416,24 @@ describe("AgentStorage", () => {
 
     const recordAfterSnapshot = await storage.get(agentId);
     expect(recordAfterSnapshot?.archivedAt).toBe(archivedAt);
+  });
+
+  test("applySnapshot keeps workspaceTitleFromFirstPrompt across reload", async () => {
+    const agentId = "agent-workspace-title";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        workspaceId: "workspace-1",
+        workspaceTitleFromFirstPrompt: true,
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    expect((await reloaded.get(agentId))?.workspaceTitleFromFirstPrompt).toBe(true);
+
+    // A runtime opened without the marker cannot clear it, like background.
+    await reloaded.applySnapshot(createManagedAgent({ id: agentId, workspaceId: "workspace-1" }));
+    expect((await reloaded.get(agentId))?.workspaceTitleFromFirstPrompt).toBe(true);
   });
 
   test("stores titles independently of snapshots", async () => {

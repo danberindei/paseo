@@ -5812,6 +5812,46 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
   expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
 });
 
+test.each(["live", "stored"])(
+  "updateAgentTitleIfUnchanged preserves queued renames for %s agents",
+  async (residency) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-conditional-title-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        initialTitle: "Prompt",
+        workspaceId: undefined,
+      });
+      if (residency === "stored") await manager.closeAgent(agent.id);
+      await manager.updateAgentTitleIfUnchanged({
+        agentId: agent.id,
+        expectedTitle: "Prompt",
+        title: "Generated",
+      });
+      expect((await storage.get(agent.id))?.title).toBe("Generated");
+      const renamed = manager.updateAgentMetadata(agent.id, { title: "Manual rename" });
+      const generated = manager.updateAgentTitleIfUnchanged({
+        agentId: agent.id,
+        expectedTitle: "Generated",
+        title: "Later metadata",
+      });
+      await Promise.all([renamed, generated]);
+      expect((await storage.get(agent.id))?.title).toBe("Manual rename");
+    } finally {
+      manager.prepareForShutdown();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flushForShutdown();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-metadata-updated-at-"));
   const storagePath = join(workdir, "agents");

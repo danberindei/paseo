@@ -55,7 +55,7 @@ function createLogger() {
   };
 }
 
-function createStructuredGenerator(result: { title: string; branch: string }) {
+function createStructuredGenerator(result: { title: string; branch?: string }) {
   const calls: StructuredAgentGenerationWithFallbackOptions<unknown>[] = [];
 
   async function generateStructured<T>(
@@ -69,6 +69,22 @@ function createStructuredGenerator(result: { title: string; branch: string }) {
 }
 
 describe("generateBranchNameFromFirstAgentContext", () => {
+  test("generates an agent title without requesting a branch name", async () => {
+    const structured = createStructuredGenerator({ title: "Fix login retries" });
+    const result = await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      firstAgentContext: { prompt: "Fix the login retries" },
+      titleOnly: true,
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+    expect(result).toEqual({ title: "Fix login retries", branch: null });
+    expect(structured.calls).toHaveLength(1);
+    expect(structured.calls[0]?.prompt).toContain("Return JSON only with field 'title'.");
+    expect(structured.calls[0]?.prompt).not.toContain("Branch style:");
+  });
+
   test("returns title and branch independently — branch is not a slug of the title", async () => {
     const structured = createStructuredGenerator({
       title: "Add payments flow",

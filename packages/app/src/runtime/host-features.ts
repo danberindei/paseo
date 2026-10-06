@@ -30,12 +30,33 @@ export function selectHostFeature(
   return hostSupportsFeature(state.sessions[serverId]?.serverInfo, feature);
 }
 
+// Unlike selectHostFeature, keeps "host has not reported yet" distinct from
+// "host reported that it lacks the feature".
+export function selectHostFeatureAvailability(
+  state: HostFeatureSessionState,
+  serverId: string,
+  feature: HostFeatureName,
+): boolean | null {
+  const serverInfo = state.sessions[serverId]?.serverInfo;
+  return serverInfo ? hostSupportsFeature(serverInfo, feature) : null;
+}
+
 export function useHostFeature(
   serverId: string | null | undefined,
   feature: HostFeatureName,
 ): boolean {
   const normalizedServerId = serverId?.trim() ?? "";
   return useSessionStore((state) => selectHostFeature(state, normalizedServerId, feature));
+}
+
+export function useHostFeatureAvailability(
+  serverId: string | null | undefined,
+  feature: HostFeatureName,
+): boolean | null {
+  const normalizedServerId = serverId?.trim() ?? "";
+  return useSessionStore((state) =>
+    selectHostFeatureAvailability(state, normalizedServerId, feature),
+  );
 }
 
 export function useHostFeatureMap(
@@ -58,10 +79,7 @@ export function useHostFeatureAvailabilityMap(
 ): ReadonlyMap<string, boolean | null> {
   const flags = useSessionStore(
     useShallow((state) =>
-      serverIds.map((serverId) => {
-        const serverInfo = state.sessions[serverId]?.serverInfo;
-        return serverInfo ? hostSupportsFeature(serverInfo, feature) : null;
-      }),
+      serverIds.map((serverId) => selectHostFeatureAvailability(state, serverId, feature)),
     ),
   );
 

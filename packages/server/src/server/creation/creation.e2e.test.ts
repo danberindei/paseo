@@ -573,3 +573,447 @@ test("Hub-shaped keyed agent worktree creation uses workspace setup and preserve
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
+
+test("generates a title for each new agent in an existing workspace and honors the live host toggle", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-existing-agent-title-"));
+  let titleRequests = 0;
+  const daemon = await createTestPaseoDaemon({
+    agentClients: createTestAgentClients({
+      onStartTurn: (prompt) => {
+        if (typeof prompt === "string" && prompt.includes("Generate a title for a coding agent"))
+          titleRequests++;
+      },
+    }),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  try {
+    await client.connect();
+    expect((await client.getDaemonConfig()).config.metadataGeneration.generateAgentTitles).toBe(
+      true,
+    );
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      title: "Existing workspace",
+    });
+    const workspaceId = created.workspace!.id;
+    for (const [promptTitle, generatedTitle] of [
+      ["Fix login", "Fix login retries"],
+      ["Fix search", "Fix search results"],
+    ]) {
+      const agent = await client.createAgent({
+        provider: "codex",
+        cwd: directory,
+        workspaceId,
+        initialPrompt: `${promptTitle}\nRespond with exactly: {"title":"${generatedTitle}"}`,
+      });
+      await expect
+        .poll(async () => (await daemon.daemon.agentStorage.get(agent.id))?.title, {
+          timeout: 10000,
+        })
+        .toBe(generatedTitle);
+    }
+    expect(titleRequests).toBe(2);
+    await client.patchDaemonConfig({ metadataGeneration: { generateAgentTitles: false } });
+    const disabled = await client.createAgent({
+      provider: "codex",
+      cwd: directory,
+      workspaceId,
+      initialPrompt: 'Keep prompt title\nRespond with exactly: {"title":"Should not generate"}',
+    });
+    expect((await daemon.daemon.agentStorage.get(disabled.id))?.title).toBe("Keep prompt title");
+    expect(titleRequests).toBe(2);
+    await client.patchDaemonConfig({ metadataGeneration: { generateAgentTitles: true } });
+    const blank = await client.createAgent({ provider: "codex", cwd: directory, workspaceId });
+    await client.sendMessage(
+      blank.id,
+      'Fix uploads\nRespond with exactly: {"title":"Fix upload retries"}',
+    );
+    await expect
+      .poll(async () => (await daemon.daemon.agentStorage.get(blank.id))?.title, {
+        timeout: 10000,
+      })
+      .toBe("Fix upload retries");
+    expect(titleRequests).toBe(3);
+    expect(
+      (await client.fetchWorkspaces()).entries.find((workspace) => workspace.id === workspaceId)
+        ?.title,
+    ).toBe("Existing workspace");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60000);
+
+test.each([{ explicitTitle: false }, { explicitTitle: true }])(
+  "initial agent reuses workspace metadata (explicit title=$explicitTitle)",
+  async ({ explicitTitle }) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-metadata-title-"));
+    const provider = deferred<void>();
+    const metadata = deferred<void>();
+    const providerStarted = deferred<void>();
+    const metadataStarted = deferred<void>();
+    let metadataTurns = 0;
+    const daemon = await createTestPaseoDaemon({
+      agentClients: createTestAgentClients({
+        beforeCreateSession: async (config) => {
+          if (config.internal) {
+            metadataStarted.resolve();
+            await metadata.promise;
+          } else {
+            providerStarted.resolve();
+            await provider.promise;
+          }
+        },
+        onStartTurn: (prompt) => {
+          if (typeof prompt === "string" && prompt.includes("Generate a title")) metadataTurns++;
+        },
+      }),
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.0",
+    });
+    try {
+      await client.connect();
+      const promptTitle = "Fix login";
+      const generatedTitle = "Fix login retries";
+      const first = client.createWorkspace({
+        source: { kind: "directory", path: directory },
+        agent: {
+          provider: "codex",
+          cwd: directory,
+          initialPrompt: `${promptTitle}\nRespond with exactly: {"title":"${generatedTitle}","branch":"fix-login"}`,
+          ...(explicitTitle ? { title: promptTitle } : {}),
+        },
+      });
+      await providerStarted.promise;
+      provider.resolve();
+      const created = await first;
+      expect(created.error).toBeNull();
+      expect(created.agent?.title).toBe(promptTitle);
+      expect(created.agent?.id).toBeDefined();
+      const agentId = created.agent!.id;
+      await metadataStarted.promise;
+      metadata.resolve();
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find((w) => w.workspaceDirectory === directory)
+              ?.title,
+        )
+        .toBe(generatedTitle);
+      await expect
+        .poll(async () => (await daemon.daemon.agentStorage.get(agentId))?.title)
+        .toBe(generatedTitle);
+      expect(metadataTurns).toBe(1);
+    } finally {
+      provider.resolve();
+      metadata.resolve();
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
+
+test.each([{ isolation: "local" as const }, { isolation: "worktree" as const }])(
+  "a promptless initial agent names its $isolation workspace and itself from the first prompt",
+  async ({ isolation }) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-promptless-initial-agent-title-"));
+    if (isolation === "worktree") {
+      execFileSync("git", ["init", "-b", "main", directory], { stdio: "pipe" });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        ],
+        { cwd: directory, stdio: "pipe" },
+      );
+    }
+    let titleRequests = 0;
+    const daemon = await createCreationDaemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => {
+          if (typeof prompt === "string" && prompt.includes("Generate a title")) titleRequests++;
+        },
+      }),
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.0",
+    });
+    try {
+      await client.connect();
+      const created = await client.createWorkspace({
+        source:
+          isolation === "local"
+            ? { kind: "directory", path: directory }
+            : { kind: "worktree", cwd: directory, worktreeSlug: "shared-first-prompt-title" },
+        agent: { provider: "codex", cwd: directory },
+      });
+      expect(created.error).toBeNull();
+      const agentId = created.agent!.id;
+      const workspaceId = created.workspace!.id;
+      expect(created.agent?.title ?? null).toBeNull();
+      expect(created.workspace?.title ?? null).toBeNull();
+
+      await client.sendMessage(
+        agentId,
+        'Fix uploads\nRespond with exactly: {"title":"Fix upload retries","branch":"fix-upload-retries"}',
+      );
+
+      await expect
+        .poll(async () => (await daemon.daemon.agentStorage.get(agentId))?.title, {
+          timeout: 10000,
+        })
+        .toBe("Fix upload retries");
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find(
+              (workspace) => workspace.id === workspaceId,
+            )?.title,
+          { timeout: 10000 },
+        )
+        .toBe("Fix upload retries");
+      expect(titleRequests).toBe(1);
+    } finally {
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  },
+  60000,
+);
+
+test.each([{ isolation: "local" as const }, { isolation: "worktree" as const }])(
+  "a promptless initial agent with a supplied title names its $isolation workspace from the first prompt",
+  async ({ isolation }) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-supplied-title-first-prompt-"));
+    if (isolation === "worktree") {
+      execFileSync("git", ["init", "-b", "main", directory], { stdio: "pipe" });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        ],
+        { cwd: directory, stdio: "pipe" },
+      );
+    }
+    let titleRequests = 0;
+    const daemon = await createCreationDaemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => {
+          if (typeof prompt === "string" && prompt.includes("Generate a title")) titleRequests++;
+        },
+      }),
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.0",
+    });
+    try {
+      await client.connect();
+      const created = await client.createWorkspace({
+        source:
+          isolation === "local"
+            ? { kind: "directory", path: directory }
+            : { kind: "worktree", cwd: directory, worktreeSlug: "supplied-title-first-prompt" },
+        agent: { provider: "codex", cwd: directory, title: "Release checklist" },
+      });
+      expect(created.error).toBeNull();
+      const agentId = created.agent!.id;
+      const workspaceId = created.workspace!.id;
+      expect(created.agent?.title).toBe("Release checklist");
+      expect(created.workspace?.title ?? null).toBeNull();
+
+      await client.sendMessage(
+        agentId,
+        'Fix uploads\nRespond with exactly: {"title":"Fix upload retries","branch":"fix-upload-retries"}',
+      );
+
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.find(
+              (workspace) => workspace.id === workspaceId,
+            )?.title,
+          { timeout: 10000 },
+        )
+        .toBe("Fix upload retries");
+      expect((await daemon.daemon.agentStorage.get(agentId))?.title).toBe("Release checklist");
+      if (isolation === "worktree") {
+        await expect
+          .poll(
+            () =>
+              execFileSync("git", ["branch", "--show-current"], {
+                cwd: created.workspace!.workspaceDirectory!,
+                encoding: "utf8",
+              }).trim(),
+            { timeout: 10000 },
+          )
+          .toBe("fix-upload-retries");
+      }
+      expect(titleRequests).toBe(1);
+    } finally {
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  },
+  60000,
+);
+
+test("a promptless initial agent names its workspace from an attachment-only first prompt", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-attachment-first-prompt-"));
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients(),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  try {
+    await client.connect();
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      agent: { provider: "codex", cwd: directory },
+    });
+    const agentId = created.agent!.id;
+    const workspaceId = created.workspace!.id;
+    expect(created.agent?.title ?? null).toBeNull();
+
+    await client.sendMessage(agentId, "", {
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          title: "Upload notes",
+          text: 'Fix uploads\nRespond with exactly: {"title":"Fix upload retries","branch":"fix-upload-retries"}',
+        },
+      ],
+    });
+
+    await expect
+      .poll(async () => (await daemon.daemon.agentStorage.get(agentId))?.title, { timeout: 10000 })
+      .toBe("Fix upload retries");
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchWorkspaces()).entries.find((workspace) => workspace.id === workspaceId)
+            ?.title,
+        { timeout: 10000 },
+      )
+      .toBe("Fix upload retries");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);
+
+test("the first prompt passes attachments to title generation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-attachment-context-first-prompt-"));
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients(),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  try {
+    await client.connect();
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      agent: { provider: "codex", cwd: directory },
+    });
+    const agentId = created.agent!.id;
+
+    await client.sendMessage(agentId, "Fix uploads", {
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          title: "Upload notes",
+          text: 'Respond with exactly: {"title":"Fix attachment context","branch":"fix-attachment-context"}',
+        },
+      ],
+    });
+
+    await expect
+      .poll(async () => (await daemon.daemon.agentStorage.get(agentId))?.title, { timeout: 10000 })
+      .toBe("Fix attachment context");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);
+
+test("a first prompt without a message id still names a promptless initial agent", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-no-message-id-first-prompt-"));
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients(),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  const peer = await connectCreationPeer(daemon.port);
+  try {
+    await client.connect();
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      agent: { provider: "codex", cwd: directory },
+    });
+    const agentId = created.agent!.id;
+    const workspaceId = created.workspace!.id;
+
+    const response = await peer.request({
+      type: "send_agent_message_request",
+      requestId: "first-prompt-without-message-id",
+      agentId,
+      text: 'Fix uploads\nRespond with exactly: {"title":"Fix upload retries","branch":"fix-upload-retries"}',
+    });
+    expect(response).toMatchObject({
+      type: "send_agent_message_response",
+      payload: { accepted: true, error: null },
+    });
+
+    await expect
+      .poll(async () => (await daemon.daemon.agentStorage.get(agentId))?.title, { timeout: 10000 })
+      .toBe("Fix upload retries");
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchWorkspaces()).entries.find((workspace) => workspace.id === workspaceId)
+            ?.title,
+        { timeout: 10000 },
+      )
+      .toBe("Fix upload retries");
+  } finally {
+    peer.close();
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);

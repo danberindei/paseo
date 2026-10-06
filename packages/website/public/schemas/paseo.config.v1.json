@@ -563,6 +563,9 @@
                 "required": ["provider"],
                 "additionalProperties": false
               }
+            },
+            "generateAgentTitles": {
+              "type": "boolean"
             }
           },
           "additionalProperties": false

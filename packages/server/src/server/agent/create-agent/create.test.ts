@@ -6,6 +6,7 @@ import { expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
+import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
@@ -46,14 +47,29 @@ function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: strin
   const worktreePath = join(args.repoRoot, "worktree");
   const workspaceCwd = join(worktreePath, "packages", "app");
   mkdirSync(workspaceCwd, { recursive: true });
-  return async (): Promise<CreatePaseoWorktreeWorkflowResult> =>
-    ({
-      worktree: { worktreePath },
-      intent: {},
-      workspace: { workspaceId: args.createdWorkspaceId, cwd: workspaceCwd },
-      repoRoot: args.repoRoot,
-      created: true,
-    }) as unknown as CreatePaseoWorktreeWorkflowResult;
+  const workspace: PersistedWorkspaceRecord = {
+    workspaceId: args.createdWorkspaceId,
+    projectId: "project-test",
+    cwd: workspaceCwd,
+    kind: "worktree",
+    displayName: "feature",
+    title: null,
+    branch: "feature",
+    worktreeRoot: worktreePath,
+    baseBranch: "main",
+    isPaseoOwnedWorktree: true,
+    mainRepoRoot: args.repoRoot,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  return async (): Promise<CreatePaseoWorktreeWorkflowResult> => ({
+    worktree: { worktreePath },
+    intent: { kind: "branch-off", baseBranch: "main", branchName: "feature" },
+    workspace,
+    repoRoot: args.repoRoot,
+    created: true,
+  });
 }
 
 test("session create forwards clientMessageId to the initial prompt run options", async () => {
@@ -473,3 +489,231 @@ test("session create with an internal config skips provider session persistence"
   expect(createAgent.mock.calls[1]?.[0]).not.toHaveProperty("internal");
   expect(createAgent.mock.calls[1]?.[2]).not.toHaveProperty("persistSession");
 });
+
+test.each([false, true])(
+  "MCP creation schedules titles only for ordinary agents (internal=%s)",
+  async (internal) => {
+    const workdir = mkdtempSync(join(tmpdir(), "create-agent-title-callback-"));
+    const titleLogger = createTestLogger();
+    const storage = new AgentStorage(join(workdir, "agents"), titleLogger);
+    const agentManager = createRealAgentManager(storage);
+    const scheduled: Array<{ agentId: string; prompt: string | undefined }> = [];
+    try {
+      const { snapshot } = await createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger: titleLogger,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          scheduleAgentTitle: (agent, context) =>
+            scheduled.push({ agentId: agent.id, prompt: context.prompt }),
+        },
+        {
+          kind: "mcp",
+          provider: "codex",
+          cwd: workdir,
+          workspaceId: "ws-source",
+          title: "Fix login",
+          initialPrompt: "Fix login",
+          notifyOnFinish: false,
+          internal,
+        },
+      );
+      expect(scheduled).toEqual(internal ? [] : [{ agentId: snapshot.id, prompt: "Fix login" }]);
+    } finally {
+      await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+    }
+  },
+);
+
+test.each(["directory", "worktree"])(
+  "MCP create in a new %s workspace schedules one title generation after agent creation",
+  async (workspaceKind) => {
+    const workdir = mkdtempSync(join(tmpdir(), "create-agent-mcp-workspace-title-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = createRealAgentManager(storage);
+    const scheduled: Array<{ agentId: string; prompt: string | undefined }> = [];
+    const independentTitles: string[] = [];
+
+    try {
+      const { snapshot } = await createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          ensureWorkspaceForCreate: async (_cwd, _context, options) => {
+            expect(options?.deferAutoName).toBe(true);
+            expect(agentManager.listAgents()).toEqual([]);
+            expect(scheduled).toEqual([]);
+            return "ws-created-directory";
+          },
+          createPaseoWorktree: async (_input, options) => {
+            expect(options?.deferAutoName).toBe(true);
+            expect(agentManager.listAgents()).toEqual([]);
+            expect(scheduled).toEqual([]);
+            return fakeWorktreeCreator({
+              repoRoot: workdir,
+              createdWorkspaceId: "ws-created-worktree",
+            })();
+          },
+          scheduleWorkspaceTitle: (agent, context) => {
+            expect(agentManager.getAgent(agent.id)).toBeDefined();
+            scheduled.push({ agentId: agent.id, prompt: context.prompt });
+          },
+          scheduleAgentTitle: (agent) => independentTitles.push(agent.id),
+        },
+        {
+          kind: "mcp",
+          provider: "codex",
+          cwd: workdir,
+          initialPrompt: "Fix login",
+          notifyOnFinish: false,
+          worktree:
+            workspaceKind === "worktree"
+              ? { worktreeName: "feature", baseBranch: "main" }
+              : undefined,
+        },
+      );
+      expect(scheduled).toEqual([{ agentId: snapshot.id, prompt: "Fix login" }]);
+      expect(independentTitles).toEqual([]);
+    } finally {
+      await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+    }
+  },
+);
+
+test("MCP create into a workspace minted by the caller schedules one shared title generation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-mcp-caller-workspace-title-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const workspaceTitles: Array<{ agentId: string; prompt: string | undefined }> = [];
+  const agentTitles: string[] = [];
+
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        scheduleWorkspaceTitle: (agent, context) =>
+          workspaceTitles.push({ agentId: agent.id, prompt: context.prompt }),
+        scheduleAgentTitle: (agent) => agentTitles.push(agent.id),
+      },
+      {
+        kind: "mcp",
+        provider: "codex",
+        cwd: workdir,
+        workspaceId: "ws-minted-by-caller",
+        workspaceCreatedForAgent: true,
+        title: "Fix login",
+        initialPrompt: "Fix login",
+        notifyOnFinish: false,
+      },
+    );
+    expect(workspaceTitles).toEqual([{ agentId: snapshot.id, prompt: "Fix login" }]);
+    expect(agentTitles).toEqual([]);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("MCP create does not schedule workspace naming when agent creation fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-mcp-title-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const failure = new Error("agent creation failed");
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients({
+      beforeCreateSession: async () => {
+        throw failure;
+      },
+    }),
+    registry: storage,
+    logger,
+  });
+  const scheduled: string[] = [];
+
+  try {
+    await expect(
+      createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          ensureWorkspaceForCreate: async (_cwd, _context, options) => {
+            expect(options?.deferAutoName).toBe(true);
+            return "ws-created-directory";
+          },
+          scheduleWorkspaceTitle: (agent) => scheduled.push(agent.id),
+        },
+        {
+          kind: "mcp",
+          provider: "codex",
+          cwd: workdir,
+          initialPrompt: "Fix login",
+          notifyOnFinish: false,
+        },
+      ),
+    ).rejects.toThrow(failure);
+    expect(scheduled).toEqual([]);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test.each(["directory", "worktree"])(
+  "MCP create in a new %s workspace skips naming when provider configuration fails",
+  async (workspaceKind) => {
+    const workdir = mkdtempSync(join(tmpdir(), "create-agent-mcp-config-failure-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = createRealAgentManager(storage);
+    const scheduled: string[] = [];
+    const failure = new Error("provider configuration failed");
+
+    try {
+      await expect(
+        createAgentCommand(
+          {
+            agentManager,
+            agentStorage: storage,
+            logger,
+            providerSnapshotManager: {
+              async resolveCreateConfig() {
+                throw failure;
+              },
+            },
+            ensureWorkspaceForCreate: async (_cwd, _context, options) => {
+              expect(options?.deferAutoName).toBe(true);
+              return "ws-created-directory";
+            },
+            createPaseoWorktree: async (_input, options) => {
+              expect(options?.deferAutoName).toBe(true);
+              return fakeWorktreeCreator({
+                repoRoot: workdir,
+                createdWorkspaceId: "ws-created-worktree",
+              })();
+            },
+            scheduleWorkspaceTitle: (agent) => scheduled.push(agent.id),
+          },
+          {
+            kind: "mcp",
+            provider: "codex",
+            cwd: workdir,
+            initialPrompt: "Fix login",
+            notifyOnFinish: false,
+            worktree:
+              workspaceKind === "worktree"
+                ? { worktreeName: "feature", baseBranch: "main" }
+                : undefined,
+          },
+        ),
+      ).rejects.toThrow(failure);
+      expect(scheduled).toEqual([]);
+      expect(agentManager.listAgents()).toEqual([]);
+    } finally {
+      await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+    }
+  },
+);

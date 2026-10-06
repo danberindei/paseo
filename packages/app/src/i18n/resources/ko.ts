@@ -2449,6 +2449,8 @@ export const ko: TranslationResources = {
     },
     plugins: pluginSettings.ko,
     metadataGeneration: {
+      agentTitles: "에이전트 제목 생성",
+      agentTitlesUpdateHost: "에이전트 제목을 설정하려면 호스트를 업데이트하세요.",
       title: "메타데이터 생성",
       description:
         "워크스페이스 제목, 브랜치 이름, 커밋 메시지 및 풀 리퀘스트 초안에 사용할 모델을 선택하세요",

@@ -192,6 +192,7 @@ const MutableStructuredGenerationProviderSchema = z
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    generateAgentTitles: z.boolean().optional(),
   })
   .passthrough();
 
@@ -270,7 +271,11 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.extend({
+      providers: MutableMetadataGenerationConfigSchema.shape.providers.removeDefault().optional(),
+    })
+      .partial()
+      .optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
@@ -3987,6 +3992,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
+        // COMPAT(agentTitleGeneration): added after v0.16.0-beta.2, remove gate after 2027-05-15.
+        agentTitleGeneration: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         // COMPAT(internalAgents): added in v0.9.0; remove gate after 2027-03-17.

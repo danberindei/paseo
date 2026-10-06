@@ -1,7 +1,7 @@
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import type { AgentAttachment, FirstAgentContext } from "@getpaseo/protocol/messages";
 
-const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
+const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(100, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 
 const CHAT_HISTORY_WRAPPER = /<chat-history-summary>([\s\S]*?)<\/chat-history-summary>/;
 const SOURCE_AGENT_LINE = /^Source agent:\s*(.+)$/m;

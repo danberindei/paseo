@@ -2460,6 +2460,8 @@ export const ja: TranslationResources = {
     },
     plugins: pluginSettings.ja,
     metadataGeneration: {
+      agentTitles: "エージェントのタイトルを生成",
+      agentTitlesUpdateHost: "エージェントのタイトルを設定するにはホストを更新してください。",
       title: "メタデータ生成",
       description:
         "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルを選択します",

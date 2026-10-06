@@ -35,6 +35,11 @@ interface McpWorkspaceIntent {
   callerWorkspaceId?: string;
 }
 
+interface EnsureWorkspaceForCreateOptions extends McpWorkspaceIntent {
+  /** Skips the workspace's own auto-naming so the creating flow can title it from the agent. */
+  deferAutoName?: boolean;
+}
+
 export interface CreateAgentCommandDependencies {
   finishSubscriptions?: FinishSubscriptions;
   agentManager: AgentManager;
@@ -45,6 +50,8 @@ export interface CreateAgentCommandDependencies {
   terminalManager?: TerminalManager | null;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
+  scheduleAgentTitle?: (agent: ManagedAgent, context: FirstAgentContext) => void;
+  scheduleWorkspaceTitle?: (agent: ManagedAgent, context: FirstAgentContext) => void;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
 }
@@ -52,8 +59,23 @@ export interface CreateAgentCommandDependencies {
 export type EnsureWorkspaceForCreate = (
   cwd: string,
   firstAgentContext?: FirstAgentContext,
-  context?: { background?: boolean; callerWorkspaceId?: string },
+  options?: EnsureWorkspaceForCreateOptions,
 ) => Promise<string>;
+
+function scheduleCreatedAgentTitle(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentFromMcpInput,
+  resolved: ResolvedCreateAgent,
+  agent: ManagedAgent,
+): void {
+  if (input.internal) return;
+  const context: FirstAgentContext = { prompt: input.initialPrompt };
+  if (resolved.reusesWorkspaceTitle) {
+    dependencies.scheduleWorkspaceTitle?.(agent, context);
+  } else {
+    dependencies.scheduleAgentTitle?.(agent, context);
+  }
+}
 
 export interface CreateAgentFromSessionInput {
   kind: "session";
@@ -74,6 +96,8 @@ export interface CreateAgentFromSessionInput {
   env?: Record<string, string>;
   provisionalTitle: string | null;
   firstAgentContext: FirstAgentContext;
+  /** This agent's first prompt names the workspace together with the agent. */
+  workspaceTitleFromFirstPrompt?: boolean;
 }
 
 export interface CreateAgentFromMcpInput {
@@ -92,6 +116,8 @@ export interface CreateAgentFromMcpInput {
   promptFailure?: CreateAgentPromptFailureMode;
   notifyOnFinish: boolean;
   internal?: boolean;
+  /** The caller minted workspaceId for this agent and deferred its auto-naming. */
+  workspaceCreatedForAgent?: boolean;
   /** Omitted with a caller, the caller agent's own background applies. */
   background?: boolean;
   detached?: boolean;
@@ -168,6 +194,7 @@ interface ResolvedCreateAgent {
   promptFailure: CreateAgentPromptFailureMode;
   promptLogger?: Logger;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
+  reusesWorkspaceTitle?: boolean;
 }
 
 export async function createAgentCommand(
@@ -186,6 +213,7 @@ export async function createAgentCommand(
   );
 
   if (input.kind === "session") await input.onAgentReady?.(snapshot);
+  else scheduleCreatedAgentTitle(dependencies, input, resolved, snapshot);
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
@@ -274,6 +302,7 @@ async function resolveSessionCreateAgent(
       ...(sessionConfig.internal ? { persistSession: false } : {}),
       workspaceId: requireResolvedWorkspaceId(workspaceId),
       background: input.background,
+      workspaceTitleFromFirstPrompt: input.workspaceTitleFromFirstPrompt,
     },
     prompt: hasPromptContent ? prompt : undefined,
     source: input.source,
@@ -300,14 +329,19 @@ async function resolveMcpCreateAgent(
     background: inheritWorkspaceBackground(input.background, parentAgent),
     callerWorkspaceId: parentAgent?.workspaceId,
   };
+  // The creating flow titles a workspace it mints from the created agent, so the
+  // workspace's own auto-naming is deferred to it.
+  const deferAutoName = !input.internal;
   const { resolvedCwd, createdWorkspaceId, createdWorktree } = await resolveMcpCwd({
     dependencies,
     cwd,
     worktree: input.worktree,
     initialPrompt: input.initialPrompt ?? "",
     workspaceIntent,
+    deferAutoName,
   });
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
+  let createdDirectoryWorkspace = false;
   const intent = await resolveCreateAgentIntent({
     explicitWorkspaceId: createdWorkspaceId ?? input.workspaceId,
     caller: parentAgent
@@ -317,17 +351,18 @@ async function resolveMcpCreateAgent(
     childAgentDefaultLabels: input.callerContext?.childAgentDefaultLabels,
     legacyDetached: input.detached ?? false,
     resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: resolvedCwd }),
-    createWorkspace: async () => ({
-      workspaceId: requireResolvedWorkspaceId(
-        await ensureWorkspaceForMcpCreate(
-          dependencies,
-          resolvedCwd,
-          input.initialPrompt ?? "",
-          workspaceIntent,
+    createWorkspace: async () => {
+      createdDirectoryWorkspace = true;
+      return {
+        workspaceId: requireResolvedWorkspaceId(
+          await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt ?? "", {
+            ...workspaceIntent,
+            deferAutoName,
+          }),
         ),
-      ),
-      cwd: resolvedCwd,
-    }),
+        cwd: resolvedCwd,
+      };
+    },
   });
   const resolvedCreateConfig = await resolveMcpProviderCreateConfig({
     dependencies,
@@ -360,6 +395,10 @@ async function resolveMcpCreateAgent(
       ? { kind: "agent-message", agentId: input.callerAgentId }
       : undefined,
     createdWorktree,
+    reusesWorkspaceTitle:
+      createdDirectoryWorkspace ||
+      Boolean(createdWorktree) ||
+      input.workspaceCreatedForAgent === true,
     promptFailure: input.promptFailure ?? "log",
   };
 }
@@ -439,12 +478,12 @@ async function ensureWorkspaceForMcpCreate(
   dependencies: CreateAgentCommandDependencies,
   cwd: string,
   initialPrompt: string,
-  workspaceIntent: McpWorkspaceIntent,
+  options: EnsureWorkspaceForCreateOptions,
 ): Promise<string | undefined> {
   if (!dependencies.ensureWorkspaceForCreate) {
     return undefined;
   }
-  return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt }, workspaceIntent);
+  return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt }, options);
 }
 
 async function sendInitialPrompt(
@@ -515,6 +554,7 @@ interface CreateMcpWorktreeOptions {
   input: CreatePaseoWorktreeInput;
   createPaseoWorktree: CreatePaseoWorktreeWorkflowFn | undefined;
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
+  deferAutoName?: boolean;
 }
 
 async function createMcpWorktree(
@@ -524,10 +564,12 @@ async function createMcpWorktree(
     if (!options.createPaseoWorktree) {
       throw new Error("Paseo worktree service is not configured");
     }
-    return await options.createPaseoWorktree(
-      options.input,
-      options.resolveDefaultBranch ? { resolveDefaultBranch: options.resolveDefaultBranch } : {},
-    );
+    return await options.createPaseoWorktree(options.input, {
+      ...(options.resolveDefaultBranch
+        ? { resolveDefaultBranch: options.resolveDefaultBranch }
+        : {}),
+      ...(options.deferAutoName ? { deferAutoName: true } : {}),
+    });
   } catch (error) {
     throw toWorktreeRequestError(error);
   }
@@ -539,6 +581,7 @@ async function resolveMcpCwd(params: {
   initialPrompt: string;
   workspaceIntent: McpWorkspaceIntent;
   worktree: CreateAgentFromMcpInput["worktree"];
+  deferAutoName?: boolean;
 }): Promise<{
   resolvedCwd: string;
   createdWorkspaceId?: string;
@@ -580,6 +623,7 @@ async function resolveMcpCwd(params: {
     },
     createPaseoWorktree: dependencies.createPaseoWorktree,
     resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
+    deferAutoName: params.deferAutoName,
   });
   return {
     resolvedCwd: createdWorktree.workspace.cwd,

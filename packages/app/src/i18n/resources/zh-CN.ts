@@ -2413,6 +2413,8 @@ export const zhCN: TranslationResources = {
     },
     plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
+      agentTitles: "生成智能体标题",
+      agentTitlesUpdateHost: "更新主机以配置智能体标题。",
       title: "元数据生成",
       description: "选择 Paseo 用于工作区标题、分支名称、提交消息和拉取请求草稿的模型",
       selection: "模型选择",

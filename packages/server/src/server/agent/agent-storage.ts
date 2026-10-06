@@ -84,6 +84,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   background: z.boolean().optional(),
+  workspaceTitleFromFirstPrompt: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
 });
@@ -410,6 +411,7 @@ export class AgentStorage {
       }
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
+      if (existing?.workspaceTitleFromFirstPrompt) record.workspaceTitleFromFirstPrompt = true;
       record.resumeOnStartup =
         existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
       return record;

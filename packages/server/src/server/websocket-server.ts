@@ -2100,6 +2100,7 @@ export class VoiceAssistantWebSocketServer {
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
+        agentTitleGeneration: true,
         hubAgentRpc: true,
         backgroundWorkspaces: true,
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.

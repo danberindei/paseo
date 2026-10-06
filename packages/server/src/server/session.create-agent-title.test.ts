@@ -28,6 +28,20 @@ describe("resolveCreateAgentTitles", () => {
     expect(resolved.provisionalTitle).toBe("Implement auth retries with backoff");
   });
 
+  test("preserves a prompt-derived title of 100 characters", () => {
+    const title = "a".repeat(100);
+    const resolved = resolveCreateAgentTitles({ initialPrompt: title });
+
+    expect(resolved.provisionalTitle).toBe(title);
+  });
+
+  test("truncates a prompt-derived title to 100 characters", () => {
+    const title = "a".repeat(100);
+    const resolved = resolveCreateAgentTitles({ initialPrompt: `${title}b` });
+
+    expect(resolved.provisionalTitle).toBe(title);
+  });
+
   test("preserves explicit title and does not treat it as provisional", () => {
     const resolved = resolveCreateAgentTitles({
       configTitle: "  Keep This Title  ",

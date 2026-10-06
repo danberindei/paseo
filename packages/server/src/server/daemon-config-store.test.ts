@@ -9,10 +9,11 @@ import {
   toWireDaemonConfig,
 } from "./daemon-config-store.js";
 import { loadConfig } from "./config.js";
-import { loadPersistedConfig } from "./persisted-config.js";
+import { loadPersistedConfig, savePersistedConfig } from "./persisted-config.js";
 import { readSpeechSettings } from "./speech/speech-settings.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
+import { resolveMetadataGenerationConfig } from "./agent/structured-generation-providers.js";
 
 function usageEnabled(persisted: PersistedConfig): boolean {
   return persisted.daemon?.usage?.enabled !== false;
@@ -34,7 +35,7 @@ function reloadableConfig(
     usage: { enabled: usageEnabled(persisted) },
     browserTools: { enabled: daemon.browserTools?.enabled ?? false },
     providers: (agents.providers ?? {}) as MutableDaemonConfig["providers"],
-    metadataGeneration: { providers: agents.metadataGeneration?.providers ?? [] },
+    metadataGeneration: resolveMetadataGenerationConfig(agents.metadataGeneration),
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: agents.idleRuntimeCleanup !== false,
@@ -1183,6 +1184,41 @@ describe("DaemonConfigStore", () => {
         { provider: "claude", model: "haiku" },
         { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
       ],
+    });
+  });
+
+  test("agent title generation defaults on and patches preserve provider preferences", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const providers = [{ provider: "claude", model: "haiku" }];
+    const persisted: PersistedConfig = {
+      version: 1,
+      agents: { metadataGeneration: { providers } },
+    };
+    savePersistedConfig(paseoHome, persisted);
+    const store = new DaemonConfigStore(paseoHome, reloadableConfig(persisted), undefined);
+    expect(store.get().metadataGeneration.generateAgentTitles).toBe(true);
+    await store.patch({ metadataGeneration: { generateAgentTitles: false } });
+    expect(store.get().metadataGeneration).toEqual({ providers, generateAgentTitles: false });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers,
+      generateAgentTitles: false,
+    });
+    await store.patch({ metadataGeneration: { providers: [] } });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [],
+      generateAgentTitles: false,
+    });
+    const reloaded = new DaemonConfigStore(
+      paseoHome,
+      reloadableConfig(loadPersistedConfig(paseoHome)),
+      undefined,
+    );
+    expect(reloaded.get().metadataGeneration.generateAgentTitles).toBe(false);
+    await reloaded.patch({ metadataGeneration: { generateAgentTitles: true } });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [],
+      generateAgentTitles: true,
     });
   });
 

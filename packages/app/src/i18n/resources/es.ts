@@ -2487,6 +2487,8 @@ export const es: TranslationResources = {
     },
     plugins: pluginSettings.es,
     metadataGeneration: {
+      agentTitles: "Generar títulos de agentes",
+      agentTitlesUpdateHost: "Actualiza el host para configurar los títulos de agentes.",
       title: "Generación de metadatos",
       description:
         "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",

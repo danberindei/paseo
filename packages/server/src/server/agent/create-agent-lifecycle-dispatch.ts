@@ -101,7 +101,10 @@ export class CreateAgentLifecycleDispatch {
         paseoHome: this.dependencies.paseoHome,
         worktreesRoot: this.dependencies.worktreesRoot,
       },
-      base ? { resolveDefaultBranch: async () => base } : undefined,
+      {
+        deferAutoName: true,
+        ...(base ? { resolveDefaultBranch: async () => base } : {}),
+      },
     );
   }
 

@@ -380,6 +380,8 @@ export interface CreateAgentOptions {
   owner?: AgentOwner;
   /** Background agents stay out of discovery, tabs, tracks and attention. Fixed at creation. */
   background?: boolean;
+  /** The first prompt names the workspace together with the agent. */
+  workspaceTitleFromFirstPrompt?: boolean;
 }
 
 export interface AgentManagerOptions {
@@ -547,6 +549,11 @@ interface ManagedAgentBase {
    * Fixed at creation.
    */
   background?: boolean;
+  /**
+   * The workspace was created with this agent and its naming was deferred to this agent's first
+   * prompt, so that prompt names both together.
+   */
+  workspaceTitleFromFirstPrompt?: boolean;
   /**
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
@@ -1732,6 +1739,7 @@ export class AgentManager {
       workspaceId: options.workspaceId,
       owner: options.owner,
       background: options.background,
+      workspaceTitleFromFirstPrompt: options.workspaceTitleFromFirstPrompt,
       launchEnv: options.env ? { ...options.env } : undefined,
       historyPrimed: true,
     });
@@ -3097,6 +3105,22 @@ export class AgentManager {
     await this.runLifecycleMutation(agentId, () =>
       this.updateAgentMetadataUnlocked(agentId, updates),
     );
+  }
+
+  async isAgentTitleUnchanged(agentId: string, expectedTitle: string | null): Promise<boolean> {
+    const record = await this.requireRegistry().get(agentId);
+    return record !== null && record.title === expectedTitle;
+  }
+
+  async updateAgentTitleIfUnchanged(input: {
+    agentId: string;
+    expectedTitle: string | null;
+    title: string;
+  }): Promise<void> {
+    await this.runLifecycleMutation(input.agentId, async () => {
+      if (!(await this.isAgentTitleUnchanged(input.agentId, input.expectedTitle))) return;
+      await this.updateAgentMetadataUnlocked(input.agentId, { title: input.title });
+    });
   }
 
   private async updateAgentMetadataUnlocked(
@@ -4611,6 +4635,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       background?: boolean;
+      workspaceTitleFromFirstPrompt?: boolean;
       launchEnv?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
@@ -4646,6 +4671,7 @@ export class AgentManager {
         now,
         durableTimelineHasRows,
         background: options?.background === true,
+        workspaceTitleFromFirstPrompt: options?.workspaceTitleFromFirstPrompt === true,
         options,
       });
 
@@ -4793,6 +4819,7 @@ export class AgentManager {
     now: Date;
     durableTimelineHasRows: boolean;
     background: boolean;
+    workspaceTitleFromFirstPrompt: boolean;
     options:
       | {
           createdAt?: Date;
@@ -4807,6 +4834,7 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          workspaceTitleFromFirstPrompt?: boolean;
           launchEnv?: Record<string, string>;
         }
       | undefined;
@@ -4861,6 +4889,7 @@ export class AgentManager {
       internal: config.internal ?? false,
       background: params.background,
       ...agentEntityData(options),
+      workspaceTitleFromFirstPrompt: params.workspaceTitleFromFirstPrompt,
     } as ActiveManagedAgent;
   }
 

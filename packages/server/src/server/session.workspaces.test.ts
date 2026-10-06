@@ -60,7 +60,8 @@ import {
 } from "./workspace-git-service.js";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import pino from "pino";
-import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
+import type { generateBranchNameFromFirstAgentContext } from "./worktree-branch-name-generator.js";
+import { resolveStructuredGenerationProviders } from "./agent/structured-generation-providers.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
@@ -585,7 +586,7 @@ function createSessionForWorkspaceTests(
       cwd: string,
       newName: string,
     ) => Promise<{ previousBranch: string | null; currentBranch: string | null }>;
-    generateWorkspaceName?: () => Promise<GeneratedWorkspaceName | null>;
+    generateWorkspaceName?: typeof generateBranchNameFromFirstAgentContext;
   } = {},
 ): TestSession {
   const logger = {
@@ -596,20 +597,23 @@ function createSessionForWorkspaceTests(
     warn: vi.fn(),
     error: vi.fn(),
   };
-  const agentManager = asAgentManager({
-    subscribe: () => () => {},
-    listAgents: () => [],
-    listProviderSubagentActivity: () => [],
-    getAgent: () => null,
-    getLastAssistantMessage: async () => null,
-    archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
-    archiveSnapshot: async () => ({}),
-    unarchiveSnapshot: async () => true,
-    clearAgentAttention: async () => {},
-    markAgentUnread: async () => {},
-    notifyAgentState: () => {},
-    ...options.agentManager,
-  });
+  const agentManager =
+    options.agentManager instanceof AgentManager
+      ? options.agentManager
+      : asAgentManager({
+          subscribe: () => () => {},
+          listAgents: () => [],
+          listProviderSubagentActivity: () => [],
+          getAgent: () => null,
+          getLastAssistantMessage: async () => null,
+          archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
+          archiveSnapshot: async () => ({}),
+          unarchiveSnapshot: async () => true,
+          clearAgentAttention: async () => {},
+          markAgentUnread: async () => {},
+          notifyAgentState: () => {},
+          ...options.agentManager,
+        });
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = options.workspaceRegistry ?? {
     initialize: async () => {},
     existsOnDisk: async () => true,
@@ -1054,6 +1058,18 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
           dispose: () => {},
         }),
         workspaceGitService,
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async () => null,
+        }),
         daemonConfigStore: asDaemonConfigStore({
           get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
           onChange: () => () => {},
@@ -1100,165 +1116,209 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
   }
 });
 
-test("create_agent_request launches from an exact subdirectory in a created worktree", async () => {
-  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-worktree-cwd-"));
-  try {
-    const parent = path.join(workdir, "parent");
-    const child = path.join(parent, "packages", "app");
-    mkdirSync(child, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: parent, stdio: "pipe" });
-    execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
-      cwd: parent,
-      stdio: "pipe",
-    });
-    execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: parent, stdio: "pipe" });
-    writeFileSync(path.join(child, "README.md"), "app\n");
-    execFileSync("git", ["add", "."], { cwd: parent, stdio: "pipe" });
-    execFileSync("git", ["commit", "-m", "initial"], { cwd: parent, stdio: "pipe" });
-
-    const logger = {
-      child: () => logger,
-      trace: vi.fn(),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
-    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
-    const agentManager = new AgentManager({
-      clients: { codex: new CreateAgentTestClient() },
-      registry: agentStorage,
-      logger: asSessionLogger(logger),
-      idFactory: () => "00000000-0000-4000-8000-000000000552",
-    });
-    const projectRegistry = new FileBackedProjectRegistry(
-      path.join(workdir, "projects.json"),
-      asSessionLogger(logger),
-    );
-    const workspaceRegistry = new FileBackedWorkspaceRegistry(
-      path.join(workdir, "workspaces.json"),
-      asSessionLogger(logger),
-    );
-    const workspaceGitService = createNoopWorkspaceGitService({
-      getCheckout: async (cwd: string) => ({
-        cwd,
-        isGit: true,
-        currentBranch: "main",
-        remoteUrl: null,
-        worktreeRoot: parent,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
-      }),
-      resolveRepoRoot: async () => parent,
-      resolveDefaultBranch: async () => "main",
-    });
-    await projectRegistry.upsert(
-      createPersistedProjectRecord({
-        projectId: "proj-parent",
-        rootPath: parent,
-        kind: "git",
-        displayName: "parent",
-        createdAt: "2026-05-07T00:00:00.000Z",
-        updatedAt: "2026-05-07T00:00:00.000Z",
-      }),
-    );
-    await workspaceRegistry.upsert(
-      createPersistedWorkspaceRecord({
-        workspaceId: "ws-parent",
-        projectId: "proj-parent",
+test.each(["agent", "workspace"] as const)(
+  "%s creation launches from an exact subdirectory and shares one generated worktree title after agent creation",
+  async (creationKind) => {
+    const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-worktree-cwd-"));
+    try {
+      const parent = path.join(workdir, "parent");
+      const child = path.join(parent, "packages", "app");
+      mkdirSync(child, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: parent, stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
         cwd: parent,
-        kind: "local_checkout",
-        displayName: "parent",
-        createdAt: "2026-05-07T00:00:00.000Z",
-        updatedAt: "2026-05-07T00:00:00.000Z",
-      }),
-    );
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: parent, stdio: "pipe" });
+      writeFileSync(path.join(child, "README.md"), "app\n");
+      execFileSync("git", ["add", "."], { cwd: parent, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "initial"], { cwd: parent, stdio: "pipe" });
 
-    const emitted: SessionOutboundMessage[] = [];
-    const session = new Session({
-      workspaceRuntimeStore: createWorkspaceRuntimeStore(),
-      messageReceipts: createMessageReceiptsStub(),
-      agentMessages: createAgentMessageDeliveryStub(),
-      creationService: createTestCreationService(),
-      clientId: "test-client",
-      permissions: OWNER_PERMISSIONS,
-      appVersion: null,
-      onMessage: (message) => emitted.push(message),
-      logger: asSessionLogger(logger),
-      downloadTokenStore: asDownloadTokenStore(),
-      pushNotifications: asPushNotifications(),
-      paseoHome: path.join(workdir, "paseo-home"),
-      agentManager,
-      agentStorage,
-      projectRegistry,
-      workspaceRegistry,
-      scheduleService: asScheduleService(),
-      checkoutDiffManager: asCheckoutDiffManager({
-        subscribe: async () => ({
-          initial: { cwd: child, files: [], error: null },
-          unsubscribe: () => {},
-        }),
-        scheduleRefreshForCwd: () => {},
-        onWorkspaceStateMayHaveChanged: () => {},
-        getMetrics: () => ({
-          checkoutDiffTargetCount: 0,
-          checkoutDiffSubscriptionCount: 0,
-          checkoutDiffWatcherCount: 0,
-          checkoutDiffFallbackRefreshTargetCount: 0,
-        }),
-        dispose: () => {},
-      }),
-      workspaceGitService,
-      workspaceAutoName: new WorkspaceAutoName({
-        agentManager,
-        workspaceRegistry,
-        workspaceGitService,
-        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-        readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
-        gitMutation: { notifyGitMutation: async () => {} },
-        emitWorkspaceUpdateForCwd: async () => {},
-        emitWorkspaceUpdateForWorkspaceId: async () => {},
+      const logger = {
+        child: () => logger,
+        trace: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+      const agentManager = new AgentManager({
+        clients: { codex: new CreateAgentTestClient() },
+        registry: agentStorage,
         logger: asSessionLogger(logger),
-      }),
-      daemonConfigStore: asDaemonConfigStore({
-        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
-        onChange: () => () => {},
-      }),
-      mcpBaseUrl: null,
-      stt: null,
-      tts: null,
-      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-      terminalManager: null,
-    });
+        idFactory: () => "00000000-0000-4000-8000-000000000552",
+      });
+      const projectRegistry = new FileBackedProjectRegistry(
+        path.join(workdir, "projects.json"),
+        asSessionLogger(logger),
+      );
+      const workspaceRegistry = new FileBackedWorkspaceRegistry(
+        path.join(workdir, "workspaces.json"),
+        asSessionLogger(logger),
+      );
+      const workspaceGitService = createNoopWorkspaceGitService({
+        getCheckout: async (cwd: string) => ({
+          cwd,
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: null,
+          worktreeRoot: parent,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        }),
+        resolveRepoRoot: async () => parent,
+        resolveDefaultBranch: async () => "main",
+      });
+      await projectRegistry.upsert(
+        createPersistedProjectRecord({
+          projectId: "proj-parent",
+          rootPath: parent,
+          kind: "git",
+          displayName: "parent",
+          createdAt: "2026-05-07T00:00:00.000Z",
+          updatedAt: "2026-05-07T00:00:00.000Z",
+        }),
+      );
+      await workspaceRegistry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId: "ws-parent",
+          projectId: "proj-parent",
+          cwd: parent,
+          kind: "local_checkout",
+          displayName: "parent",
+          createdAt: "2026-05-07T00:00:00.000Z",
+          updatedAt: "2026-05-07T00:00:00.000Z",
+        }),
+      );
 
-    await session.handleMessage({
-      type: "create_agent_request",
-      requestId: "req-create-worktree-child",
-      config: { provider: "codex", cwd: child },
-      attachments: [],
-      worktree: { mode: "branch-off", newBranch: "feature/created-worktree" },
-    });
+      let generationCount = 0;
+      const emitted: SessionOutboundMessage[] = [];
+      const session = new Session({
+        messageReceipts: createMessageReceiptsStub(),
+        creationService: createTestCreationService(),
+        clientId: "test-client",
+        permissions: OWNER_PERMISSIONS,
+        appVersion: null,
+        onMessage: (message) => emitted.push(message),
+        logger: asSessionLogger(logger),
+        downloadTokenStore: asDownloadTokenStore(),
+        pushNotifications: asPushNotifications(),
+        paseoHome: path.join(workdir, "paseo-home"),
+        agentManager,
+        agentStorage,
+        projectRegistry,
+        workspaceRegistry,
+        scheduleService: asScheduleService(),
+        checkoutDiffManager: asCheckoutDiffManager({
+          subscribe: async () => ({
+            initial: { cwd: child, files: [], error: null },
+            unsubscribe: () => {},
+          }),
+          scheduleRefreshForCwd: () => {},
+          onWorkspaceStateMayHaveChanged: () => {},
+          getMetrics: () => ({
+            checkoutDiffTargetCount: 0,
+            checkoutDiffSubscriptionCount: 0,
+            checkoutDiffWatcherCount: 0,
+            checkoutDiffFallbackRefreshTargetCount: 0,
+          }),
+          dispose: () => {},
+        }),
+        workspaceGitService,
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async () => {
+            expect(agentManager.listAgents()).toHaveLength(1);
+            generationCount++;
+            return { title: "Generated worktree title", branch: "generated-worktree-title" };
+          },
+        }),
+        daemonConfigStore: asDaemonConfigStore({
+          get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+          onChange: () => () => {},
+        }),
+        mcpBaseUrl: null,
+        stt: null,
+        tts: null,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        terminalManager: null,
+      });
 
-    const [createdAgent] = agentManager.listAgents();
-    const createdWorktreeRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: createdAgent!.cwd,
-      stdio: "pipe",
-    })
-      .toString()
-      .trim();
-    expect(
-      createRealpathAwarePathMatcher(path.join(createdWorktreeRoot, "packages", "app"))(
-        createdAgent?.cwd ?? "",
-      ),
-    ).toBe(true);
-    expect(findByType(emitted, "status")?.payload).toMatchObject({
-      status: "agent_created",
-      agent: { cwd: createdAgent?.cwd },
-    });
-  } finally {
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
+      if (creationKind === "agent") {
+        await session.handleMessage({
+          type: "create_agent_request",
+          requestId: "req-create-worktree-child",
+          config: { provider: "codex", cwd: child },
+          initialPrompt: "Name this worktree",
+          attachments: [],
+          worktree: { mode: "branch-off", newBranch: "feature/created-worktree" },
+        });
+      } else {
+        await session.handleMessage({
+          type: "workspace.create.request",
+          requestId: "req-create-worktree-child",
+          source: {
+            kind: "worktree",
+            cwd: child,
+            action: "branch-off",
+            worktreeSlug: "created-worktree",
+            baseBranch: "main",
+          },
+          agent: {
+            config: { provider: "codex", cwd: child },
+            initialPrompt: "Name this worktree",
+            attachments: [],
+          },
+        });
+      }
+
+      const [createdAgent] = agentManager.listAgents();
+      const createdWorktreeRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: createdAgent!.cwd,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      expect(
+        createRealpathAwarePathMatcher(path.join(createdWorktreeRoot, "packages", "app"))(
+          createdAgent?.cwd ?? "",
+        ),
+      ).toBe(true);
+      await vi.waitFor(async () => {
+        expect(generationCount).toBe(1);
+        expect((await agentStorage.get(createdAgent.id))?.title).toBe("Generated worktree title");
+        expect(await workspaceRegistry.get(createdAgent.workspaceId!)).toMatchObject({
+          title: "Generated worktree title",
+          branch: "generated-worktree-title",
+        });
+      });
+      if (creationKind === "agent") {
+        expect(findByType(emitted, "status")?.payload).toMatchObject({
+          status: "agent_created",
+          agent: { cwd: createdAgent?.cwd },
+        });
+      } else {
+        expect(findByType(emitted, "workspace.create.response")?.payload.error).toBeNull();
+      }
+      await session.cleanup();
+      agentManager.prepareForShutdown();
+      await agentManager.closeAgent(createdAgent.id);
+      await agentManager.flushForShutdown();
+      await agentStorage.flush();
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
   vi.useFakeTimers();
@@ -1345,6 +1405,21 @@ test("create_agent_request does not title an existing workspace from the agent p
           dispose: () => {},
         }),
         workspaceGitService: createNoopWorkspaceGitService(),
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService: createNoopWorkspaceGitService(),
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async () => {
+            generateCalls += 1;
+            return { title: "Generated agent title", branch: null };
+          },
+        }),
         daemonConfigStore: asDaemonConfigStore({
           get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
           onChange: () => () => {},
@@ -1352,10 +1427,6 @@ test("create_agent_request does not title an existing workspace from the agent p
         mcpBaseUrl: null,
         stt: null,
         tts: null,
-        generateWorkspaceName: async () => {
-          generateCalls += 1;
-          return { title: "Generated title that must not be written", branch: null };
-        },
         providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         terminalManager: null,
       }),
@@ -1372,8 +1443,17 @@ test("create_agent_request does not title an existing workspace from the agent p
     await vi.runAllTimersAsync();
 
     const [createdAgent] = agentManager.listAgents();
-    expect(createdAgent?.workspaceId).toBe("ws-existing");
-    expect(generateCalls).toBe(0);
+    expect(createdAgent).toMatchObject({ workspaceId: "ws-existing", cwd });
+    // The agent is titled from its prompt by the auto-name service, so a missing
+    // or unused service cannot leave the workspace assertions below trivially
+    // satisfied.
+    await vi.waitFor(async () => {
+      expect(await agentStorage.get(createdAgent!.id)).toMatchObject({
+        title: "Generated agent title",
+      });
+    });
+    expect(generateCalls).toBe(1);
+    // Titling the agent must not rename the workspace it was placed in.
     await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
       title: null,
       updatedAt: "2026-05-07T00:00:00.000Z",
@@ -1477,6 +1557,18 @@ test("create_agent_request does not publish the pre-prompt snapshot after the pr
           dispose: () => {},
         }),
         workspaceGitService: createNoopWorkspaceGitService(),
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService: createNoopWorkspaceGitService(),
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async () => null,
+        }),
         daemonConfigStore: asDaemonConfigStore({
           get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
           onChange: () => () => {},
@@ -1484,7 +1576,6 @@ test("create_agent_request does not publish the pre-prompt snapshot after the pr
         mcpBaseUrl: null,
         stt: null,
         tts: null,
-        generateWorkspaceName: async () => null,
         providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         terminalManager: null,
       }),
@@ -9383,6 +9474,157 @@ test("failed local create_agent_request does not schedule workspace title genera
   }
 });
 
+test("failed combined workspace creation does not schedule title generation", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-failed-workspace-title-"));
+  const logger = asSessionLogger({
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  });
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(workdir, "workspaces.json"),
+    logger,
+  );
+  const emitted: SessionOutboundMessage[] = [];
+  let generationCount = 0;
+  const session = createSessionForWorkspaceTests({
+    paseoHome: path.join(workdir, "paseo-home"),
+    workspaceRegistry,
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      createAgent: async () => {
+        throw new Error("Agent creation failed");
+      },
+    },
+    generateWorkspaceName: async () => {
+      generationCount++;
+      return { title: "Generated", branch: null };
+    },
+  });
+  try {
+    await session.handleMessage({
+      type: "workspace.create.request",
+      requestId: "req-failed-combined-title",
+      source: { kind: "directory", path: workdir },
+      agent: {
+        config: { provider: "codex", cwd: workdir },
+        initialPrompt: "Fix login",
+        attachments: [],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(findByType(emitted, "workspace.create.response")?.payload).toMatchObject({
+      error: "Agent creation failed",
+      workspace: { title: "Fix login" },
+    });
+    expect(await workspaceRegistry.listActive()).toHaveLength(1);
+    expect(generationCount).toBe(0);
+  } finally {
+    await session.cleanup();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("combined directory creation preserves the focused agent metadata provider fallback", async () => {
+  const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-focused-provider-title-")));
+  const logger = createTestLogger();
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), logger);
+  const agentManager = new AgentManager({
+    clients: { codex: new CreateAgentTestClient() },
+    registry: agentStorage,
+    logger,
+  });
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(workdir, "workspaces.json"),
+    logger,
+  );
+  const focusedAgent = await agentManager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "focused-model",
+      thinkingOptionId: "high",
+    },
+    undefined,
+    { workspaceId: "ws-focused-agent" },
+  );
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    paseoHome: path.join(workdir, "paseo-home"),
+    agentManager,
+    agentStorage: {
+      get: (id: string) => agentStorage.get(id),
+      listAll: () => agentStorage.listAll(),
+    },
+    workspaceRegistry,
+    onMessage: (message) => emitted.push(message),
+    generateWorkspaceName: async (options) => {
+      const providers = await resolveStructuredGenerationProviders({
+        cwd: options.cwd,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        daemonConfig: options.daemonConfig,
+        currentSelection: options.currentSelection,
+      });
+      expect(providers).toEqual([
+        { provider: "codex", model: "focused-model", thinkingOptionId: "high" },
+      ]);
+      return { title: "Generated login title", branch: null };
+    },
+  });
+  const source = {};
+  try {
+    await session.handleMessage(
+      {
+        type: "client_heartbeat",
+        deviceType: "web",
+        focusedAgentId: focusedAgent.id,
+        focusedTerminalId: null,
+        lastActivityAt: "2026-10-11T00:00:00.000Z",
+        appVisible: true,
+      },
+      source,
+    );
+    await session.handleMessage(
+      {
+        type: "workspace.create.request",
+        requestId: "req-focused-provider-title",
+        source: { kind: "directory", path: workdir },
+        agent: {
+          config: { provider: "codex", cwd: workdir, model: "created-model" },
+          initialPrompt: "Fix login",
+          attachments: [],
+        },
+      },
+      source,
+    );
+
+    const response = findByType(emitted, "workspace.create.response");
+    expect(response?.payload.error).toBeNull();
+    const workspaceId = response?.payload.workspace?.id;
+    const agentId = response?.payload.agent?.id;
+    expect(typeof workspaceId).toBe("string");
+    expect(typeof agentId).toBe("string");
+    await vi.waitFor(async () => {
+      expect(await workspaceRegistry.get(workspaceId!)).toMatchObject({
+        title: "Generated login title",
+      });
+      expect(await agentStorage.get(agentId!)).toMatchObject({ title: "Generated login title" });
+    });
+  } finally {
+    await session.cleanup();
+    agentManager.prepareForShutdown();
+    for (const agent of agentManager.listAgents()) {
+      await agentManager.closeAgent(agent.id);
+    }
+    await agentManager.flushForShutdown();
+    await agentStorage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("workspace auto-name keeps a manual title written before the scheduled title lands", async () => {
   vi.useFakeTimers();
   const workspace = createPersistedWorkspaceRecord({
@@ -9400,6 +9642,7 @@ test("workspace auto-name keeps a manual title written before the scheduled titl
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
+      get: async (workspaceId) => stored.get(workspaceId) ?? null,
       update: async (workspaceId, updater) => {
         const current = stored.get(workspaceId);
         if (!current) return null;
@@ -9456,6 +9699,7 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
+      get: async (workspaceId) => stored.get(workspaceId) ?? null,
       update: async (workspaceId, updater) => {
         const current = stored.get(workspaceId);
         if (!current) return null;
@@ -9531,6 +9775,7 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
+      get: async (workspaceId) => stored.get(workspaceId) ?? null,
       update: async (workspaceId, updater) => {
         const current = stored.get(workspaceId);
         if (!current) return null;
@@ -9654,11 +9899,19 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   expect(persisted?.title).toBe("Refactor auth flow");
 });
 
-test("workspace.create.response persists the first prompt as the initial title", async () => {
+test("workspace.create.response persists the first prompt and schedules standalone naming", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  let completeGeneration!: () => void;
+  const generationReady = new Promise<void>((resolve) => {
+    completeGeneration = resolve;
+  });
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => emitted.push(message),
+    generateWorkspaceName: async () => {
+      await generationReady;
+      return { title: "Generated payments title", branch: null };
+    },
     workspaceRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
@@ -9669,6 +9922,13 @@ test("workspace.create.response persists the first prompt as the initial title",
       get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
       upsert: async (workspace) => {
         workspaces.set(workspace.workspaceId, workspace);
+      },
+      update: async (workspaceId, update) => {
+        const workspace = workspaces.get(workspaceId);
+        if (!workspace) return null;
+        const updated = update(workspace);
+        workspaces.set(workspaceId, updated);
+        return updated;
       },
       archive: async () => {},
       remove: async () => {},
@@ -9695,6 +9955,13 @@ test("workspace.create.response persists the first prompt as the initial title",
   const persisted = await session.workspaceRegistry.get(workspaceId as string);
   expect(persisted?.title).toBe("Add retries to the payments flow");
   expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
+  completeGeneration();
+  await vi.waitFor(async () => {
+    expect((await session.workspaceRegistry.get(workspaceId as string))?.title).toBe(
+      "Generated payments title",
+    );
+  });
+  await session.cleanup();
 });
 
 test("workspace create emits through a matching workspace subscription", async () => {

@@ -2474,6 +2474,8 @@ export const ru: TranslationResources = {
     },
     plugins: pluginSettings.ru,
     metadataGeneration: {
+      agentTitles: "Генерировать названия агентов",
+      agentTitlesUpdateHost: "Обновите хост, чтобы настроить названия агентов.",
       title: "Генерация метаданных",
       description:
         "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",

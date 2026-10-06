@@ -44,7 +44,7 @@ import {
   requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
-import { createAgentCommand } from "../create-agent/create.js";
+import { createAgentCommand, type CreateAgentCommandDependencies } from "../create-agent/create.js";
 import { inheritWorkspaceBackground } from "../create-agent/intent.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
@@ -121,6 +121,8 @@ import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-confi
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 
 export interface PaseoToolHostDependencies {
+  scheduleAgentTitle?: CreateAgentCommandDependencies["scheduleAgentTitle"];
+  scheduleWorkspaceTitle?: CreateAgentCommandDependencies["scheduleWorkspaceTitle"];
   agentMessages?: () => AgentMessageDelivery;
   changeRequestWatches?: ChangeRequestWatches;
   finishSubscriptions?: () => FinishSubscriptions;
@@ -158,11 +160,7 @@ export interface PaseoToolHostDependencies {
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (
-    cwd: string,
-    firstAgentContext?: FirstAgentContext,
-    context?: { background?: boolean; callerWorkspaceId?: string },
-  ) => Promise<string>;
+  ensureWorkspaceForCreate?: CreateAgentCommandDependencies["ensureWorkspaceForCreate"];
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
@@ -1648,6 +1646,8 @@ function createToolCatalog(
           terminalManager,
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,
+          scheduleAgentTitle: options.scheduleAgentTitle,
+          scheduleWorkspaceTitle: options.scheduleWorkspaceTitle,
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
             : {}),
@@ -1660,6 +1660,7 @@ function createToolCatalog(
           config: inheritedConfig,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
+          workspaceCreatedForAgent: resolvedArgs.workspaceCreatedForAgent,
           thinking: parsedArgs.settings?.thinkingOptionId,
           providerOptions: parsedArgs.settings?.features,
           labels: {
@@ -1708,6 +1709,8 @@ function createToolCatalog(
         detached: boolean;
         cwd: string | undefined;
         workspaceId: string | undefined;
+        /** The tool minted the workspace and left its naming to this agent. */
+        workspaceCreatedForAgent: boolean;
       }
     | {
         kind: "top-level";
@@ -1715,6 +1718,8 @@ function createToolCatalog(
         detached: boolean;
         cwd: string | undefined;
         workspaceId: string | undefined;
+        /** The tool minted the workspace and left its naming to this agent. */
+        workspaceCreatedForAgent: boolean;
       };
 
   async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
@@ -1746,27 +1751,31 @@ function createToolCatalog(
         // COMPAT(nestedCreateAgentPlacement): accept the old relationship/workspace shape without
         // advertising it to models. Added in v0.2.0; remove after 2027-01-17.
         const parsed = parseToolArguments(legacyAgentToAgentCreateAgentArgsSchema, args);
-        const { cwd, workspaceId } = await resolveCreateAgentWorkspace(parsed.workspace, {
-          prompt: parsed.initialPrompt,
-        });
+        const { cwd, workspaceId, workspaceCreatedForAgent } = await resolveCreateAgentWorkspace(
+          parsed.workspace,
+          { prompt: parsed.initialPrompt },
+        );
         return {
           kind: "agent-scoped",
           parsedArgs: parsed,
           detached: parsed.relationship.kind === "detached",
           cwd,
           workspaceId,
+          workspaceCreatedForAgent,
         };
       }
       const parsed = parseToolArguments(agentToAgentCreateAgentArgsSchema, args);
-      const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(parsed.workspaceId, {
-        prompt: parsed.initialPrompt,
-      });
+      const { cwd, workspaceId, workspaceCreatedForAgent } =
+        await resolveCanonicalCreateAgentWorkspace(parsed.workspaceId, {
+          prompt: parsed.initialPrompt,
+        });
       return {
         kind: "agent-scoped",
         parsedArgs: parsed,
         detached: false,
         cwd,
         workspaceId,
+        workspaceCreatedForAgent,
       };
     }
     if (hasLegacyCreateAgentPlacement(args)) {
@@ -1782,28 +1791,31 @@ function createToolCatalog(
       if (!parsedArgs.workspace) {
         throw new PaseoToolInputError("Legacy create_agent placement could not be resolved");
       }
-      const { cwd, workspaceId } = await resolveCreateAgentWorkspace(parsedArgs.workspace, {
-        prompt: parsedArgs.initialPrompt,
-      });
+      const { cwd, workspaceId, workspaceCreatedForAgent } = await resolveCreateAgentWorkspace(
+        parsedArgs.workspace,
+        { prompt: parsedArgs.initialPrompt },
+      );
       return {
         kind: "top-level",
         parsedArgs,
         detached: true,
         cwd,
         workspaceId,
+        workspaceCreatedForAgent,
       };
     }
     const parsedArgs = parseToolArguments(canonicalTopLevelCreateAgentArgsSchema, args);
-    const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(
-      parsedArgs.workspaceId,
-      { prompt: parsedArgs.initialPrompt },
-    );
+    const { cwd, workspaceId, workspaceCreatedForAgent } =
+      await resolveCanonicalCreateAgentWorkspace(parsedArgs.workspaceId, {
+        prompt: parsedArgs.initialPrompt,
+      });
     return {
       kind: "top-level",
       parsedArgs,
       detached: false,
       cwd,
       workspaceId,
+      workspaceCreatedForAgent,
     };
   }
 
@@ -1830,13 +1842,14 @@ function createToolCatalog(
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string;
+    workspaceCreatedForAgent: boolean;
   }> {
     if (workspaceId) {
       const resolved = await resolveCreateAgentWorkspace(
         { kind: "existing", workspaceId },
         undefined,
       );
-      return { cwd: resolved.cwd, workspaceId };
+      return { cwd: resolved.cwd, workspaceId, workspaceCreatedForAgent: false };
     }
     if (!callerAgentId) {
       if (!options.ensureWorkspaceForCreate) {
@@ -1845,18 +1858,18 @@ function createToolCatalog(
       const cwd = process.cwd();
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(
-          cwd,
-          firstAgentContext,
-          workspaceBackgroundIntent(undefined),
-        ),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
+          ...workspaceBackgroundIntent(undefined),
+          deferAutoName: true,
+        }),
+        workspaceCreatedForAgent: true,
       };
     }
     const caller = resolveCallerAgent();
     if (!caller?.workspaceId) {
       throw new PaseoToolInputError(`Caller agent ${callerAgentId} has no current workspace`);
     }
-    return { cwd: undefined, workspaceId: caller.workspaceId };
+    return { cwd: undefined, workspaceId: caller.workspaceId, workspaceCreatedForAgent: false };
   }
 
   function normalizeTopLevelCreateAgentArgs(
@@ -1906,6 +1919,7 @@ function createToolCatalog(
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string | undefined;
+    workspaceCreatedForAgent: boolean;
   }> {
     if (workspace.kind === "current") {
       if (!callerAgentId) {
@@ -1918,6 +1932,7 @@ function createToolCatalog(
       return {
         cwd: workspace.cwd,
         workspaceId: callerAgent.workspaceId,
+        workspaceCreatedForAgent: false,
       };
     }
 
@@ -1943,6 +1958,7 @@ function createToolCatalog(
       return {
         cwd,
         workspaceId: workspace.workspaceId,
+        workspaceCreatedForAgent: false,
       };
     }
 
@@ -1953,11 +1969,11 @@ function createToolCatalog(
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(
-          cwd,
-          firstAgentContext,
-          workspaceBackgroundIntent(undefined),
-        ),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
+          ...workspaceBackgroundIntent(undefined),
+          deferAutoName: true,
+        }),
+        workspaceCreatedForAgent: true,
       };
     }
 

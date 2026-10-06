@@ -24,7 +24,7 @@ type CurrentSelection = GenerateBranchNameFromFirstAgentContextOptions["currentS
 
 interface WorkspaceAutoNameOptions {
   agentManager: AgentManager;
-  workspaceRegistry: Pick<WorkspaceRegistry, "update">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "update">;
   workspaceGitService: WorkspaceGitService;
   providerSnapshotManager: ProviderSnapshotManager;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -37,11 +37,12 @@ interface WorkspaceAutoNameOptions {
 
 interface ScheduleContext {
   currentSelection?: CurrentSelection;
+  agentId?: string;
 }
 
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
-  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "update">;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -71,12 +72,13 @@ export class WorkspaceAutoName {
       firstAgentContext: FirstAgentContext;
     },
     context: ScheduleContext = {},
-  ): void {
-    this.schedule(
+  ): Promise<void> {
+    return this.schedule(
       () =>
         this.maybeAutoNameWorkspaceBranchForFirstAgent({
           ...input,
           currentSelection: context.currentSelection ?? null,
+          agentId: context.agentId,
         }),
       {
         cwd: input.workspace.cwd,
@@ -92,14 +94,71 @@ export class WorkspaceAutoName {
       firstAgentContext: FirstAgentContext;
     },
     context: ScheduleContext = {},
-  ): void {
-    this.schedule(
+  ): Promise<void> {
+    return this.schedule(
       () =>
         this.maybeAutoNameDirectoryWorkspaceTitle({
           ...input,
           currentSelection: context.currentSelection ?? null,
+          agentId: context.agentId,
         }),
       { cwd: input.cwd, message: "Failed to auto-name directory workspace title" },
+    );
+  }
+
+  scheduleForCreatedWorkspace(
+    input: {
+      workspaceId: string;
+      agentId: string;
+      firstAgentContext: FirstAgentContext;
+    },
+    context: ScheduleContext = {},
+  ): Promise<void> {
+    return this.schedule(
+      async () => {
+        const workspace = await this.workspaceRegistry.get(input.workspaceId);
+        if (!workspace || workspace.untrustedSource) return;
+        const namingInput = {
+          ...input,
+          workspace,
+          cwd: workspace.cwd,
+          currentSelection: context.currentSelection ?? null,
+        };
+        if (workspace.kind === "worktree") {
+          await this.maybeAutoNameWorkspaceBranchForFirstAgent(namingInput);
+        } else {
+          await this.maybeAutoNameDirectoryWorkspaceTitle(namingInput);
+        }
+      },
+      { workspaceId: input.workspaceId, message: "Failed to auto-name created workspace" },
+    );
+  }
+
+  scheduleForAgent(
+    input: { agentId: string; cwd: string; firstAgentContext: FirstAgentContext },
+    context: ScheduleContext = {},
+  ): Promise<void> {
+    if (this.readDaemonConfig().metadataGeneration?.generateAgentTitles === false) {
+      return Promise.resolve();
+    }
+    return this.schedule(
+      async () => {
+        const expectedTitle = resolveFirstAgentPromptTitle(input.firstAgentContext);
+        if (!(await this.agentManager.isAgentTitleUnchanged(input.agentId, expectedTitle))) return;
+        const generated = await this.generateFromContext({
+          cwd: input.cwd,
+          firstAgentContext: input.firstAgentContext,
+          currentSelection: context.currentSelection ?? null,
+          titleOnly: true,
+        });
+        if (!generated?.title) return;
+        await this.applyGeneratedAgentTitle({
+          agentId: input.agentId,
+          firstAgentContext: input.firstAgentContext,
+          title: generated.title,
+        });
+      },
+      { cwd: input.cwd, message: "Failed to auto-name agent title" },
     );
   }
 
@@ -107,6 +166,7 @@ export class WorkspaceAutoName {
     workspace: PersistedWorkspaceRecord;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
+    agentId?: string;
   }): Promise<void> {
     const worktreeRoot = input.workspace.worktreeRoot ?? input.workspace.cwd;
     let generated: GeneratedWorkspaceName | null = null;
@@ -150,6 +210,11 @@ export class WorkspaceAutoName {
       await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
     }
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
+    await this.applyGeneratedAgentTitle({
+      agentId: input.agentId,
+      firstAgentContext: input.firstAgentContext,
+      title: generatedTitle,
+    });
   }
 
   private async maybeAutoNameDirectoryWorkspaceTitle(input: {
@@ -157,6 +222,7 @@ export class WorkspaceAutoName {
     cwd: string;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
+    agentId?: string;
   }): Promise<void> {
     const generated = await this.generateFromContext({
       cwd: input.cwd,
@@ -174,6 +240,26 @@ export class WorkspaceAutoName {
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     await this.emitWorkspaceUpdateForWorkspaceId(input.workspaceId);
+    await this.applyGeneratedAgentTitle({
+      agentId: input.agentId,
+      firstAgentContext: input.firstAgentContext,
+      title,
+    });
+  }
+
+  private async applyGeneratedAgentTitle(input: {
+    agentId: string | undefined;
+    firstAgentContext: FirstAgentContext;
+    title: string;
+  }): Promise<void> {
+    const agentId = input.agentId;
+    if (!agentId) return;
+    if (this.readDaemonConfig().metadataGeneration?.generateAgentTitles === false) return;
+    await this.agentManager.updateAgentTitleIfUnchanged({
+      agentId,
+      expectedTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
+      title: input.title,
+    });
   }
 
   private async applyGeneratedWorkspaceTitle(
@@ -198,6 +284,7 @@ export class WorkspaceAutoName {
     cwd: string;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
+    titleOnly?: boolean;
   }): Promise<GeneratedWorkspaceName | null> {
     return this.generateWorkspaceName({
       agentManager: this.agentManager,
@@ -207,15 +294,26 @@ export class WorkspaceAutoName {
       daemonConfig: this.readDaemonConfig(),
       currentSelection: input.currentSelection ?? undefined,
       firstAgentContext: input.firstAgentContext,
+      titleOnly: input.titleOnly,
       logger: this.logger,
     });
   }
 
-  private schedule(run: () => Promise<void>, context: { cwd: string; message: string }): void {
-    setTimeout(() => {
-      void run().catch((error) => {
-        this.logger.warn({ err: error, cwd: context.cwd }, context.message);
-      });
-    }, 0);
+  private schedule(
+    run: () => Promise<void>,
+    context: { cwd?: string; workspaceId?: string; message: string },
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        void run()
+          .catch((error) => {
+            this.logger.warn(
+              { err: error, cwd: context.cwd, workspaceId: context.workspaceId },
+              context.message,
+            );
+          })
+          .then(resolve);
+      }, 0);
+    });
   }
 }

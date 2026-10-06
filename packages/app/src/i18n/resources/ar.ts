@@ -2472,6 +2472,8 @@ export const ar: TranslationResources = {
     },
     plugins: pluginSettings.ar,
     metadataGeneration: {
+      agentTitles: "إنشاء عناوين الوكلاء",
+      agentTitlesUpdateHost: "حدّث المضيف لإعداد عناوين الوكلاء.",
       title: "إنشاء البيانات الوصفية",
       description:
         "اختر النموذج الذي يستخدمه Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب",

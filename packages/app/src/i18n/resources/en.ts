@@ -2568,6 +2568,8 @@ export const en = {
       },
     },
     metadataGeneration: {
+      agentTitles: "Generate agent titles",
+      agentTitlesUpdateHost: "Update the host to configure agent titles.",
       title: "Metadata generation",
       description:
         "Choose the model Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",

@@ -422,11 +422,92 @@ describe("handlePaseoWorktreeListRequest", () => {
 });
 
 describe("create-agent worktree setup boundary", () => {
+  test.each([false, true])(
+    "deferAutoName skips only early naming while setup and warmup continue (%s)",
+    async (deferAutoName) => {
+      const { tempDir, repoDir } = createGitRepo();
+      const paseoHome = path.join(tempDir, ".paseo");
+      const namedWorkspaces: string[] = [];
+      const emitted: SessionOutboundMessage[] = [];
+      let finishWarming!: () => void;
+      let finishSetup!: () => void;
+      const warmed = new Promise<void>((resolve) => {
+        finishWarming = resolve;
+      });
+      const setupCompleted = new Promise<void>((resolve) => {
+        finishSetup = resolve;
+      });
+      let warmCount = 0;
+      let setupCount = 0;
+
+      try {
+        const result = await createPaseoWorktreeWorkflow(
+          {
+            paseoHome,
+            createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+            warmWorkspaceGitData: async () => {
+              warmCount++;
+              finishWarming();
+            },
+            autoNameWorkspaceBranchForFirstAgent: ({ workspace, firstAgentContext }) => {
+              expect(firstAgentContext).toEqual({ prompt: "Fix login" });
+              namedWorkspaces.push(workspace.workspaceId);
+            },
+            startWorkspaceSetup: (_workspaceId, operation) => {
+              setupCount++;
+              void operation(new AbortController().signal);
+            },
+            emitWorkspaceUpdateForWorkspaceId: async () => {},
+            cacheWorkspaceSetupSnapshot: () => {},
+            emit: (message) => {
+              emitted.push(message);
+              if (
+                message.type === "workspace_setup_progress" &&
+                message.payload.status === "completed"
+              ) {
+                finishSetup();
+              }
+            },
+            sessionLogger: createLogger(),
+            terminalManager: null,
+            serviceProxy: null,
+            scriptRuntimeStore: null,
+            getDaemonTcpPort: null,
+            getDaemonTcpHost: null,
+            onScriptsChanged: null,
+          },
+          {
+            cwd: repoDir,
+            worktreeSlug: "naming-after-create",
+            runSetup: false,
+            paseoHome,
+            firstAgentContext: { prompt: "Fix login" },
+          },
+          { deferAutoName },
+        );
+
+        await Promise.all([warmed, setupCompleted]);
+        expect(namedWorkspaces).toEqual(deferAutoName ? [] : [result.workspace.workspaceId]);
+        expect(warmCount).toBe(1);
+        expect(setupCount).toBe(1);
+        expect(
+          emitted.some(
+            (message) =>
+              message.type === "workspace_setup_progress" && message.payload.status === "completed",
+          ),
+        ).toBe(true);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("blocked worktrees keep their workspace but skip setup and automatic terminals", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
     const setupMarker = path.join(tempDir, "setup-ran");
     const emitted: SessionOutboundMessage[] = [];
+    const namedWorkspaces: string[] = [];
     writeFileSync(
       path.join(repoDir, "paseo.json"),
       JSON.stringify({
@@ -443,7 +524,9 @@ describe("create-agent worktree setup boundary", () => {
           paseoHome,
           createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
           warmWorkspaceGitData: async () => {},
-          autoNameWorkspaceBranchForFirstAgent: () => {},
+          autoNameWorkspaceBranchForFirstAgent: ({ workspace }) => {
+            namedWorkspaces.push(workspace.workspaceId);
+          },
           assertWorkspaceAutomationAllowed: async () => {
             throw new WorkspaceAutomationBlockedError({
               kind: "change_request",
@@ -463,10 +546,16 @@ describe("create-agent worktree setup boundary", () => {
           getDaemonTcpHost: null,
           onScriptsChanged: null,
         },
-        { cwd: repoDir, worktreeSlug: "blocked-fork", paseoHome },
+        {
+          cwd: repoDir,
+          worktreeSlug: "blocked-fork",
+          paseoHome,
+          firstAgentContext: { prompt: "Fix login" },
+        },
       );
 
       expect(existsSync(setupMarker)).toBe(false);
+      expect(namedWorkspaces).toEqual([]);
       expect(emitted).toContainEqual(
         expect.objectContaining({
           type: "workspace_setup_progress",

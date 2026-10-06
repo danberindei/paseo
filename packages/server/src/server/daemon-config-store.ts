@@ -34,7 +34,7 @@ interface SupportedMutableConfigPatch {
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
-  metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  metadataGeneration?: MutableDaemonConfigPatch["metadataGeneration"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
@@ -345,6 +345,7 @@ function pickRelayPatch(
   return Object.keys(picked).length > 0 ? { relay: picked } : {};
 }
 
+// oxlint-disable-next-line complexity
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...pickRelayPatch(patch.relay),
@@ -357,8 +358,17 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
-    ...(patch.metadataGeneration?.providers !== undefined
-      ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
+    ...(patch.metadataGeneration !== undefined
+      ? {
+          metadataGeneration: {
+            ...(patch.metadataGeneration.providers !== undefined
+              ? { providers: patch.metadataGeneration.providers }
+              : {}),
+            ...(patch.metadataGeneration.generateAgentTitles !== undefined
+              ? { generateAgentTitles: patch.metadataGeneration.generateAgentTitles }
+              : {}),
+          },
+        }
       : {}),
     ...(patch.autoArchiveAfterMerge !== undefined
       ? { autoArchiveAfterMerge: patch.autoArchiveAfterMerge }
@@ -823,11 +833,15 @@ function mergeMutableAgentPatch(
   if (providerOverrides) next["providers"] = providerOverrides;
   else delete next["providers"];
 
-  if (patch.metadataGeneration?.providers !== undefined) {
-    next["metadataGeneration"] = { providers: patch.metadataGeneration.providers };
+  if (patch.metadataGeneration !== undefined) {
+    next["metadataGeneration"] = {
+      ...persistedAgents?.metadataGeneration,
+      ...patch.metadataGeneration,
+    };
   } else if (removeProviders.length > 0 && persistedAgents?.metadataGeneration?.providers) {
     const removed = new Set(removeProviders);
     next["metadataGeneration"] = {
+      ...persistedAgents.metadataGeneration,
       providers: persistedAgents.metadataGeneration.providers.filter(
         (entry) => !removed.has(entry.provider),
       ),

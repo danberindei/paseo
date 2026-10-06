@@ -11,6 +11,9 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { buildSelectableProviderSelectorProviders } from "@/provider-selection/provider-selection";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSwitch } from "@/components/settings";
+import { Alert as InlineAlert } from "@/components/ui/alert";
+import { useHostFeatureAvailability } from "@/runtime/host-features";
 
 const METADATA_GENERATION_DOCS_URL = "https://paseo.sh/docs/metadata-generation";
 type SelectionMode = "automatic" | "preferred";
@@ -154,9 +157,81 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
             />
           </View>
         ) : null}
+        <View style={settingsStyles.rowBorder}>
+          <AgentTitleGenerationSetting
+            serverId={serverId}
+            enabled={config.metadataGeneration.generateAgentTitles === true}
+            patchConfig={patchConfig}
+          />
+        </View>
       </View>
     </SettingsSection>
   );
+}
+
+function AgentTitleGenerationSetting({
+  serverId,
+  enabled,
+  patchConfig,
+}: {
+  serverId: string;
+  enabled: boolean;
+  patchConfig: ReturnType<typeof useDaemonConfig>["patchConfig"];
+}) {
+  const { t } = useTranslation();
+  // COMPAT(agentTitleGeneration): added after v0.16.0-beta.2, remove gate after 2027-05-15.
+  const supported = useHostFeatureAvailability(serverId, "agentTitleGeneration");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = useCallback(
+    async (generateAgentTitles: boolean) => {
+      setIsSaving(true);
+      setError(null);
+      try {
+        const saved = await patchConfig({ metadataGeneration: { generateAgentTitles } });
+        if (!saved) throw new Error(t("workspace.terminal.hostDisconnected"));
+      } catch (failure) {
+        setError(agentTitleSettingError(failure));
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [patchConfig, t],
+  );
+  const change = useCallback((value: boolean) => void save(value), [save]);
+  // The host has not reported its features yet: show nothing rather than claim
+  // it is outdated.
+  if (supported === null) {
+    return null;
+  }
+  if (!supported) {
+    return (
+      <InlineAlert
+        size="sm"
+        variant="warning"
+        title={t("settings.metadataGeneration.agentTitlesUpdateHost")}
+      />
+    );
+  }
+  return (
+    <>
+      <SettingsSwitch
+        label={t("settings.metadataGeneration.agentTitles")}
+        value={enabled}
+        onValueChange={change}
+        disabled={isSaving}
+        error={error ?? undefined}
+        testID="metadata-generation-agent-titles"
+      />
+      {isSaving ? <LoadingSpinner size="small" color={styles.spinnerColor.color} /> : null}
+    </>
+  );
+}
+
+function agentTitleSettingError(failure: unknown): string {
+  if (!(failure instanceof Error)) return String(failure);
+  if (failure.name !== "DaemonRpcError") return failure.message;
+  return failure.message.replace(/ requestType=\S+(?: code=\S+)?$/, "");
 }
 
 const styles = StyleSheet.create((theme) => ({

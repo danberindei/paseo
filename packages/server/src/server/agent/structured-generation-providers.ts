@@ -5,9 +5,11 @@ import type {
 } from "./agent-sdk-types.js";
 import type { StructuredGenerationProvider } from "./agent-response-loop.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
 export interface StructuredGenerationDaemonConfig {
   metadataGeneration?: {
+    generateAgentTitles?: boolean;
     providers?: Array<{
       provider: string;
       model?: string;
@@ -19,6 +21,15 @@ export interface StructuredGenerationDaemonConfig {
 export interface StructuredGenerationProviderIdentifier {
   modelSubstring: string;
   thinkingOptionId?: string;
+}
+
+export function resolveMetadataGenerationConfig(
+  config: StructuredGenerationDaemonConfig["metadataGeneration"],
+): MutableDaemonConfig["metadataGeneration"] {
+  return {
+    providers: config?.providers ?? [],
+    generateAgentTitles: config?.generateAgentTitles ?? true,
+  };
 }
 
 export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerationProviderIdentifier[] =

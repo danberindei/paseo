@@ -4850,6 +4850,7 @@ export class Session {
                   },
                   id,
                   onReady,
+                  true,
                 );
               }
             : undefined,
@@ -4962,6 +4963,7 @@ export class Session {
     msg: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
+    reuseWorkspaceTitle?: boolean,
   ): Promise<CreatedAgent> {
     const {
       config,
@@ -5002,6 +5004,7 @@ export class Session {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
+      const hasInitialPrompt = hasInitialCreationPrompt(msg);
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,
@@ -5015,6 +5018,10 @@ export class Session {
         createdWorktree,
         workspacePromptTitle,
       });
+      const reusesWorkspaceTitle =
+        Boolean(reuseWorkspaceTitle) ||
+        resolvedIntent.createdDirectoryWorkspace ||
+        Boolean(createdWorktree);
       const resolvedCwd = resolve(resolvedIntent.config.cwd);
       if (!(await this.filesystem.isDirectory(resolvedCwd))) {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
@@ -5033,6 +5040,36 @@ export class Session {
           kind: "session",
           onAgentReady: async (agent) => {
             createdAgentId = agent.id;
+            // A workspace minted for this agent has no title of its own yet: the
+            // agent's first prompt must name both, so an empty initial prompt defers
+            // naming instead of scheduling a call with no seed.
+            if (hasInitialPrompt && agent.workspaceId) {
+              if (reusesWorkspaceTitle) {
+                this.workspaceAutoName.scheduleForCreatedWorkspace(
+                  {
+                    workspaceId: agent.workspaceId,
+                    agentId: agent.id,
+                    firstAgentContext,
+                  },
+                  { currentSelection: this.getFocusedAgentSelectionForCwd(agent.cwd) },
+                );
+              } else {
+                this.workspaceAutoName.scheduleForAgent(
+                  {
+                    agentId: agent.id,
+                    cwd: agent.cwd,
+                    firstAgentContext,
+                  },
+                  {
+                    currentSelection: {
+                      provider: agent.provider,
+                      model: agent.config.model,
+                      thinkingOptionId: agent.config.thinkingOptionId,
+                    },
+                  },
+                );
+              }
+            }
             await onAgentReady?.(await this.buildAgentPayload(agent));
           },
           agentId,
@@ -5052,6 +5089,7 @@ export class Session {
           env,
           provisionalTitle,
           firstAgentContext,
+          workspaceTitleFromFirstPrompt: reusesWorkspaceTitle && !hasInitialPrompt,
         },
       );
       createdAgentId = snapshot.id;
@@ -5059,16 +5097,6 @@ export class Session {
       await this.agentUpdates.forwardLiveAgent(
         this.agentManager.getAgent(snapshot.id) ?? liveSnapshot,
       );
-      if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
-        this.workspaceAutoName.scheduleForDirectory(
-          {
-            workspaceId: resolvedIntent.intent.workspaceId,
-            cwd: resolvedIntent.config.cwd,
-            firstAgentContext,
-          },
-          { currentSelection: this.getFocusedAgentSelectionForCwd(resolvedIntent.config.cwd) },
-        );
-      }
       this.createAgentLifecycleDispatch.registerAutoArchiveIfRequested({
         autoArchive,
         agentId: snapshot.id,
@@ -7581,7 +7609,7 @@ export class Session {
           "Background snapshot refresh failed after workspace.create",
         );
       });
-    if (request.firstAgentContext) {
+    if (request.firstAgentContext && !request.agent) {
       const firstAgentContext = request.firstAgentContext;
       this.workspaceAutoName.scheduleForDirectory(
         {
@@ -7630,9 +7658,12 @@ export class Session {
         metadata: request.metadata,
         ...(await this.workspaceBackgroundIntent(request.background, request.callerAgentId)),
       },
-      source.baseBranch
-        ? { resolveDefaultBranch: async () => source.baseBranch as string }
-        : undefined,
+      {
+        deferAutoName: Boolean(request.agent),
+        ...(source.baseBranch
+          ? { resolveDefaultBranch: async () => source.baseBranch as string }
+          : {}),
+      },
     );
 
     const descriptor = await this.describeCreatedWorktreeWorkspace(result);
@@ -8150,6 +8181,7 @@ export class Session {
     input: CreatePaseoWorktreeInput,
     options?: {
       resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
+      deferAutoName?: boolean;
     },
   ): Promise<CreatePaseoWorktreeWorkflowResult> {
     return createWorktreeWorkflow(
@@ -9113,17 +9145,56 @@ export class Session {
     }
   }
 
-  private async prepareAgentMessage(agentId: string, text: string): Promise<void> {
+  private async prepareAgentMessage(
+    agentId: string,
+    firstAgentContext: FirstAgentContext,
+  ): Promise<void> {
     await ensureAgentLoaded(agentId, {
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       logger: this.sessionLogger,
     });
     const stored = await this.agentStorage.get(agentId);
-    if (stored && !stored.title && !stored.lastUserMessageAt) {
-      const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: text });
-      if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
+    if (!stored || stored.lastUserMessageAt) {
+      return;
     }
+
+    const currentSelection = {
+      provider: stored.provider,
+      model: stored.config?.model,
+      thinkingOptionId: stored.config?.thinkingOptionId,
+    };
+    if (!stored.title) {
+      const { provisionalTitle } = resolveCreateAgentTitles({
+        initialPrompt: firstAgentContext.prompt,
+        attachments: firstAgentContext.attachments,
+      });
+      if (provisionalTitle) {
+        await this.agentManager.setTitle(agentId, provisionalTitle);
+      }
+    }
+    if (stored.workspaceTitleFromFirstPrompt && stored.workspaceId) {
+      this.workspaceAutoName.scheduleForCreatedWorkspace(
+        {
+          workspaceId: stored.workspaceId,
+          agentId,
+          firstAgentContext,
+        },
+        { currentSelection },
+      );
+      return;
+    }
+    if (stored.title) {
+      return;
+    }
+    this.workspaceAutoName.scheduleForAgent(
+      {
+        agentId,
+        cwd: stored.cwd,
+        firstAgentContext,
+      },
+      { currentSelection },
+    );
   }
 
   private async handleSendAgentMessageRequest(
@@ -9207,6 +9278,13 @@ export class Session {
           );
         }
       };
+      const firstAgentContext: FirstAgentContext = {
+        ...(msg.text.trim() ? { prompt: msg.text } : {}),
+        ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
+      };
+      const prepareFirstMessage = async () => {
+        if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, firstAgentContext);
+      };
       const sent = msg.messageId
         ? this.messageReceipts.send({
             agentId,
@@ -9220,11 +9298,14 @@ export class Session {
                 msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
             },
             send: async (beforeDispatch) => {
-              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+              await prepareFirstMessage();
               await send(beforeDispatch);
             },
           })
-        : send(async () => {});
+        : (async () => {
+            await prepareFirstMessage();
+            await send(async () => {});
+          })();
       void sent.catch((error) => {
         if (deliveryStatus === "queued") {
           this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");

@@ -130,6 +130,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 }
 
 import { VoiceAssistantWebSocketServer, isDaemonOriginAllowed } from "./websocket-server.js";
+import { resolveMetadataGenerationConfig } from "./agent/structured-generation-providers.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createChangeRequestRouter } from "../services/change-request-router.js";
@@ -481,6 +482,7 @@ export interface PaseoDaemonConfig {
   resumePrompt?: string;
   providerCatalogRefreshTimeoutMs?: number;
   metadataGeneration?: {
+    generateAgentTitles?: boolean;
     providers?: Array<{
       provider: string;
       model?: string;
@@ -604,9 +606,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
-    metadataGeneration: {
-      providers: config.metadataGeneration?.providers ?? [],
-    },
+    metadataGeneration: resolveMetadataGenerationConfig(config.metadataGeneration),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
@@ -1156,15 +1156,15 @@ export async function createPaseoDaemon(
   const ensureWorkspaceForCreateExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { background?: boolean; callerWorkspaceId?: string },
+    options?: { background?: boolean; deferAutoName?: boolean; callerWorkspaceId?: string },
   ): Promise<string> => {
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
       resolveFirstAgentPromptTitle(firstAgentContext),
       undefined,
-      context,
+      { background: options?.background, callerWorkspaceId: options?.callerWorkspaceId },
     );
-    if (firstAgentContext) {
+    if (firstAgentContext && !options?.deferAutoName) {
       workspaceAutoName.scheduleForDirectory({
         workspaceId: workspace.workspaceId,
         cwd: workspace.cwd,
@@ -1198,9 +1198,9 @@ export async function createPaseoDaemon(
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { background?: boolean; callerWorkspaceId?: string },
+    options?: { background?: boolean; deferAutoName?: boolean; callerWorkspaceId?: string },
   ): Promise<string> => {
-    const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext, context);
+    const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext, options);
     await emitWorkspaceUpdatesExternal([workspaceId]);
     return workspaceId;
   };
@@ -1316,6 +1316,31 @@ export async function createPaseoDaemon(
     providerSnapshotManager,
     createPaseoWorktree: createPaseoWorktreeForTools,
     ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
+    scheduleWorkspaceTitle: (agent, firstAgentContext) => {
+      if (!agent.workspaceId) throw new Error("Created agent has no workspace");
+      void workspaceAutoName.scheduleForCreatedWorkspace(
+        { workspaceId: agent.workspaceId, agentId: agent.id, firstAgentContext },
+        {
+          currentSelection: {
+            provider: agent.provider,
+            model: agent.config.model,
+            thinkingOptionId: agent.config.thinkingOptionId,
+          },
+        },
+      );
+    },
+    scheduleAgentTitle: (agent, firstAgentContext) => {
+      void workspaceAutoName.scheduleForAgent(
+        { agentId: agent.id, cwd: agent.cwd, firstAgentContext },
+        {
+          currentSelection: {
+            provider: agent.provider,
+            model: agent.config.model,
+            thinkingOptionId: agent.config.thinkingOptionId,
+          },
+        },
+      );
+    },
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
@@ -1648,6 +1673,8 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
+    scheduleAgentTitle: createAgentCommandDependencies.scheduleAgentTitle,
+    scheduleWorkspaceTitle: createAgentCommandDependencies.scheduleWorkspaceTitle,
     browserToolsEnabled: browserToolsPolicy.isEnabled(),
     browserToolsBroker,
     paseoToolPolicy:
