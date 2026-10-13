@@ -105,9 +105,18 @@ describe("toPluginTheme", () => {
       },
       spacing: lightTheme.spacing,
       borderRadius: { lg: lightTheme.borderRadius.lg, full: lightTheme.borderRadius.full },
-      fontSize: { sm: lightTheme.fontSize.sm },
+      fontSize: { sm: lightTheme.fontSize.sm, content: lightTheme.fontSize.content },
       fontWeight: { medium: lightTheme.fontWeight.medium },
     });
+  });
+
+  it.each([15, 21])("preserves content size %i independently of interface size", (content) => {
+    const theme = {
+      ...lightTheme,
+      fontSize: { ...lightTheme.fontSize, sm: 12, content },
+    };
+
+    expect(toPluginTheme(theme).fontSize).toEqual({ sm: 12, content });
   });
 });
 

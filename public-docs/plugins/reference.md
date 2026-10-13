@@ -1560,6 +1560,7 @@ Recreate styles when `theme` or `layout.compact` changes.
 | `theme.spacing`                     | Spacing                    | Numeric spacing tokens              |
 | `theme.borderRadius.lg` and `.full` | Rounded surfaces           | Cards and circular controls         |
 | `theme.fontSize.sm`                 | Small text                 | Compact status values               |
+| `theme.fontSize.content`            | Body prose                 | Appearance Content size setting     |
 | `theme.fontWeight.medium`           | Medium weight              | Compact status values               |
 | `layout.compact`                    | Padding and stacking       | `true` on mobile and narrow windows |
 | `layout.platform`                   | Platform-specific behavior | `ios`, `android`, or `web`          |

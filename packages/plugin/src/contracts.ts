@@ -23,7 +23,7 @@ export interface PluginTheme {
   };
   readonly spacing: Readonly<Record<number, number>>;
   readonly borderRadius: { readonly lg: number; readonly full: number };
-  readonly fontSize: { readonly sm: number };
+  readonly fontSize: { readonly sm: number; readonly content: number };
   readonly fontWeight: { readonly medium: "500" };
 }
 

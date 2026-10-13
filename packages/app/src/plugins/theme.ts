@@ -21,7 +21,7 @@ export function toPluginTheme(theme: Theme): PluginTheme {
     },
     spacing: theme.spacing,
     borderRadius: { lg: theme.borderRadius.lg, full: theme.borderRadius.full },
-    fontSize: { sm: theme.fontSize.sm },
+    fontSize: { sm: theme.fontSize.sm, content: theme.fontSize.content },
     fontWeight: { medium: theme.fontWeight.medium },
   };
 }
