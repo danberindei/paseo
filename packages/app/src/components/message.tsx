@@ -2437,7 +2437,6 @@ export const ToolCall = memo(function ToolCall({
       <ToolCallDetailsContent
         toolName={toolName}
         detail={presentation.detail}
-        errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
       />
@@ -2446,7 +2445,6 @@ export const ToolCall = memo(function ToolCall({
     shouldRenderInline,
     toolName,
     presentation.detail,
-    presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
   ]);
@@ -2463,22 +2461,33 @@ export const ToolCall = memo(function ToolCall({
   }
 
   return (
-    <ExpandableBadge
-      testID="tool-call-badge"
-      label={presentation.displayName}
-      secondaryLabel={presentation.summary}
-      icon={presentation.icon}
-      isExpanded={shouldRenderInline && isExpanded}
-      onToggle={presentation.canOpenDetails ? handleToggle : undefined}
-      onOpenFile={handleOpenFile}
-      onCopyPath={handleCopyPath}
-      onOpenInEditor={handleOpenInEditor}
-      renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
-      isLoading={status === "running" || status === "executing"}
-      isError={status === "failed"}
-      isLastInSequence={isLastInSequence}
-      disableOuterSpacing={disableOuterSpacing}
-    />
+    <>
+      <ExpandableBadge
+        testID="tool-call-badge"
+        label={presentation.displayName}
+        secondaryLabel={presentation.summary}
+        icon={presentation.icon}
+        isExpanded={shouldRenderInline && isExpanded}
+        onToggle={presentation.canOpenDetails ? handleToggle : undefined}
+        onOpenFile={handleOpenFile}
+        onCopyPath={handleCopyPath}
+        onOpenInEditor={handleOpenInEditor}
+        renderDetails={
+          presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined
+        }
+        isLoading={status === "running" || status === "executing"}
+        isError={status === "failed"}
+        isLastInSequence={isLastInSequence}
+        disableOuterSpacing={disableOuterSpacing}
+      />
+      {presentation.errorText ? (
+        <Notification
+          level="error"
+          message={presentation.errorText}
+          disableOuterSpacing={disableOuterSpacing}
+        />
+      ) : null}
+    </>
   );
 }, areToolCallPropsEqual);
 

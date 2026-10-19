@@ -98,6 +98,27 @@ describe("tool call detail-level projection", () => {
     expect(result.groupsByHostId.size).toBe(0);
   });
 
+  it.each(["tail", "head"] as const)(
+    "keeps failed calls outside collapsed groups in the %s",
+    (placement) => {
+      const calls = [
+        toolCall("1", { type: "shell", command: "first success" }),
+        toolCall("2", { type: "shell", command: "second success" }),
+        toolCall("3", { type: "shell", command: "blocked" }, { status: "failed" }),
+        toolCall("4", { type: "shell", command: "also blocked" }, { status: "failed" }),
+        toolCall("5", { type: "shell", command: "third success" }),
+        toolCall("6", { type: "shell", command: "last success" }),
+      ];
+      const result = project({ level: "overview", [placement]: calls });
+
+      expect(result[placement].map((item) => item.id)).toEqual(["1", "3", "4", "5"]);
+      expect(result.groupsByHostId.get("1")?.run.calls).toEqual(calls.slice(0, 2));
+      expect(result.groupsByHostId.has("3")).toBe(false);
+      expect(result.groupsByHostId.has("4")).toBe(false);
+      expect(result.groupsByHostId.get("5")?.run.calls).toEqual(calls.slice(4));
+    },
+  );
+
   it("keeps one stable overview host as a run grows", () => {
     const firstCall = toolCall("1", { type: "shell", command: "one" });
     const secondCall = toolCall("2", { type: "read", filePath: "/repo/a.ts" });
@@ -234,7 +255,7 @@ describe("tool call detail-level projection", () => {
       toolCall("1", { type: "read", filePath: "/repo/src/a.ts" }),
       toolCall("2", { type: "read", filePath: "/repo/src/b.ts" }),
       toolCall("3", { type: "shell", command: "npm test" }),
-      toolCall("4", { type: "edit", filePath: "/repo/src/a.ts" }, { status: "failed" }),
+      toolCall("4", { type: "edit", filePath: "/repo/src/a.ts" }),
     ];
 
     const overview = project({ level: "overview", head: calls });
@@ -260,11 +281,7 @@ describe("tool call detail-level projection", () => {
       toolCall("1", { type: "read", filePath: "/repo/src/a.ts" }),
       toolCall("2", { type: "read", filePath: "C:\\repo\\src\\beta.ts" }),
       toolCall("3", { type: "fetch", url: "https://github.com/org/repo" }),
-      toolCall(
-        "4",
-        { type: "search", query: "paseo", toolName: "web_search" },
-        { status: "failed" },
-      ),
+      toolCall("4", { type: "search", query: "paseo", toolName: "web_search" }),
       toolCall("5", { type: "fetch", url: "not a url" }),
     ];
 

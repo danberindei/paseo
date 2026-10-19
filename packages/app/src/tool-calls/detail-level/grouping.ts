@@ -74,6 +74,9 @@ export function isGroupableToolCall(
     return false;
   }
   const descriptor = describeToolCall(item);
+  if (descriptor.status === "failed") {
+    return false;
+  }
   return descriptor.detail.type !== "plan" && descriptor.name.trim().toLowerCase() !== "speak";
 }
 
