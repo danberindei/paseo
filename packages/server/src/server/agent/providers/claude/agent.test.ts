@@ -422,6 +422,45 @@ describe("convertClaudeHistoryEntry", () => {
     expect(await convertClaudeHistoryEntry(entry, mapBlocks)).toEqual(mappedTimeline);
     expect(mapBlocks).toHaveBeenCalledWith(entry.message.content);
   });
+
+  test("replays a hook banner that stopped the turn as the assistant message", async () => {
+    const entry = {
+      type: "system",
+      subtype: "informational",
+      content:
+        "UserPromptSubmit operation blocked by hook:\nMessage blocked: quota pace is red.\n\nOriginal prompt: keep going",
+      level: "warning",
+      preventContinuation: true,
+      uuid: "blocked-banner-uuid",
+      sessionId: "history-session",
+      cwd: "/repo",
+    };
+
+    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
+      {
+        type: "assistant_message",
+        text: entry.content,
+        messageId: "blocked-banner-uuid",
+      },
+    ]);
+  });
+
+  test("skips informational banners that did not stop the turn", async () => {
+    const base = {
+      type: "system",
+      subtype: "informational",
+      content: "Set model to claude-opus-4-6",
+      uuid: "banner-uuid",
+    };
+
+    expect(await convertClaudeHistoryEntry({ ...base, level: "warning" }, () => [])).toEqual([]);
+    expect(
+      await convertClaudeHistoryEntry(
+        { ...base, level: "notice", preventContinuation: true },
+        () => [],
+      ),
+    ).toEqual([]);
+  });
 });
 
 // NOTE: Turn handoff integration tests are covered by the daemon E2E test:

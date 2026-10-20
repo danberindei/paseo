@@ -6922,6 +6922,17 @@ async function mapAssistantHistoryBlocksWithMessageId(
   return items;
 }
 
+// Hook blocks are system entries in transcripts but turn results in the live stream.
+function readStoppedTurnBanner(entry: ClaudeHistoryEntry): AgentTimelineItem | null {
+  if (entry.type !== "system" || entry.subtype !== "informational") return null;
+  if (entry.level !== "warning") return null;
+  if (entry.preventContinuation !== true && entry.prevent_continuation !== true) return null;
+  const text = typeof entry.content === "string" ? entry.content.trim() : "";
+  if (!text) return null;
+  const messageId = typeof entry.uuid === "string" && entry.uuid.length > 0 ? entry.uuid : null;
+  return { type: "assistant_message", text, ...(messageId ? { messageId } : {}) };
+}
+
 function convertClaudeHistoryEntryPreamble(
   entry: ClaudeHistoryEntry,
 ): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
@@ -6937,6 +6948,11 @@ function convertClaudeHistoryEntryPreamble(
         },
       ],
     };
+  }
+
+  const stoppedTurnBanner = readStoppedTurnBanner(entry);
+  if (stoppedTurnBanner) {
+    return { shortCircuit: [stoppedTurnBanner] };
   }
 
   const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(entry);
