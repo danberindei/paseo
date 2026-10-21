@@ -25,9 +25,9 @@ describe("working diff comparison", () => {
     );
   });
 
-  it.each([true, false])("defaults to All changes when checkout dirtiness is %s", (isDirty) => {
+  it.each([true, false])("defaults to Uncommitted when checkout dirtiness is %s", (isDirty) => {
     const status = { ...checkout, isDirty };
-    expect(resolveWorkingDiffComparisonFromState(emptyState(), status)).toBe("all");
+    expect(resolveWorkingDiffComparisonFromState(emptyState(), status)).toBe("uncommitted");
   });
 
   it.each(["all", "base", "uncommitted"] as const)(
@@ -40,7 +40,7 @@ describe("working diff comparison", () => {
       expect(resolveWorkingDiffComparisonFromState(selected, checkout)).toBe(comparison);
       expect(
         resolveWorkingDiffComparisonFromState(selected, { ...checkout, workspaceId: "other" }),
-      ).toBe("all");
+      ).toBe("uncommitted");
     },
   );
 });

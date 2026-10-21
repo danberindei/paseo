@@ -47,5 +47,6 @@ export function resolveWorkingDiffComparisonFromState(
   state: WorkingDiffComparisonState,
   input: WorkingDiffCheckoutIdentity,
 ): WorkingDiffComparison {
-  return state.overrides[workingDiffComparisonKey(input)]?.comparison ?? "all";
+  // A clean checkout still opens on the working-tree comparison, even when it is empty.
+  return state.overrides[workingDiffComparisonKey(input)]?.comparison ?? "uncommitted";
 }

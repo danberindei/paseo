@@ -268,19 +268,14 @@ test.afterEach(async () => {
 
 test("Changes without a comparison base explains how to view pending changes", async ({ page }) => {
   const workspace = await createWorkspaceWithManyTinyDiffs(2, "dev");
-  await openWorkspaceChangesTree(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
+  await selectChangesComparison(page, "Committed");
   await expect(
     page.getByText("Comparison base is unavailable. Select Uncommitted to view pending changes."),
   ).toBeVisible();
   await selectChangesComparison(page, "Uncommitted");
   await expect(changesTree(page).getByText("file-0000.ts", { exact: true })).toBeVisible();
 });
-async function openWorkspaceChangesTree(page: Page, workspace: DirtyWorkspace): Promise<void> {
-  await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
-  await waitForWorkspaceTabsVisible(page);
-  await openChangesTreePanel(page);
-}
 
 test("streamed Changes shows the tree before completion and applies a one-file refresh", async ({
   page,
@@ -410,15 +405,14 @@ async function expectAnnouncedTreeAndLoader(page: Page): Promise<void> {
   await expect(page.getByRole("progressbar", { name: "Loading..." }).first()).toBeVisible();
 }
 
-test("Changes opens All changes for a clean checkout", async ({ page }) => {
+test("Changes opens the uncommitted comparison for a clean checkout", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
 
-  await openWorkspaceChangesSurface(page, workspace, 90_000);
+  await openWorkspaceChangesTreeSurface(page, workspace);
 
-  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText("All changes");
-  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText("Uncommitted");
+  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
 });
 
 test("All changes combines committed and pending edits and preserves an unfinished review", async ({
@@ -428,7 +422,8 @@ test("All changes combines committed and pending edits and preserves an unfinish
   const workspace = await createWorkspaceWithNetDiff();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await configureDiffPresentation(page, { layout: "unified", wrapLines: false });
-  await openWorkspaceChangesSurface(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
+  await selectChangesComparison(page, "All changes");
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const mode = tree.getByRole("button", { name: "Diff mode", exact: true });
@@ -480,7 +475,8 @@ test("Changes selects exact local and remote bases and retains the selection aft
     cwd: workspace.repoPath,
   });
   const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace.repoPath }).toString();
-  await openWorkspaceChangesSurface(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
+  await selectChangesComparison(page, "All changes");
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const picker = tree.getByTestId("workspace-base-branch-trigger");
   await expect(picker).toBeVisible();
@@ -521,7 +517,7 @@ test("Changes lets a compact workspace change its base in a sheet", async ({ pag
 test("Changes shows a failed base selection and lets the user retry", async ({ page }) => {
   const workspace = await createWorktreeWithCommittedDiff();
   execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
-  await openWorkspaceChangesSurface(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
   const picker = page
     .getByTestId("workspace-base-branch-trigger")
     .filter({ visible: true })
@@ -570,14 +566,14 @@ test("Changes shows the base as text on a host without the base-branch capabilit
     });
   });
   const workspace = await createWorktreeWithCommittedDiff();
-  await openWorkspaceChangesSurface(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
   await expect(page.getByTestId("workspace-base-branch-trigger")).toHaveCount(0);
   expect(baseRequests).toBe(0);
 });
 
 test("Changes shows no base on a checkout that is not a Paseo worktree", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
-  await openWorkspaceChangesSurface(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
   const header = page.getByTestId("changes-repository-header").filter({ visible: true });
   await expect(header).toContainText("feature");
   await expect(header).not.toContainText("main");
@@ -590,7 +586,7 @@ test("Changes keeps a manual comparison when checkout dirtiness changes", async 
 
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const mode = tree.getByTestId("changes-diff-status-trigger");
-  await expect(mode).toContainText("All changes");
+  await expect(mode).toContainText("Uncommitted");
 
   await mode.click();
   await page.getByTestId("changes-diff-mode-committed").click();
@@ -626,25 +622,23 @@ test("Changes keeps a manual comparison when checkout dirtiness changes", async 
 
 test("an empty Changes comparison links to the populated comparison", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
-  await openWorkspaceChangesSurface(page, workspace);
+  await openWorkspaceChangesTreeSurface(page, workspace);
 
-  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const mode = tree.getByTestId("changes-diff-status-trigger");
   await mode.click();
   await page.getByTestId("changes-diff-mode-committed").click();
-  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+  await expect(tree.getByTestId("diff-tree-file-0-name")).toHaveText("committed-only.ts");
 
   await mode.click();
   await page.getByTestId("changes-diff-mode-uncommitted").click();
 
   await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
-  await expect(panel.getByText("No changes to display", { exact: true })).toBeVisible();
   const seeCommitted = tree.getByRole("button", { name: "See committed changes" });
   await expect(seeCommitted).toBeVisible();
   await seeCommitted.click();
   await expect(mode).toContainText("Committed");
-  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+  await expect(tree.getByTestId("diff-tree-file-0-name")).toHaveText("committed-only.ts");
 });
 
 test("legacy diff hosts keep All, Committed and Uncommitted comparisons", async ({ page }) => {
@@ -1280,10 +1274,11 @@ test("compact Changes jumps to a file from the changed-files sheet", async ({ pa
 
 test("Jump to file stays out of the desktop diff and of an empty comparison", async ({ page }) => {
   const committed = await createWorkspaceWithCommittedDiff();
-  await openWorkspaceChangesSurface(page, committed, 90_000);
+  await openWorkspaceChangesTreeSurface(page, committed);
   await expect(page.getByRole("button", { name: "Jump to file" })).toHaveCount(0);
 
   const explorer = await openCompactChanges(page, committed);
+  await selectCommittedComparison(page, explorer);
   await expect(explorer.getByRole("button", { name: "Jump to file" })).toBeVisible();
 
   await selectEmptyUncommittedComparison(page, explorer);
@@ -2429,6 +2424,12 @@ async function selectEmptyUncommittedComparison(page: Page, explorer: Locator): 
   await expect(explorer.getByText("No changes to display", { exact: true })).toBeVisible();
 }
 
+async function selectCommittedComparison(page: Page, explorer: Locator): Promise<void> {
+  await explorer.getByRole("button", { name: "Diff mode", exact: true }).click();
+  // The Committed item carries a branch description, so match it by test id.
+  await page.getByTestId("changes-diff-mode-committed").filter({ visible: true }).click();
+}
+
 async function openWorkspaceChangesSurface(
   page: Page,
   workspace: DirtyWorkspace,
@@ -2438,6 +2439,17 @@ async function openWorkspaceChangesSurface(
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
   await waitForWorkspaceTabsVisible(page);
   await openChangesPanel(page, timeout);
+}
+
+/** Reveal the Changes tree without requiring a changed file, so a clean checkout can open it. */
+async function openWorkspaceChangesTreeSurface(
+  page: Page,
+  workspace: DirtyWorkspace,
+): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesTreePanel(page);
 }
 
 async function openSelectionWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {
@@ -2470,11 +2482,15 @@ async function openChangesInVisibleExplorer(page: Page): Promise<void> {
 
 async function selectChangesComparison(
   page: Page,
-  comparison: "Committed" | "Uncommitted",
+  comparison: "All changes" | "Committed" | "Uncommitted",
 ): Promise<void> {
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   await tree.getByTestId("changes-diff-status-trigger").click();
-  await page.getByTestId(`changes-diff-mode-${comparison.toLowerCase()}`).click();
+  if (comparison === "All changes") {
+    await page.getByRole("menuitem", { name: comparison, exact: true }).click();
+  } else {
+    await page.getByTestId(`changes-diff-mode-${comparison.toLowerCase()}`).click();
+  }
   await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText(comparison);
 }
 
