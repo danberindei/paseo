@@ -138,7 +138,12 @@ export class InMemoryAgentTimelineStore {
   append(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string; providerMessageId?: string; turnId?: string },
+    options?: {
+      timestamp?: string;
+      providerMessageId?: string;
+      turnId?: string;
+      rejectedClientMessageId?: string;
+    },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
     const row: AgentTimelineRow = {
@@ -147,6 +152,9 @@ export class InMemoryAgentTimelineStore {
       item,
       ...(options?.turnId ? { turnId: options.turnId } : {}),
       ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+      ...(options?.rejectedClientMessageId
+        ? { rejectedClientMessageId: options.rejectedClientMessageId }
+        : {}),
     };
     state.nextSeq += 1;
     if (state.minSeq === 0) state.minSeq = row.seq;

@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import pino from "pino";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
@@ -28,6 +29,7 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type { RewindMode } from "./rewind/rewind.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createAgentMessageDelivery } from "./agent-messages/index.js";
@@ -176,12 +178,13 @@ class RecordingTimelineStore implements AgentTimelineStore {
   async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
     this.writes.push(rows.map((row) => ({ ...row })));
     this.ensure(agentId);
-    for (const row of rows) {
-      this.memory.append(agentId, row.item, {
-        timestamp: row.timestamp,
-        turnId: row.turnId,
-      });
-    }
+    const merged = new Map<number, AgentTimelineRow>(
+      this.memory.getRows(agentId).map((row) => [row.seq, row]),
+    );
+    for (const row of rows) merged.set(row.seq, row);
+    this.memory.initialize(agentId, {
+      rows: [...merged.values()].sort((left, right) => left.seq - right.seq),
+    });
   }
 
   async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
@@ -13763,6 +13766,483 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test.each<{ name: string; earlierItems: AgentTimelineItem[] }>([
+  {
+    name: "earlier rows",
+    earlierItems: [
+      { type: "user_message", text: "Earlier prompt", messageId: "earlier-provider-message" },
+      { type: "assistant_message", text: "Earlier response" },
+      { type: "error", message: "Earlier Paseo error absent from provider history" },
+    ],
+  },
+  { name: "an empty history", earlierItems: [] },
+])(
+  "rewinding a rejected last prompt preserves $name without a provider rollback",
+  async ({ earlierItems }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-rewind-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const events: AgentManagerEvent[] = [];
+    const logLines: string[] = [];
+    const rewindLogger = pino({ level: "info" }, { write: (line) => logLines.push(line) });
+    const rejectionObserved = deferred<void>();
+    class RejectedPromptSession extends TestAgentSession {
+      override readonly capabilities = {
+        ...TEST_CAPABILITIES,
+        supportsRewindConversation: true,
+      };
+      rewindCount = 0;
+      interruptCount = 0;
+      override async startTurn(
+        _prompt: AgentPromptInput,
+        options?: AgentRunOptions,
+      ): Promise<{ turnId: string }> {
+        const turnId = "rejected-turn";
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          rejectedClientMessageId: options?.clientMessageId,
+          item: { type: "error", message: "Prompt blocked: idle condition" },
+        });
+        return { turnId };
+      }
+      override async interrupt(): Promise<void> {
+        this.interruptCount += 1;
+      }
+      override async revertConversation(): Promise<void> {
+        this.rewindCount += 1;
+        throw new Error("Rejected prompts have no provider message");
+      }
+    }
+    const session = new RejectedPromptSession({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger: rewindLogger,
+    });
+    manager.subscribe(
+      (event) => {
+        events.push(event);
+        if (
+          event.type === "agent_stream" &&
+          event.event.type === "timeline" &&
+          event.event.item.type === "error" &&
+          event.event.item.message === "Prompt blocked: idle condition"
+        )
+          rejectionObserved.resolve();
+      },
+      { replayState: false },
+    );
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      for (const item of earlierItems) await manager.appendTimelineItem(agent.id, item);
+      const before = manager.fetchTimeline(agent.id);
+      const retainedRows = await manager.getTimelineRows(agent.id);
+      const run = manager.runAgent(agent.id, "Rejected prompt", {
+        clientMessageId: "rejected-client",
+      });
+      await rejectionObserved.promise;
+      const activeRows = await manager.getTimelineRows(agent.id);
+      await expect(manager.rewind(agent.id, "rejected-client", "conversation")).rejects.toThrow(
+        "Cannot rewind before the provider acknowledges the submitted prompt",
+      );
+      expect(await manager.getTimelineRows(agent.id)).toEqual(activeRows);
+      expect(session.interruptCount).toBe(0);
+      session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "rejected-turn" });
+      await run;
+      expect(manager.getTimeline(agent.id).slice(-2)).toEqual([
+        {
+          type: "user_message",
+          text: "Rejected prompt",
+          messageId: "rejected-client",
+          clientMessageId: "rejected-client",
+        },
+        { type: "error", message: "Prompt blocked: idle condition" },
+      ]);
+
+      await manager.rewind(agent.id, "rejected-client", "conversation");
+
+      expect(session.rewindCount).toBe(0);
+      expect(await manager.getTimelineRows(agent.id)).toEqual(retainedRows);
+      const after = manager.fetchTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: before.epoch, seq: before.window.maxSeq },
+      });
+      expect(after.staleCursor).toBe(true);
+      expect(after.rows).toEqual(retainedRows);
+      expect(events.filter((event) => event.type === "timeline_replacement")).toEqual([
+        { type: "timeline_replacement", agentId: agent.id, epoch: after.epoch },
+      ]);
+      expect(logLines.filter((line) => line.includes('"msg":"agent.rewind.'))).toEqual([
+        expect.stringContaining('"msg":"agent.rewind.start"'),
+        expect.stringContaining('"msg":"agent.rewind.failed"'),
+        expect.stringContaining('"msg":"agent.rewind.start"'),
+        expect.stringContaining('"msg":"agent.rewind.complete"'),
+      ]);
+    } finally {
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+async function createRejectedPromptRewindScenario() {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-queued-"));
+  const timelineStore = new InMemoryAgentTimelineStore();
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    timelineStore,
+    agentStreamCoalesceWindowMs: 60_000,
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const timestamp = "2026-10-24T12:00:00.000Z";
+  const rows: AgentTimelineRow[] = [
+    {
+      seq: 1,
+      timestamp,
+      turnId: "rejected-turn",
+      item: {
+        type: "user_message",
+        text: "Prompt",
+        messageId: "rejected-client",
+        clientMessageId: "rejected-client",
+      },
+    },
+    {
+      seq: 2,
+      timestamp,
+      turnId: "rejected-turn",
+      rejectedClientMessageId: "rejected-client",
+      item: { type: "error", message: "Prompt blocked: idle condition" },
+    },
+  ];
+  timelineStore.initialize(agent.id, { rows });
+  return { manager, session, agent, rows, before: manager.fetchTimeline(agent.id) };
+}
+
+test.each<{
+  name: string;
+  queuedItems: AgentTimelineItem[];
+  expectedFollowingItems: AgentTimelineItem[];
+  expectedProviderMessageId: string | undefined;
+}>([
+  {
+    name: "queued assistant chunks",
+    queuedItems: [
+      { type: "assistant_message", text: "Later " },
+      { type: "assistant_message", text: "output" },
+    ],
+    expectedFollowingItems: [{ type: "assistant_message", text: "Later output" }],
+    expectedProviderMessageId: undefined,
+  },
+  {
+    name: "a queued later prompt",
+    queuedItems: [{ type: "user_message", text: "Later prompt", messageId: "later-provider" }],
+    expectedFollowingItems: [
+      { type: "user_message", text: "Later prompt", messageId: "later-provider" },
+    ],
+    expectedProviderMessageId: undefined,
+  },
+  {
+    name: "a queued provider acknowledgement",
+    queuedItems: [
+      {
+        type: "user_message",
+        text: "Prompt",
+        messageId: "acknowledged-provider",
+        clientMessageId: "rejected-client",
+      },
+    ],
+    expectedFollowingItems: [],
+    expectedProviderMessageId: "acknowledged-provider",
+  },
+])(
+  "rejected prompt rewind refuses $name without removing history",
+  async ({ queuedItems, expectedFollowingItems, expectedProviderMessageId }) => {
+    const { manager, session, agent, rows, before } = await createRejectedPromptRewindScenario();
+    for (const item of queuedItems) {
+      session.pushEvent({ type: "timeline", provider: "codex", turnId: "rejected-turn", item });
+    }
+
+    await expect(manager.rewind(agent.id, "rejected-client", "conversation")).rejects.toThrow(
+      "Cannot rewind before the provider acknowledges the submitted prompt",
+    );
+
+    const after = manager.fetchTimeline(agent.id);
+    expect(after.epoch).toBe(before.epoch);
+    expect(after.rows.map((row) => row.item)).toEqual([
+      ...rows.map((row) => row.item),
+      ...expectedFollowingItems,
+    ]);
+    expect(after.rows[0].providerMessageId).toBe(expectedProviderMessageId);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+  },
+);
+
+test("rejected prompt rewind refuses assistant output received while validation is pending", async () => {
+  const { manager, session, agent, rows, before } = await createRejectedPromptRewindScenario();
+  const rewind = manager.rewind(agent.id, "rejected-client", "conversation");
+  session.pushEvent({
+    type: "timeline",
+    provider: "codex",
+    turnId: "rejected-turn",
+    item: { type: "assistant_message", text: "Later output" },
+  });
+
+  await expect(rewind).rejects.toThrow(
+    "Cannot rewind before the provider acknowledges the submitted prompt",
+  );
+
+  const after = manager.fetchTimeline(agent.id);
+  expect(after.epoch).toBe(before.epoch);
+  expect(after.rows.map((row) => row.item)).toEqual([
+    ...rows.map((row) => row.item),
+    { type: "assistant_message", text: "Later output" },
+  ]);
+  expect(manager.hasInFlightRun(agent.id)).toBe(false);
+});
+
+test("rejected prompt rewind persists its retained rows across manager reload", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const store = new RecordingTimelineStore();
+  const agentId = "00000000-0000-4000-8000-000000000403";
+  const timestamp = "2026-10-24T12:00:00.000Z";
+  const retainedRows: AgentTimelineRow[] = [
+    {
+      seq: 1,
+      timestamp,
+      turnId: "accepted-turn",
+      providerMessageId: "accepted-provider",
+      item: {
+        type: "user_message",
+        text: "Accepted prompt",
+        messageId: "accepted-client",
+        clientMessageId: "accepted-client",
+      },
+    },
+    {
+      seq: 2,
+      timestamp,
+      turnId: "accepted-turn",
+      item: { type: "assistant_message", text: "Accepted response" },
+    },
+    { seq: 3, timestamp, item: { type: "error", message: "Earlier Paseo error" } },
+  ];
+  const submittedRows: AgentTimelineRow[] = [
+    ...retainedRows,
+    {
+      seq: 4,
+      timestamp,
+      turnId: "rejected-turn",
+      item: {
+        type: "user_message",
+        text: "Rejected prompt",
+        messageId: "rejected-client",
+        clientMessageId: "rejected-client",
+      },
+    },
+    {
+      seq: 5,
+      timestamp,
+      turnId: "rejected-turn",
+      rejectedClientMessageId: "rejected-client",
+      item: {
+        type: "error",
+        message: "Prompt blocked: idle condition",
+      },
+    },
+  ];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    durableTimelineStore: store,
+    logger,
+    idFactory: () => agentId,
+  });
+  const reloadedManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    durableTimelineStore: store,
+    logger,
+  });
+  const afterRewindManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    durableTimelineStore: store,
+    logger,
+  });
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await store.bulkInsert(agentId, submittedRows);
+    await manager.closeAgent(agentId);
+    await manager.flush();
+    await storage.flush();
+    await ensureAgentLoaded(agentId, {
+      agentManager: reloadedManager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(reloadedManager.fetchTimeline(agentId).rows.at(-1)).toMatchObject({
+      rejectedClientMessageId: "rejected-client",
+    });
+    await reloadedManager.rewind(agentId, "rejected-client", "conversation");
+    expect(await store.getCommittedRows(agentId)).toMatchObject(retainedRows);
+    await reloadedManager.closeAgent(agentId);
+    await reloadedManager.flush();
+    await storage.flush();
+    await ensureAgentLoaded(agentId, {
+      agentManager: afterRewindManager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(afterRewindManager.getTimeline(agentId)).toEqual(retainedRows.map((row) => row.item));
+    expect(afterRewindManager.fetchTimeline(agentId).rows).toMatchObject(retainedRows);
+    expect(afterRewindManager.getAgent(agentId)?.lastUserMessageAt).toEqual(new Date(timestamp));
+  } finally {
+    await manager.flush();
+    await reloadedManager.flush();
+    await afterRewindManager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each<{
+  name: string;
+  mode: RewindMode;
+  rejectionId: string | undefined;
+  rejectionTurnId: string;
+  followingItem: AgentTimelineItem | undefined;
+}>([
+  {
+    name: "an unacknowledged prompt",
+    mode: "conversation",
+    rejectionId: undefined,
+    rejectionTurnId: "rejected-turn",
+    followingItem: undefined,
+  },
+  {
+    name: "another prompt's rejection",
+    mode: "conversation",
+    rejectionId: "another-client",
+    rejectionTurnId: "rejected-turn",
+    followingItem: undefined,
+  },
+  {
+    name: "another turn's rejection",
+    mode: "conversation",
+    rejectionId: "rejected-client",
+    rejectionTurnId: "another-turn",
+    followingItem: undefined,
+  },
+  {
+    name: "an earlier rejected prompt",
+    mode: "conversation",
+    rejectionId: "rejected-client",
+    rejectionTurnId: "rejected-turn",
+    followingItem: {
+      type: "user_message",
+      text: "Later prompt",
+      messageId: "later-client",
+      clientMessageId: "later-client",
+    },
+  },
+  {
+    name: "a prompt followed by assistant output",
+    mode: "conversation",
+    rejectionId: "rejected-client",
+    rejectionTurnId: "rejected-turn",
+    followingItem: { type: "assistant_message", text: "Provider output" },
+  },
+  {
+    name: "file rewind",
+    mode: "files",
+    rejectionId: "rejected-client",
+    rejectionTurnId: "rejected-turn",
+    followingItem: undefined,
+  },
+  {
+    name: "combined file and conversation rewind",
+    mode: "both",
+    rejectionId: "rejected-client",
+    rejectionTurnId: "rejected-turn",
+    followingItem: undefined,
+  },
+])(
+  "rejected prompt removal refuses $name",
+  async ({ mode, rejectionId, rejectionTurnId, followingItem }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-rejected-guard-"));
+    const timelineStore = new InMemoryAgentTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      timelineStore,
+      logger,
+    });
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      const timestamp = "2026-10-24T12:00:00.000Z";
+      const rows: AgentTimelineRow[] = [
+        {
+          seq: 1,
+          timestamp,
+          turnId: "rejected-turn",
+          item: {
+            type: "user_message",
+            text: "Prompt",
+            messageId: "rejected-client",
+            clientMessageId: "rejected-client",
+          },
+        },
+        {
+          seq: 2,
+          timestamp,
+          turnId: rejectionTurnId,
+          rejectedClientMessageId: rejectionId,
+          item: { type: "error", message: "Prompt blocked: idle condition" },
+        },
+        ...(followingItem
+          ? [{ seq: 3, timestamp, turnId: "rejected-turn", item: followingItem }]
+          : []),
+      ];
+      timelineStore.initialize(agent.id, { rows });
+      const before = manager.fetchTimeline(agent.id);
+      await expect(manager.rewind(agent.id, "rejected-client", mode)).rejects.toThrow(
+        "Cannot rewind before the provider acknowledges the submitted prompt",
+      );
+      expect(manager.fetchTimeline(agent.id)).toEqual(before);
+    } finally {
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("provider history preserves replay metadata and permits consecutive local prompt rewinds", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-replay-metadata-"));

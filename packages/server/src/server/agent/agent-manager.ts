@@ -4300,39 +4300,41 @@ export class AgentManager {
       agent = await this.ensureInteractiveSession(agentId);
     }
     // An interactive session must acquire its rewind lock without yielding.
-
-    const submittedRow = this.timelineStore
-      .getRows(agentId)
-      .find(
-        (row) =>
-          row.item.type === "user_message" &&
-          row.item.messageId === messageId &&
-          row.item.clientMessageId === messageId,
-      );
-    if (submittedRow && !submittedRow.providerMessageId) {
-      throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
-    }
-    const providerMessageId = submittedRow?.providerMessageId ?? messageId;
-
-    if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "rewind");
-    }
-
-    const lock = this.runs.createPendingRun(agentId);
+    this.logger.info({ agentId, provider: agent.provider, messageId, mode }, "agent.rewind.start");
     try {
-      this.logger.info(
-        { agentId, provider: agent.provider, messageId, mode },
-        "agent.rewind.start",
-      );
-      await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
-      if (mode !== "files") {
-        await this.replaceTimelineFromProvider(agentId);
+      const submittedRow = this.timelineStore
+        .getRows(agentId)
+        .find(
+          (row) =>
+            row.item.type === "user_message" &&
+            row.item.messageId === messageId &&
+            row.item.clientMessageId === messageId,
+        );
+      if (submittedRow && !submittedRow.providerMessageId) {
+        if (mode !== "conversation" || !(await this.rewindRejectedPrompt(agent, submittedRow))) {
+          throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
+        }
+      } else {
+        const providerMessageId = submittedRow?.providerMessageId ?? messageId;
+        if (this.hasInFlightRun(agentId)) {
+          await this.cancelAgentRunBefore(agentId, "rewind");
+        }
+
+        const lock = this.runs.createPendingRun(agentId);
+        try {
+          await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
+          if (mode !== "files") {
+            await this.replaceTimelineFromProvider(agentId);
+          }
+          // Rewind stages provider events under the run lock; publish its final state directly.
+          this.refreshSessionPersistence(agent);
+          await this.refreshSessionState(agent, { emit: false });
+          await this.persistSnapshot(agent);
+          this.emitState(agent, { persist: false });
+        } finally {
+          this.runs.settleForegroundRun(agentId, lock.token);
+        }
       }
-      // Rewind stages provider events under the run lock; publish its final state directly.
-      this.refreshSessionPersistence(agent);
-      await this.refreshSessionState(agent, { emit: false });
-      await this.persistSnapshot(agent);
-      this.emitState(agent, { persist: false });
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.complete",
@@ -4347,8 +4349,74 @@ export class AgentManager {
         "agent.rewind.failed",
       );
       throw error;
+    }
+  }
+
+  private async rewindRejectedPrompt(
+    agent: ActiveManagedAgent,
+    submittedRow: AgentTimelineRow,
+  ): Promise<boolean> {
+    if (
+      this.hasInFlightRun(agent.id) ||
+      !submittedRow.turnId ||
+      submittedRow.item.type !== "user_message"
+    )
+      return false;
+    const clientMessageId = submittedRow.item.clientMessageId;
+    if (!clientMessageId) return false;
+    const lock = this.runs.createPendingRun(agent.id);
+    try {
+      // Queued session events can acknowledge the prompt or add buffered output.
+      await this.drainSessionEvents(agent.id);
+      do {
+        for (const event of lock.stagedEvents.splice(0)) {
+          await this.dispatchSessionEvent(agent, event);
+        }
+        this.agentStreamCoalescer.flushFor(agent.id);
+        await this.flush();
+      } while (lock.stagedEvents.length > 0);
+      const rows = this.timelineStore.getRows(agent.id);
+      const lastPrompt = rows.findLast((row) => row.item.type === "user_message");
+      if (
+        agent.lifecycle === "running" ||
+        agent.activeForegroundTurnId ||
+        lastPrompt?.seq !== submittedRow.seq ||
+        lastPrompt.providerMessageId
+      ) {
+        return false;
+      }
+      const rejectedRows = rows.filter((row) => row.seq > submittedRow.seq);
+      if (
+        !rejectedRows.some((row) => row.rejectedClientMessageId === clientMessageId) ||
+        !rejectedRows.every((row) => row.item.type === "error" && row.turnId === lastPrompt.turnId)
+      ) {
+        return false;
+      }
+
+      // A rejected submission has no provider message to roll back. Keep the
+      // projection, including source sequence ranges and Paseo-only items.
+      const retainedRows = rows.filter((row) => row.seq < submittedRow.seq);
+      // Production does not configure this store; enabling persistent storage
+      // requires atomic replacement across deletion and insertion.
+      await this.deleteCommittedTimeline(agent.id);
+      await this.durableTimelineStore?.bulkInsert(agent.id, retainedRows);
+      this.timelineStore.initialize(agent.id, { rows: retainedRows });
+      const lastUserRow = retainedRows.findLast((row) => row.item.type === "user_message");
+      agent.lastUserMessageAt = lastUserRow ? new Date(lastUserRow.timestamp) : null;
+      this.touchUpdatedAt(agent);
+      await this.persistSnapshot(agent);
+      this.dispatch({
+        type: "timeline_replacement",
+        agentId: agent.id,
+        epoch: this.timelineStore.getEpoch(agent.id),
+      });
+      this.emitState(agent, { persist: false });
+      return true;
     } finally {
-      this.runs.settleForegroundRun(agentId, lock.token);
+      this.runs.settleForegroundRun(agent.id, lock.token);
+      for (const event of lock.stagedEvents) {
+        this.enqueueSessionEvent(agent.id, event);
+      }
     }
   }
 
@@ -4901,6 +4969,7 @@ export class AgentManager {
       return { timestamp: now.toISOString() };
     }
     return {
+      rows: await this.durableTimelineStore.getCommittedRows(agentId),
       nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
       timestamp: now.toISOString(),
     };
@@ -5742,7 +5811,9 @@ export class AgentManager {
         continue;
       }
 
-      this.recordAndDispatchTimelineItem(agent.id, item, event.provider, event.turnId);
+      this.recordAndDispatchTimelineItem(agent.id, item, event.provider, event.turnId, {
+        rejectedClientMessageId: item.type === "error" ? event.rejectedClientMessageId : undefined,
+      });
       if (item.type === "user_message") {
         agent.lastUserMessageAt = new Date();
         this.emitState(agent);
@@ -5957,7 +6028,7 @@ export class AgentManager {
     item: AgentTimelineItem,
     provider: AgentProvider,
     turnId?: string,
-    options?: { providerMessageId?: string },
+    options?: { providerMessageId?: string; rejectedClientMessageId?: string },
   ): AgentStreamEvent {
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
     const event: AgentStreamEvent = {
@@ -6115,6 +6186,7 @@ export class AgentManager {
       timestamp?: string;
       providerMessageId?: string;
       turnId?: string;
+      rejectedClientMessageId?: string;
     },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);

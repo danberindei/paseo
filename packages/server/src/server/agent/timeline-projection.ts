@@ -22,6 +22,7 @@ export interface TimelineProjectionEntry {
   item: AgentTimelineItem;
   turnId?: string;
   providerMessageId?: string;
+  rejectedClientMessageId?: string;
   timestamp: string;
   seqStart: number;
   seqEnd: number;
@@ -125,6 +126,9 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
       timestamp: row.timestamp,
       ...(row.turnId ? { turnId: row.turnId } : {}),
       ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
+      ...(row.rejectedClientMessageId
+        ? { rejectedClientMessageId: row.rejectedClientMessageId }
+        : {}),
       seqStart: row.seq,
       seqEnd: row.seq,
       sourceSeqRanges: [{ startSeq: row.seq, endSeq: row.seq }],

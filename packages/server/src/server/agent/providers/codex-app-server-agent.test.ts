@@ -3385,6 +3385,55 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test.each([
+    ["blocked", "native-rejected", "rejected-client-message"],
+    ["stopped", "native-rejected", "rejected-client-message"],
+    ["failed", "native-rejected", undefined],
+    ["blocked", "another-native-turn", undefined],
+  ])(
+    "correlates a %s submission hook from %s with client prompt %s",
+    async (status, hookTurnId, rejectedClientMessageId) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/workspace/project" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      try {
+        const { turnId } = await session.startTurn("blocked prompt", {
+          clientMessageId: "rejected-client-message",
+        });
+        appServer.startsTurn({ threadId: "thread-1", turnId: "native-rejected" });
+        const rejection = waitForNextTimelineItem(session);
+        appServer.child.stdout.write(
+          `${JSON.stringify({
+            method: "hook/completed",
+            params: {
+              threadId: "thread-1",
+              turnId: hookTurnId,
+              run: {
+                id: "rejected-hook-run",
+                eventName: "userPromptSubmit",
+                status,
+                entries: [{ kind: "feedback", text: "Resume the existing task." }],
+              },
+            },
+          })}\n`,
+        );
+        await expect(rejection).resolves.toMatchObject({
+          type: "timeline",
+          turnId,
+          item: { type: "error" },
+        });
+        expect((await rejection).rejectedClientMessageId).toBe(rejectedClientMessageId);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("renders blocked user prompt hook feedback in the active turn", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

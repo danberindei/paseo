@@ -7,6 +7,7 @@ export interface AgentTimelineRow {
   item: AgentTimelineItem;
   readonly turnId?: string;
   readonly providerMessageId?: string;
+  readonly rejectedClientMessageId?: string;
 }
 
 export interface AgentTimelineCursor {

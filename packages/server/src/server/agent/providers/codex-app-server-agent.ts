@@ -7467,6 +7467,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       provider: CODEX_PROVIDER,
       turnId: this.activeForegroundTurnId ?? undefined,
       item,
+      ...(parsed.run.eventName === "userPromptSubmit" &&
+      (parsed.run.status === "blocked" || parsed.run.status === "stopped") &&
+      parsed.threadId === this.currentThreadId &&
+      (this.currentTurnId === null || parsed.turnId === this.currentTurnId) &&
+      this.activeForegroundTurnId &&
+      this.activeClientMessageId
+        ? { rejectedClientMessageId: this.activeClientMessageId }
+        : {}),
     });
   }
 

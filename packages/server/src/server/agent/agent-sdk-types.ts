@@ -466,6 +466,8 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       turnId?: string;
       timestamp?: string;
+      // Submission hooks can reject a prompt before the provider records a user message.
+      rejectedClientMessageId?: string;
     }
   | {
       type: "permission_requested";
