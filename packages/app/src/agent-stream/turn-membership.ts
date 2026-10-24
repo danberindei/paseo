@@ -1,5 +1,12 @@
 import { continuesTimelineTurn, isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
-import type { StreamItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem } from "@/types/stream";
+
+export function getAssistantMessageSource(
+  item: StreamItem | undefined,
+): AssistantMessageItem | undefined {
+  if (item?.kind === "assistant_message") return item;
+  return item?.kind === "plugin" ? item.sourceAssistantMessage : undefined;
+}
 
 /**
  * Canonical turn IDs take precedence. Timelines without them retain the legacy

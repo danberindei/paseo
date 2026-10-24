@@ -1,5 +1,9 @@
 import type { StreamItem } from "@/types/stream";
-import { startsNewTurn, isTurnTrigger } from "@/agent-stream/turn-membership";
+import {
+  getAssistantMessageSource,
+  isTurnTrigger,
+  startsNewTurn,
+} from "@/agent-stream/turn-membership";
 
 export interface TurnTiming {
   completedAt: Date;
@@ -70,8 +74,9 @@ function walkTurns(
       assistantIds = [];
     }
     lastItemAt = item.timestamp;
-    if (item.kind === "assistant_message") {
-      assistantIds.push(item.id);
+    const assistant = getAssistantMessageSource(item);
+    if (assistant) {
+      assistantIds.push(assistant.id);
     }
     previousItem = item;
   }

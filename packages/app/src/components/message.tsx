@@ -670,7 +670,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   const canFork = Boolean(onFork);
 
   return (
-    <View style={assistantTurnFooterStylesheet.container}>
+    <View style={assistantTurnFooterStylesheet.container} testID="assistant-turn-footer">
       {getContent || canFork ? (
         <View style={assistantTurnFooterStylesheet.actions}>
           {getContent ? (

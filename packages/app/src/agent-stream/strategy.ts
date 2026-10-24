@@ -2,7 +2,7 @@ import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
 import type { ReadingRowReplacements } from "./reading-anchor";
-import { continuesResponse } from "./turn-membership";
+import { continuesResponse, getAssistantMessageSource } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
   BottomAnchorLocalRequest,
@@ -195,8 +195,9 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) {
           break;
         }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
+        const assistant = getAssistantMessageSource(currentItem);
+        if (assistant) {
+          messages.push(assistant.text);
         }
         laterItem = currentItem;
       }

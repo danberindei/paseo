@@ -91,7 +91,7 @@ function transformSourceItem(
     sourceId: item.id,
   });
   if (transformed === undefined) return [item];
-  return transformed.map((pluginItem) => {
+  return transformed.map((pluginItem, index) => {
     const projected: PluginTimelineStreamItem = {
       kind: "plugin",
       id: `${pluginItem.pluginId}/${pluginItem.id}`,
@@ -106,6 +106,9 @@ function transformSourceItem(
     };
     if (item.timelineCursor) projected.timelineCursor = item.timelineCursor;
     if (item.turnId) projected.turnId = item.turnId;
+    if (item.kind === "assistant_message" && index === transformed.length - 1) {
+      projected.sourceAssistantMessage = item;
+    }
     return projected;
   });
 }

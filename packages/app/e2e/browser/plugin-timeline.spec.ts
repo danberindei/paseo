@@ -9,6 +9,7 @@ import {
   expectBothConsecutiveTools,
   trackPluginChatRecovery,
   reconnectPluginChat,
+  interactWithCompletedPluginFooter,
 } from "../support/helpers/plugin-timeline";
 
 for (const width of [1100, 390]) {
@@ -36,6 +37,7 @@ for (const width of [1100, 390]) {
       await reconnectPluginChat(page, gate);
       await recovery.expectRecoveredWithoutRetransmission();
       await expectWholeCompletedCard(page);
+      await interactWithCompletedPluginFooter(page);
     });
   });
 }

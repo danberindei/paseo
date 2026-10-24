@@ -1,4 +1,5 @@
 import type { StreamItem, TimelinePosition } from "@/types/stream";
+import { getAssistantMessageSource } from "./turn-membership";
 
 export type AssistantTurnForkBoundary =
   | { boundaryCursor: TimelinePosition; boundaryMessageId?: string }
@@ -9,8 +10,8 @@ export function resolveAssistantTurnForkBoundary(input: {
   startIndex: number;
   supportsTimelineCursor: boolean;
 }): AssistantTurnForkBoundary | undefined {
-  const item = input.items[input.startIndex];
-  if (item?.kind !== "assistant_message") {
+  const item = getAssistantMessageSource(input.items[input.startIndex]);
+  if (!item) {
     return undefined;
   }
   if (input.supportsTimelineCursor && item.timelineCursor) {

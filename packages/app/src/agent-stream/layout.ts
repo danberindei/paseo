@@ -2,7 +2,12 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { getAssistantMessageSpacing, getGapBetweenStreamItems } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
-import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
+import {
+  continuesResponse,
+  continuesTurn,
+  getAssistantMessageSource,
+  isResponseBoundary,
+} from "./turn-membership";
 
 export type StreamToolSequence = "single" | "first" | "middle" | "last" | "none";
 
@@ -102,8 +107,9 @@ function findTurnFooterSource(input: {
       if (!item || (laterItem && !continuesResponse(item, laterItem))) {
         return toolFallback;
       }
-      if (item.kind === "assistant_message") {
-        return { item, items, index };
+      const assistant = getAssistantMessageSource(item);
+      if (assistant) {
+        return { item: assistant, items, index };
       }
       laterItem = item;
     }

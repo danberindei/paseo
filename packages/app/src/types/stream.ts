@@ -819,6 +819,8 @@ export interface PluginTimelineStreamItem {
   sourceId?: string;
   /** The original row kind, retained by projection for turn folding. */
   sourceKind?: StreamItem["kind"];
+  /** Only the final replacement carries the assistant source, so response controls appear once. */
+  sourceAssistantMessage?: AssistantMessageItem;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;

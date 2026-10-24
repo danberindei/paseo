@@ -263,6 +263,28 @@ export async function expectWholeCompletedCard(page: Page): Promise<void> {
   );
   await expect(page.getByText(ASSISTANT_TEXT, { exact: true })).toBeVisible();
   await expect(page.getByTestId("assistant-message")).toHaveCount(0);
+  const footer = page.getByTestId("assistant-turn-footer");
+  await expect(footer).toHaveCount(1);
+  await expect(
+    footer.getByRole("button", { name: "Fork chat from here", exact: true }),
+  ).toBeVisible();
+  await expect(footer.getByRole("button", { name: "Copy turn", exact: true })).toBeVisible();
+  await expect(footer).toContainText(/\b\d{1,2}:\d{2}\b/);
+}
+
+export async function interactWithCompletedPluginFooter(page: Page): Promise<void> {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const footer = page.getByTestId("assistant-turn-footer");
+  await footer.getByRole("button", { name: "Copy turn", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(ASSISTANT_TEXT);
+  await footer.getByRole("button", { name: "Fork chat from here", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Fork in a new tab", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Fork in a new workspace", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
 }
 
 export async function expectBothConsecutiveTools(page: Page): Promise<void> {

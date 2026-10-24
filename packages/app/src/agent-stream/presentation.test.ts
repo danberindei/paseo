@@ -14,8 +14,11 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { buildAgentStreamRenderModel } from "./model";
+import { layoutStream } from "./layout";
 import { createStreamPresentation } from "./presentation";
 import { createReadingAnchor } from "./reading-anchor";
+import { resolveStreamRenderStrategy } from "./strategy-resolver";
+import { resolveAssistantTurnForkBoundary } from "./turn-boundary";
 
 const runtime = {
   paseo: {},
@@ -34,6 +37,7 @@ const runtime = {
 function installProbe(
   itemType: "user_message" | "assistant_message" | "tool_call" | "reasoning",
   condition = "true",
+  outputCount = 1,
 ): InstalledPlugin {
   const clientBundle = `(function() {
     return { default: function(client) {
@@ -43,7 +47,7 @@ function installProbe(
         transform: function({ item, phase }) {
           if (!(${condition})) return undefined;
           return {
-            items: [{
+            items: Array.from({ length: ${outputCount} }, () => ({
               type: "plugin",
               kind: "probe",
               version: 1,
@@ -51,7 +55,7 @@ function installProbe(
                 ? { callId: item.callId, name: item.name, status: item.status,
                     detail: item.detail, ...(item.metadata ? { metadata: item.metadata } : {}), error: item.error, phase: phase }
                 : { text: item.text, phase: phase }
-            }]
+            }))
           };
         }
       });
@@ -155,6 +159,165 @@ describe("whole-message Markdown presentation", () => {
 });
 
 describe("stream presentation through installed plugins", () => {
+  for (const { platform, isMobileBreakpoint } of [
+    { platform: "web" as const, isMobileBreakpoint: false },
+    { platform: "native" as const, isMobileBreakpoint: true },
+  ]) {
+    it.each(["history", "live", "earlier history"])(
+      `preserves timing, copy and fork after replacing a completed %s response on ${platform}`,
+      (location) => {
+        const first = assistantMessage("first", 2);
+        const last = {
+          ...assistantMessage("last", 4),
+          messageId: "provider-last",
+          timelineCursor: { epoch: "epoch-1", seq: 42 },
+        };
+        const source = [userMessage("prompt", 1), first, last];
+        if (location === "earlier history") source.push(userMessage("next-prompt", 5));
+        const present = createStreamPresentation()({
+          tail: location !== "live" ? source : [],
+          head: location === "live" ? source : [],
+          transform: installedTransform(installProbe("assistant_message", "true", 2)),
+          ...presentationOptions,
+          isTurnActive: false,
+        });
+        const model = buildAgentStreamRenderModel({
+          ...present,
+          isTurnActive: false,
+          activeTurnStartedAt: null,
+          platform,
+          isMobileBreakpoint,
+        });
+        const strategy = resolveStreamRenderStrategy({ platform, isMobileBreakpoint });
+        const layout = layoutStream({
+          strategy,
+          isTurnActive: false,
+          history: model.history,
+          liveHead: model.segments.liveHead,
+          timingByItemId: model.turnTiming.byItemId,
+        });
+        const footers = [
+          ...layout.history.flatMap((row) => (row.completedFooter ? [row.completedFooter] : [])),
+          ...layout.liveHead.flatMap((row) => (row.completedFooter ? [row.completedFooter] : [])),
+          ...(layout.auxiliaryTurnFooter ? [layout.auxiliaryTurnFooter] : []),
+        ];
+        expect(rows(present).filter((row) => row.kind === "plugin")).toHaveLength(4);
+        expect(footers).toHaveLength(1);
+        const footer = footers[0]!;
+        expect(footer.itemId).toBe(last.id);
+        expect(footer.items[footer.startIndex]?.id).toBe("probe-plugin/last/1");
+        expect(footer.timing).toEqual({ completedAt: last.timestamp, durationMs: 3000 });
+        expect(strategy.collectAssistantResponseContent(footer.items, footer.startIndex)).toBe(
+          "first\n\nlast",
+        );
+        expect(
+          resolveAssistantTurnForkBoundary({
+            items: footer.items,
+            startIndex: footer.startIndex,
+            supportsTimelineCursor: true,
+          }),
+        ).toEqual({ boundaryCursor: last.timelineCursor, boundaryMessageId: last.messageId });
+        expect(
+          resolveAssistantTurnForkBoundary({
+            items: footer.items,
+            startIndex: footer.startIndex,
+            supportsTimelineCursor: false,
+          }),
+        ).toEqual({ boundaryMessageId: last.messageId });
+      },
+    );
+
+    it.each([
+      { type: "turn_completed", provider: "claude" },
+      { type: "turn_failed", provider: "claude", error: "Provider failed" },
+      { type: "turn_canceled", provider: "claude", reason: "User canceled" },
+    ] satisfies AgentStreamEventPayload[])(
+      `keeps the streaming replacement and attaches its footer after $type on ${platform}`,
+      (completion) => {
+        const harness = streamHarness(installedTransform(installProbe("assistant_message")));
+        const first = harness.send(assistant("First"));
+        const live = harness.send(assistant(" and second"));
+        const completed = harness.send(completion);
+        const strategy = resolveStreamRenderStrategy({ platform, isMobileBreakpoint });
+        for (const [present, isTurnActive] of [
+          [live, true],
+          [completed, false],
+        ] as const) {
+          const model = buildAgentStreamRenderModel({
+            ...present,
+            isTurnActive,
+            activeTurnStartedAt: new Date(1000),
+            platform,
+            isMobileBreakpoint,
+          });
+          const layout = layoutStream({
+            strategy,
+            isTurnActive,
+            history: model.history,
+            liveHead: model.segments.liveHead,
+            timingByItemId: model.turnTiming.byItemId,
+          });
+          expect(rows(present).map((row) => row.id)).toEqual(rows(first).map((row) => row.id));
+          expect([...layout.history, ...layout.liveHead].every((row) => !row.completedFooter)).toBe(
+            true,
+          );
+          if (isTurnActive) {
+            expect(layout.auxiliaryTurnFooter).toBeNull();
+          } else {
+            const footer = layout.auxiliaryTurnFooter!;
+            expect(footer.timing).toEqual({ completedAt: new Date(1000), durationMs: null });
+            expect(strategy.collectAssistantResponseContent(footer.items, footer.startIndex)).toBe(
+              "First and second",
+            );
+            expect(
+              resolveAssistantTurnForkBoundary({
+                items: footer.items,
+                startIndex: footer.startIndex,
+                supportsTimelineCursor: false,
+              }),
+            ).toEqual({ boundaryMessageId: "message-1" });
+          }
+        }
+      },
+    );
+
+    it.each([0, 1])(
+      `does not add assistant controls to unrelated plugin rows with %i hidden replies on ${platform}`,
+      (hiddenReplies) => {
+        const source: StreamItem[] = [toolCall("call-1", "bash")];
+        if (hiddenReplies) source.push(assistantMessage("hidden", 2));
+        const toolTransform = installedTransform(installProbe("tool_call"));
+        const present = createStreamPresentation()({
+          tail: source,
+          head: [],
+          transform: (input) =>
+            input.item.type === "assistant_message" ? [] : toolTransform(input),
+          ...presentationOptions,
+          isTurnActive: false,
+        });
+        const model = buildAgentStreamRenderModel({
+          ...present,
+          isTurnActive: false,
+          activeTurnStartedAt: null,
+          platform,
+          isMobileBreakpoint,
+        });
+        const layout = layoutStream({
+          strategy: resolveStreamRenderStrategy({ platform, isMobileBreakpoint }),
+          isTurnActive: false,
+          history: model.history,
+          liveHead: model.segments.liveHead,
+          timingByItemId: model.turnTiming.byItemId,
+        });
+        expect(rows(present)).toMatchObject([{ kind: "plugin" }]);
+        expect(layout.auxiliaryTurnFooter).toBeNull();
+        expect([...layout.history, ...layout.liveHead].every((row) => !row.completedFooter)).toBe(
+          true,
+        );
+      },
+    );
+  }
+
   it("offers every source tool call to an installed transformer in Overview mode", () => {
     const calls = [toolCall("call-1", "bash"), toolCall("call-2", "read")];
     const rendered = createStreamPresentation()({
