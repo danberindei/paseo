@@ -33,11 +33,11 @@ import { isRecognizedLink, markdownLinkSource } from "./source";
 const ThemedCodeBlock = withUnistyles(HighlightedCodeBlock);
 const codeStyle = (theme: Theme) => ({
   inheritedStyles: {
-    color: theme.colors.foreground,
+    color: "var(--colors-foreground)",
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
   },
-  textStyle: { backgroundColor: theme.colors.surface2, padding: 12, borderRadius: 8 },
+  textStyle: { backgroundColor: "var(--colors-surface2)", padding: 12, borderRadius: 8 },
 });
 function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
   if (language?.toLowerCase() === "mermaid") return <MermaidFence code={code} />;

@@ -1541,6 +1541,11 @@ Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. 
 
 Recreate styles when `theme` or `layout.compact` changes.
 
+On web, `theme.colors` contains CSS variable references so colors update even while a retained
+chat is frozen. On iOS and Android, the values are literal colors. Pass these values directly to
+styles and color props; do not parse them as hex or append alpha suffixes. Sizing tokens remain
+numeric on every platform.
+
 | Key                                 | Required for               | Use it for                          |
 | ----------------------------------- | -------------------------- | ----------------------------------- |
 | `theme.colors.foreground`           | Every primary `Text`       | Titles and body copy                |

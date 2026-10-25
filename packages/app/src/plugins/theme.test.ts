@@ -85,30 +85,65 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
 }
 
 describe("toPluginTheme", () => {
-  it("maps the app theme into the plugin color tokens", () => {
-    expect(toPluginTheme(lightTheme)).toEqual({
-      colors: {
-        surface0: lightTheme.colors.surface0,
-        surface1: lightTheme.colors.surface1,
-        surface2: lightTheme.colors.surface2,
-        surfaceSidebar: lightTheme.colors.surfaceSidebar,
-        surfaceSidebarHover: lightTheme.colors.surfaceSidebarHover,
-        border: lightTheme.colors.border,
-        foreground: lightTheme.colors.foreground,
-        foregroundMuted: lightTheme.colors.foregroundMuted,
-        accent: lightTheme.colors.accent,
-        accentForeground: lightTheme.colors.accentForeground,
-        statusSuccess: lightTheme.colors.statusSuccess,
-        statusWarning: lightTheme.colors.statusWarning,
-        statusDanger: lightTheme.colors.statusDanger,
-        statusMerged: lightTheme.colors.statusMerged,
-      },
-      spacing: lightTheme.spacing,
-      borderRadius: { lg: lightTheme.borderRadius.lg, full: lightTheme.borderRadius.full },
-      fontSize: { sm: lightTheme.fontSize.sm, content: lightTheme.fontSize.content },
-      fontWeight: { medium: lightTheme.fontWeight.medium },
+  it("keeps web colors independent of the theme supplied at render time", () => {
+    const theme = toPluginTheme(lightTheme);
+
+    expect(theme.colors).toEqual({
+      surface0: "var(--colors-surface0)",
+      surface1: "var(--colors-surface1)",
+      surface2: "var(--colors-surface2)",
+      surfaceSidebar: "var(--colors-surface-sidebar)",
+      surfaceSidebarHover: "var(--colors-surface-sidebar-hover)",
+      border: "var(--colors-border)",
+      foreground: "var(--colors-foreground)",
+      foregroundMuted: "var(--colors-foreground-muted)",
+      accent: "var(--colors-accent)",
+      accentForeground: "var(--colors-accent-foreground)",
+      statusSuccess: "var(--colors-status-success)",
+      statusWarning: "var(--colors-status-warning)",
+      statusDanger: "var(--colors-status-danger)",
+      statusMerged: "var(--colors-status-merged)",
     });
+    expect(toPluginTheme(darkTheme).colors).toEqual(theme.colors);
+    expect(theme.spacing).toEqual(lightTheme.spacing);
+    expect(theme.borderRadius).toEqual({
+      lg: lightTheme.borderRadius.lg,
+      full: lightTheme.borderRadius.full,
+    });
+    expect(theme.fontSize).toEqual({
+      sm: lightTheme.fontSize.sm,
+      content: lightTheme.fontSize.content,
+    });
+    expect(theme.fontWeight).toEqual({ medium: lightTheme.fontWeight.medium });
   });
+
+  it.each(["ios", "android"] as const)(
+    "maps the app theme into plugin tokens on %s",
+    (platform) => {
+      expect(toPluginTheme(lightTheme, platform)).toEqual({
+        colors: {
+          surface0: lightTheme.colors.surface0,
+          surface1: lightTheme.colors.surface1,
+          surface2: lightTheme.colors.surface2,
+          surfaceSidebar: lightTheme.colors.surfaceSidebar,
+          surfaceSidebarHover: lightTheme.colors.surfaceSidebarHover,
+          border: lightTheme.colors.border,
+          foreground: lightTheme.colors.foreground,
+          foregroundMuted: lightTheme.colors.foregroundMuted,
+          accent: lightTheme.colors.accent,
+          accentForeground: lightTheme.colors.accentForeground,
+          statusSuccess: lightTheme.colors.statusSuccess,
+          statusWarning: lightTheme.colors.statusWarning,
+          statusDanger: lightTheme.colors.statusDanger,
+          statusMerged: lightTheme.colors.statusMerged,
+        },
+        spacing: lightTheme.spacing,
+        borderRadius: { lg: lightTheme.borderRadius.lg, full: lightTheme.borderRadius.full },
+        fontSize: { sm: lightTheme.fontSize.sm, content: lightTheme.fontSize.content },
+        fontWeight: { medium: lightTheme.fontWeight.medium },
+      });
+    },
+  );
 
   it.each([15, 21])("preserves content size %i independently of interface size", (content) => {
     const theme = {

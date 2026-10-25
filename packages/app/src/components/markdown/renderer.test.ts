@@ -10,7 +10,8 @@ import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as platform from "@/constants/platform";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { isRecognizedLink, prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
@@ -693,7 +694,12 @@ it.each(['""', "''", "()"])("preserves an authored empty link title: %s", (title
   expect(prepareMarkdownSource(source, "/repo").render()).toBe(source);
 });
 
-describe("shared Markdown theme colours", () => {
+describe("native Markdown theme colours", () => {
+  beforeEach(() => {
+    vi.spyOn(platform, "isWeb", "get").mockReturnValue(false);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it.each([
     ["dark", darkTheme],
     ["light", lightTheme],
@@ -720,45 +726,86 @@ describe("shared Markdown theme colours", () => {
       borderColor: theme.colors.foregroundMuted,
     });
   });
+
+  it.each([
+    ["dark", darkTheme],
+    ["light", lightTheme],
+  ] as const)(
+    "uses %s theme colours for quotes, admonitions, code, links and dividers",
+    (_name, theme) => {
+      const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
+      expect(style.blockquote).toMatchObject({
+        color: `${theme.colors.foreground}cc`,
+        backgroundColor: theme.colors.surface1,
+        borderColor: theme.colors.surface2,
+        admonitions: {
+          note: { color: theme.colors.accentBright, backgroundColor: theme.colors.surface2 },
+          tip: { color: theme.colors.statusSuccess, backgroundColor: theme.colors.surface2 },
+          important: { color: theme.colors.statusMerged, backgroundColor: theme.colors.surface2 },
+          warning: { color: theme.colors.statusWarning, backgroundColor: theme.colors.surface2 },
+          caution: { color: theme.colors.statusDanger, backgroundColor: theme.colors.surface2 },
+        },
+      });
+      expect(style.code).toMatchObject({
+        color: theme.colors.foreground,
+        backgroundColor: theme.colors.surface2,
+        borderColor: "transparent",
+      });
+      expect(style.link?.color).toBe(theme.colors.accentBright);
+      expect(style.linkVariants?.["^(?!https?://).+"]).toEqual({
+        color: theme.colors.accentBright,
+      });
+      expect(style.thematicBreak?.color).toBe(theme.colors.border);
+    },
+  );
+
+  it.each([darkTheme, lightTheme])(
+    "supplies the theme selection colour to the renderer",
+    (theme) => {
+      expect(createMarkdownStyles(theme, { blockGap: 16 })).toHaveProperty(
+        "selectionColor",
+        theme.colors.terminal.selectionBackground,
+      );
+    },
+  );
+
+  it.each([darkTheme, lightTheme])("uses the muted foreground for muted paragraphs", (theme) => {
+    const { markdownStyle } = createMarkdownStyles(theme, {
+      compact: true,
+      muted: true,
+      blockGap: 16,
+    });
+    expect(markdownStyle.paragraph).toMatchObject({ color: theme.colors.foregroundMuted });
+  });
 });
 
-it.each([
-  ["dark", darkTheme],
-  ["light", lightTheme],
-] as const)(
-  "uses %s theme colours for quotes, admonitions, code, links and dividers",
-  (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
-    expect(style.blockquote).toMatchObject({
-      color: `${theme.colors.foreground}cc`,
-      backgroundColor: theme.colors.surface1,
-      borderColor: theme.colors.surface2,
-      admonitions: {
-        note: { color: theme.colors.accentBright, backgroundColor: theme.colors.surface2 },
-        tip: { color: theme.colors.statusSuccess, backgroundColor: theme.colors.surface2 },
-        important: { color: theme.colors.statusMerged, backgroundColor: theme.colors.surface2 },
-        warning: { color: theme.colors.statusWarning, backgroundColor: theme.colors.surface2 },
-        caution: { color: theme.colors.statusDanger, backgroundColor: theme.colors.surface2 },
-      },
-    });
-    expect(style.code).toMatchObject({
-      color: theme.colors.foreground,
-      backgroundColor: theme.colors.surface2,
-      borderColor: "transparent",
-    });
-    expect(style.link?.color).toBe(theme.colors.accentBright);
-    expect(style.linkVariants?.["^(?!https?://).+"]).toEqual({
-      color: theme.colors.accentBright,
-    });
-    expect(style.thematicBreak?.color).toBe(theme.colors.border);
-  },
-);
+describe("web Markdown theme colours", () => {
+  beforeEach(() => {
+    vi.spyOn(platform, "isWeb", "get").mockReturnValue(true);
+  });
+  afterEach(() => vi.restoreAllMocks());
 
-it.each([darkTheme, lightTheme])("supplies the theme selection colour to the renderer", (theme) => {
-  expect(createMarkdownStyles(theme, { blockGap: 16 })).toHaveProperty(
-    "selectionColor",
-    theme.colors.terminal.selectionBackground,
-  );
+  it("resolves retained chat colours through CSS variables", () => {
+    const { markdownStyle: style, selectionColor } = createMarkdownStyles(lightTheme, {
+      blockGap: 16,
+    });
+    expect(style.paragraph?.color).toBe("var(--colors-foreground)");
+    expect(style.code).toMatchObject({
+      color: "var(--colors-foreground)",
+      backgroundColor: "var(--colors-surface2)",
+    });
+    expect(style.h6?.color).toBe("var(--colors-foreground-muted)");
+    expect(selectionColor).toBe("var(--colors-terminal-selection-background)");
+  });
+
+  it("resolves muted paragraphs through the muted CSS variable", () => {
+    const { markdownStyle } = createMarkdownStyles(lightTheme, {
+      compact: true,
+      muted: true,
+      blockGap: 16,
+    });
+    expect(markdownStyle.paragraph?.color).toBe("var(--colors-foreground-muted)");
+  });
 });
 
 describe("GitHub comment HTML normalization", () => {
