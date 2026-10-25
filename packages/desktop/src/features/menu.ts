@@ -173,9 +173,10 @@ function buildApplicationMenuTemplate(
       submenu: [
         { role: "minimize" },
         { role: "zoom" },
+        // Ctrl+W belongs to tab handling, including screens with no focused tab.
         ...(isMac
           ? [{ type: "separator" as const }, { role: "front" as const }]
-          : [{ role: "close" as const }]),
+          : [{ role: "close" as const, accelerator: "Ctrl+Shift+W" }]),
       ],
     },
   ];
