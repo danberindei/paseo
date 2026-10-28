@@ -412,6 +412,7 @@ function createService(options?: CreateServiceOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as never,
     paseoHome: "/tmp/paseo-test",
+    pollForgePrStatus: true,
     deps: buildServiceDeps(options),
   });
 }
@@ -1039,6 +1040,29 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(callsBeforeStaleCallback);
 
+    service.dispose();
+  });
+
+  test("does not poll forge PR status by default", async () => {
+    const retainCurrentPullRequestStatusPoll = vi.fn(() => ({ unsubscribe: vi.fn() }));
+    const github = {
+      ...createGitHubServiceStub(),
+      retainCurrentPullRequestStatusPoll,
+    };
+    const service = new WorkspaceGitServiceImpl({
+      logger: createLogger() as never,
+      paseoHome: "/tmp/paseo-test",
+      deps: buildServiceDeps({ github }),
+    });
+
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(120_000);
+    await flushPromises();
+
+    expect(retainCurrentPullRequestStatusPoll).not.toHaveBeenCalled();
+
+    subscription.unsubscribe();
     service.dispose();
   });
 

@@ -448,6 +448,7 @@ interface WorkspaceGitServiceOptions {
   deps?: Partial<WorkspaceGitServiceDependencies>;
   /** How long a workspace target outlives its last listener; 0 releases it immediately. */
   releaseGraceMs?: number;
+  pollForgePrStatus?: boolean;
 }
 
 class WorkspaceGitServiceDisposedError extends Error {
@@ -714,6 +715,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     WorkspaceGitAuxiliaryReadCacheEntry<string>
   >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
   private readonly checkoutDiffCache = new CheckoutDiffCache(() => this.deps.now().getTime());
+  private readonly pollForgePrStatus: boolean;
   private watcherErrorCallbackCount = 0;
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
@@ -721,6 +723,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.worktreesRoot = options.worktreesRoot;
     this.releaseGraceMs = options.releaseGraceMs ?? WORKSPACE_GIT_RELEASE_GRACE_MS;
     this.fileObserver = options.fileObserver ?? createFileObserver();
+    this.pollForgePrStatus = options.pollForgePrStatus ?? false;
     this.deps = resolveWorkspaceGitServiceDeps(
       this.fileObserver.subscribe.bind(this.fileObserver),
       options.deps,
@@ -3132,6 +3135,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private updateForgePrStatusPollForTarget(target: WorkspaceGitTarget): void {
+    if (!this.pollForgePrStatus) {
+      this.stopForgePrStatusPollForTarget(target);
+      return;
+    }
     if (!this.isActiveObservedWorkspaceTarget(target)) {
       this.stopForgePrStatusPollForTarget(target);
       return;

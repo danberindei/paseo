@@ -1236,6 +1236,7 @@ test("a failed parent lookup is retried by the pull request status poll, keeping
   const service = new WorkspaceGitServiceImpl({
     logger: pino({ enabled: false }),
     paseoHome: path.join(path.dirname(repo), "home"),
+    pollForgePrStatus: true,
     deps: {
       now: () => new Date(nowMs),
       // Observing the workspace starts a background fetch of origin. A real one would run ssh
