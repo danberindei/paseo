@@ -1,6 +1,7 @@
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { findClusterBreak } from "@marijn/find-cluster-break";
 import { Buffer } from "buffer";
+import { shallow } from "zustand/vanilla/shallow";
 import {
   buildSplitDiffRows,
   buildUnifiedDiffLines,
@@ -69,7 +70,9 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
   const currentReviewGeometryKey = reviewGeometryKey(input.reviewActions);
   let documentTop = 0;
 
-  for (const [fileIndex, file] of input.files.entries()) {
+  // Retained diff panels can load data before receiving a visible viewport.
+  const filesToLayout = input.viewportWidth > 0 ? input.files : [];
+  for (const [fileIndex, file] of filesToLayout.entries()) {
     const fileTop = documentTop;
     const isCollapsed = input.collapsedFilePaths.has(file.path);
     documentTop += FILE_HEADER_HEIGHT;
@@ -114,7 +117,7 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
       maximumHorizontalOverflow = result.maximumHorizontalOverflow;
     }
 
-    files.push({
+    const section: DiffFileSection = {
       file,
       fileIndex,
       path: file.path,
@@ -130,7 +133,8 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
       rowStart,
       rowEnd: rows.length,
       isCollapsed,
-    });
+    };
+    files.push(reusableFile && shallow(reusableFile, section) ? reusableFile : section);
   }
 
   return {
@@ -864,6 +868,21 @@ export function visibleRowRange(
     else high = middle;
   }
   return { start, end: low };
+}
+
+/** Prepared rows survive window changes, so revisiting them needs no model update. */
+export function needsDiffMaterialization(
+  model: DiffDocumentModel,
+  window: { top: number; height: number },
+): boolean {
+  const range = visibleRowRange(model.rows, window.top, window.height);
+  for (let index = range.start; index < range.end; index += 1) {
+    const row = model.rows[index]!;
+    if (row.kind === "line" && row.cells.some((cell) => cell && cell.fragments.length === 0)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function fileAtDocumentOffset(

@@ -6,6 +6,7 @@ import {
   FILE_HEADER_HEIGHT,
   graphemeBoundaries,
   measureFragments,
+  needsDiffMaterialization,
   resolveScrollAnchor,
   resolveRelayoutScrollTop,
   shouldApplyRelayoutScroll,
@@ -71,6 +72,28 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
 }
 
 describe("diff document model", () => {
+  it("defers hidden diff layout until the viewport has width", () => {
+    let measurements = 0;
+    const buildInput = input({
+      measureText: {
+        measure(text) {
+          measurements += 1;
+          return measurer.measure(text);
+        },
+      },
+    });
+    const hidden = buildDiffDocumentModel({ ...buildInput, viewportWidth: 0 });
+
+    expect(hidden.files).toEqual([]);
+    expect(hidden.rows).toEqual([]);
+    expect(hidden.height).toBe(0);
+    expect(measurements).toBe(0);
+
+    const visible = buildDiffDocumentModel({ ...buildInput, reuseFrom: [hidden] });
+    expect(visible).toEqual(buildDiffDocumentModel(input()));
+    expect(measurements).toBeGreaterThan(0);
+  });
+
   it.each(["unified", "split"] as const)(
     "shows the wrapping warning without measuring oversized text: %s",
     (layout) => {
@@ -250,6 +273,10 @@ describe("diff document model", () => {
     expect(advancedCharacters).toBeLessThan(100);
     expect(first.height).toBe(eager.height);
     expect(first.files[0]!.contentWidth).toBe(eager.files[0]!.contentWidth);
+    expect(needsDiffMaterialization(first, { top: FILE_HEADER_HEIGHT, height: 54 })).toBe(false);
+    expect(needsDiffMaterialization(first, { top: FILE_HEADER_HEIGHT + 54, height: 18 })).toBe(
+      true,
+    );
     const priorCells = firstLineCells(first, source.path);
     advancedCharacters = 0;
     const next = buildDiffDocumentModel({
@@ -264,6 +291,11 @@ describe("diff document model", () => {
     });
     expect(advancedCharacters).toBeLessThan(600);
     expect(next.height).toBe(eager.height);
+    expect(next.files[0]).toBe(first.files[0]);
+    expect(needsDiffMaterialization(next, { top: FILE_HEADER_HEIGHT, height: 54 })).toBe(false);
+    expect(needsDiffMaterialization(next, { top: FILE_HEADER_HEIGHT + 900 * 18, height: 54 })).toBe(
+      false,
+    );
     advancedCharacters = 0;
     buildDiffDocumentModel({
       ...base,

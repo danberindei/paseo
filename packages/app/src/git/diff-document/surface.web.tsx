@@ -32,6 +32,7 @@ import {
   buildDiffDocumentModel,
   captureScrollAnchor,
   FILE_HEADER_HEIGHT,
+  needsDiffMaterialization,
   resolveRelayoutScrollTop,
 } from "./model";
 import { paintWebFileHeader, paintWebViewport } from "./paint.web";
@@ -468,7 +469,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const updateInteractionFiles = useCallback(
     (scrollTop: number) => {
       const windowTop = diffInteractionWindowTop(scrollTop, viewport.height);
-      setFileWindowTop((current) => (current === windowTop ? current : windowTop));
+      if (needsDiffMaterialization(model, diffMaterializationWindow(windowTop, viewport.height))) {
+        setFileWindowTop((current) => (current === windowTop ? current : windowTop));
+      }
       const next = resolveVisibleFileSections({
         files: model.files,
         scrollTop: windowTop,
@@ -481,7 +484,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
           : next,
       );
     },
-    [model.files, viewport.height],
+    [model, viewport.height],
   );
   useLayoutEffect(() => {
     schedulePaint();
