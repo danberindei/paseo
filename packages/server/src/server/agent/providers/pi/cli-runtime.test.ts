@@ -259,6 +259,20 @@ describe("PiCliRuntime", () => {
     expect(events).toEqual([{ type: "turn_start" }]);
   });
 
+  test("buffers events emitted before the first subscriber", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.stdout.write(`${JSON.stringify({ type: "session_start" })}\n`);
+    await session.getState();
+
+    const events: unknown[] = [];
+    session.onEvent((event) => events.push(event));
+
+    expect(events).toEqual([{ type: "session_start" }]);
+  });
+
   test("lists commands through the default Pi get_commands RPC", async () => {
     const child = createPiChild();
     const commandTypes: string[] = [];

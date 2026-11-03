@@ -97,6 +97,10 @@ interface PiCliRuntimeSessionOptions {
 
 class PiCliRuntimeSession implements PiRuntimeSession {
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
+  // Pi emits session_start and its first captures while the provider is still reading
+  // state and applying the resume model, before the agent subscribes. Hold those events
+  // so the first subscriber sees the full startup sequence.
+  private pendingStartupEvents: PiRuntimeEvent[] | null = [];
 
   constructor(private readonly options: PiCliRuntimeSessionOptions) {
     const { process } = options;
@@ -114,6 +118,13 @@ class PiCliRuntimeSession implements PiRuntimeSession {
 
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void {
     this.subscribers.add(callback);
+    const startupEvents = this.pendingStartupEvents;
+    if (startupEvents) {
+      this.pendingStartupEvents = null;
+      for (const event of startupEvents) {
+        callback(event);
+      }
+    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -280,6 +291,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   private emit(event: PiRuntimeEvent): void {
+    if (this.pendingStartupEvents) {
+      this.pendingStartupEvents.push(event);
+      return;
+    }
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
