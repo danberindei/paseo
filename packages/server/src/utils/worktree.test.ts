@@ -10,6 +10,7 @@ import {
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
+  type WorktreeSource,
 } from "./worktree";
 import { execFileSync } from "child_process";
 import { rm } from "node:fs/promises";
@@ -154,6 +155,150 @@ describe("paseo worktree manager", () => {
       }
     },
   );
+
+  describe("change-request checkout", () => {
+    let checkoutRepository: string;
+    let contributorRepository: string;
+    let prHead: string;
+    let source: Extract<WorktreeSource, { kind: "checkout-change-request" }>;
+
+    function git(...args: string[]): string {
+      return execFileSync("git", args, { cwd: repoDir, encoding: "utf8", stdio: "pipe" }).trim();
+    }
+
+    beforeEach(() => {
+      git("checkout", "-b", "fixture-pr");
+      writeFileSync(join(repoDir, "file.txt"), "requested PR\n");
+      git("add", "file.txt");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "requested PR");
+      prHead = git("rev-parse", "HEAD");
+      git("checkout", "main");
+      checkoutRepository = join(tempDir, "base.git");
+      git("clone", "--bare", repoDir, checkoutRepository);
+      git(`--git-dir=${checkoutRepository}`, "update-ref", "refs/pull/1/head", prHead);
+
+      git("checkout", "-b", "contributor-branch");
+      writeFileSync(join(repoDir, "file.txt"), "different contributor branch\n");
+      git("add", "file.txt");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "different contributor branch");
+      git("checkout", "main");
+      contributorRepository = join(tempDir, "contributor.git");
+      git("clone", "--bare", repoDir, contributorRepository);
+
+      const forkRepository = join(tempDir, "fork.git");
+      git("clone", "--bare", repoDir, forkRepository);
+      git(`--git-dir=${forkRepository}`, "update-ref", "refs/pull/1/head", "main");
+      git("remote", "add", "origin", forkRepository);
+      git("remote", "add", "upstream", forkRepository);
+      source = {
+        kind: "checkout-change-request",
+        forge: "github",
+        changeRequestNumber: 1,
+        headRef: "contributor-branch",
+        localBranchName: "contributor/review",
+        baseRefName: "main",
+        checkoutRefs: [{ remoteName: checkoutRepository, remoteRef: "refs/pull/1/head" }],
+        pushRemoteUrl: contributorRepository,
+      };
+    });
+
+    it("uses the requested repository's PR ref despite conflicting remotes and contributor branch", async () => {
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        paseoHome,
+        worktreeSlug: "review",
+        source,
+      });
+
+      expect(git("rev-parse", result.branchName)).toBe(prHead);
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("requested PR\n");
+      expect(git("config", "--get", "remote.paseo-pr-1.url")).toBe(contributorRepository);
+      expect(git("config", "--get", `branch.${result.branchName}.pushRemote`)).toBe("paseo-pr-1");
+    });
+
+    it("uses the contributor branch for a Gitea fork when PR refs point elsewhere", async () => {
+      const contributorHead = git(
+        `--git-dir=${contributorRepository}`,
+        "rev-parse",
+        "contributor-branch",
+      );
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        paseoHome,
+        worktreeSlug: "gitea-review",
+        source: {
+          ...source,
+          forge: "gitea",
+          checkoutRefs: [
+            { remoteName: contributorRepository, remoteRef: "refs/heads/contributor-branch" },
+            { remoteName: "origin", remoteRef: "refs/pull/1/head" },
+          ],
+        },
+      });
+
+      expect(git("rev-parse", result.branchName)).toBe(contributorHead);
+    });
+
+    it("checks out the PR ref when the contributor branch was deleted", async () => {
+      git(
+        `--git-dir=${contributorRepository}`,
+        "update-ref",
+        "-d",
+        "refs/heads/contributor-branch",
+      );
+
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        paseoHome,
+        worktreeSlug: "deleted-branch-review",
+        source,
+      });
+
+      expect(git("rev-parse", result.branchName)).toBe(prHead);
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("requested PR\n");
+    });
+
+    it("fails a Gitea checkout when the contributor branch and base PR ref are missing", async () => {
+      git(
+        `--git-dir=${contributorRepository}`,
+        "update-ref",
+        "-d",
+        "refs/heads/contributor-branch",
+      );
+      git(`--git-dir=${checkoutRepository}`, "update-ref", "-d", "refs/pull/1/head");
+
+      await expect(
+        createWorktreePrimitive({
+          cwd: repoDir,
+          paseoHome,
+          worktreeSlug: "missing-gitea-pr",
+          source: {
+            ...source,
+            forge: "gitea",
+            checkoutRefs: [
+              { remoteName: contributorRepository, remoteRef: "refs/heads/contributor-branch" },
+              { remoteName: checkoutRepository, remoteRef: "refs/pull/1/head" },
+            ],
+          },
+        }),
+      ).rejects.toThrow("Unable to fetch change request refs into refs/heads/contributor/review");
+      expect(git("for-each-ref", "--format=%(refname)", "refs/heads/contributor/review")).toBe("");
+    });
+
+    it("reports a missing PR ref instead of fetching another repository or contributor branch", async () => {
+      git(`--git-dir=${checkoutRepository}`, "update-ref", "-d", "refs/pull/1/head");
+
+      await expect(
+        createWorktreePrimitive({
+          cwd: repoDir,
+          paseoHome,
+          worktreeSlug: "missing-pr-review",
+          source,
+        }),
+      ).rejects.toThrow("Unable to fetch change request refs into refs/heads/contributor/review");
+      expect(git("for-each-ref", "--format=%(refname)", "refs/heads/contributor/review")).toBe("");
+    });
+  });
 
   it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
     const created = await createLegacyWorktreeForTest({

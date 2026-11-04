@@ -153,6 +153,7 @@ export interface CreateGiteaServiceOptions {
   runner?: TeaCommandRunner;
   resolveTeaPath?: () => Promise<string | null>;
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
+  resolveCheckoutRemotes?: (cwd: string) => Promise<string[]>;
   resolveCurrentBranch?: (cwd: string) => Promise<string | null>;
   now?: () => number;
   watchPollMs?: number;
@@ -1200,6 +1201,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   const runner = options.runner ?? runTeaCommand;
   const resolveTea = createCachedCliPathResolver(options.resolveTeaPath ?? resolveTeaPath);
   const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
+  const resolveCheckoutRemotes =
+    options.resolveCheckoutRemotes ??
+    (async (cwd: string) => {
+      try {
+        const { stdout } = await runGitCommand(["remote", "-v"], { cwd, timeout: 5_000 });
+        return stdout.split(/\r?\n/u).flatMap((line) => {
+          const match = line.match(/^\S+\s+(\S+)\s+\(fetch\)$/u);
+          return match ? [match[1]] : [];
+        });
+      } catch {
+        return [];
+      }
+    });
   const resolveCurrentBranch = options.resolveCurrentBranch ?? defaultResolveCurrentBranch;
   const now = options.now ?? Date.now;
   const currentPrHeadShaCache = new Map<string, { sha: string; expiresAt: number }>();
@@ -1324,6 +1338,30 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       headRepositorySshUrl: headRepo?.ssh_url ?? null,
       headRepositoryUrl: headRepo?.html_url ?? null,
     };
+  }
+
+  async function resolveCheckoutUrl(cwd: string, summary: PullRequestSummary): Promise<string> {
+    const { owner, name } = parseGiteaRepoFromUrl(summary.url);
+    if (!owner || !name) throw new Error("Pull request is missing its base repository URL");
+    const prUrl = new URL(summary.url);
+    const baseUrl = `${prUrl.origin}/${owner}/${name}`;
+    const base = parseGitRemoteLocation(baseUrl);
+    const origin = await resolveRemoteUrl(cwd);
+    const remotes = await resolveCheckoutRemotes(cwd);
+    if (origin) remotes.unshift(origin);
+    for (const remoteUrl of remotes) {
+      const remote = parseGitRemoteLocation(remoteUrl);
+      if (!remote || !base) continue;
+      if (
+        remote.transport === base.transport &&
+        remote.host === base.host &&
+        remote.port === base.port &&
+        remote.path === base.path
+      ) {
+        return remoteUrl;
+      }
+    }
+    return baseUrl;
   }
 
   async function listPullRequestItems(input: {
@@ -1882,16 +1920,21 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     ): Promise<PullRequestCheckoutTarget> {
       const summary = await this.getPullRequest(input);
       const fork = await resolveForkCheckoutFacts(input.cwd, summary);
-      const [originPullRef, upstreamPullRef] = buildPullHeadCheckoutRefs(summary.number);
-      const checkoutRefs = [originPullRef];
-      // for a fork PR a branch with that name on origin belongs to the base repo
-      const headBranchOnOrigin =
-        !fork.isCrossRepository && fork.headRefKind === "branch" && Boolean(summary.headRefName);
-      if (headBranchOnOrigin) {
-        checkoutRefs.push({ remoteName: "origin", remoteRef: `refs/heads/${summary.headRefName}` });
+      const checkoutUrl = await resolveCheckoutUrl(input.cwd, summary);
+      const checkoutRefs = [];
+      const headRepositoryUrl = fork.headRepositorySshUrl || fork.headRepositoryUrl;
+      if (
+        fork.isCrossRepository &&
+        fork.headRefKind === "branch" &&
+        headRepositoryUrl &&
+        summary.headRefName
+      ) {
+        checkoutRefs.push({
+          remoteName: headRepositoryUrl,
+          remoteRef: `refs/heads/${summary.headRefName}`,
+        });
       }
-      // upstream can hold a different PR with the same number, so it goes last
-      checkoutRefs.push(upstreamPullRef);
+      checkoutRefs.push({ remoteName: checkoutUrl, remoteRef: `refs/pull/${summary.number}/head` });
       return {
         number: summary.number,
         baseRefName: summary.baseRefName,

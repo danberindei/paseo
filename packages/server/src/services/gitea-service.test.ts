@@ -27,6 +27,7 @@ function makeService(responder: Responder, overrides: Partial<CreateGiteaService
     runner,
     resolveTeaPath: async () => "/usr/bin/tea",
     resolveRemoteUrl: async () => "https://gitea.com/example-user/sample-repo.git",
+    resolveCheckoutRemotes: async () => [],
     ...overrides,
   });
   return { service, calls };
@@ -1477,6 +1478,28 @@ describe("createGiteaService", () => {
     expect(status?.checks[0]?.status).toBe(check);
   });
 
+  it("uses a matching base remote when origin points to a different forge", async () => {
+    const { service } = makeService(
+      (args) =>
+        args[0] === "api"
+          ? ok(JSON.stringify({ head: { repo: null }, base: { repo: { id: 1 } } }))
+          : ok(
+              JSON.stringify({
+                ...STATUS_PR_VIEW,
+                url: "https://forge.example/team/project/pulls/5",
+              }),
+            ),
+      {
+        resolveRemoteUrl: async () => "https://other.example/team/project.git",
+        resolveCheckoutRemotes: async () => ["https://forge.example/team/project.git"],
+      },
+    );
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+    expect(target.checkoutRefs).toEqual([
+      { remoteName: "https://forge.example/team/project.git", remoteRef: "refs/pull/5/head" },
+    ]);
+  });
+
   it("maps a Gitea 'warning' commit status to failure (terminal, non-passing), not stuck pending", async () => {
     const { service } = makeService((args) => {
       if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([OPEN_PR]));
@@ -2357,9 +2380,10 @@ describe("createGiteaService", () => {
       baseRefName: "main",
       headRefName: "feat/sample-change",
       checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
-        { remoteName: "origin", remoteRef: "refs/heads/feat/sample-change" },
-        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+        {
+          remoteName: "https://gitea.com/example-user/sample-repo.git",
+          remoteRef: "refs/pull/5/head",
+        },
       ],
       headOwnerLogin: null,
       headRepositorySshUrl: null,
@@ -2395,8 +2419,14 @@ describe("createGiteaService", () => {
       baseRefName: "main",
       headRefName: "feat/sample-change",
       checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+        {
+          remoteName: "git@gitea.com:contributor/sample-repo.git",
+          remoteRef: "refs/heads/feat/sample-change",
+        },
+        {
+          remoteName: "https://gitea.com/example-user/sample-repo.git",
+          remoteRef: "refs/pull/5/head",
+        },
       ],
       headOwnerLogin: "contributor",
       headRepositorySshUrl: "git@gitea.com:contributor/sample-repo.git",
@@ -2425,8 +2455,10 @@ describe("createGiteaService", () => {
 
     expect(target).toMatchObject({
       checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+        {
+          remoteName: "https://gitea.com/example-user/sample-repo.git",
+          remoteRef: "refs/pull/5/head",
+        },
       ],
       isCrossRepository: false,
       headRefKind: "pull-ref",
@@ -2473,8 +2505,10 @@ describe("createGiteaService", () => {
 
     expect(target).toMatchObject({
       checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+        {
+          remoteName: "https://gitea.com/example-user/sample-repo.git",
+          remoteRef: "refs/pull/5/head",
+        },
       ],
       isCrossRepository: false,
       headRefKind: "pull-ref",
@@ -2492,8 +2526,10 @@ describe("createGiteaService", () => {
 
     expect(target).toMatchObject({
       checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+        {
+          remoteName: "https://gitea.com/example-user/sample-repo.git",
+          remoteRef: "refs/pull/5/head",
+        },
       ],
       headOwnerLogin: null,
       isCrossRepository: true,
@@ -2501,7 +2537,33 @@ describe("createGiteaService", () => {
     });
   });
 
-  it("keeps the origin branch fallback when the server sends no head ref", async () => {
+  it.each([
+    ["git@forge.example:team/project.git", "https://forge.example:8443/team/project"],
+    ["ssh://git@forge.example:2222/team/project.git", "https://forge.example:8443/team/project"],
+    ["ssh://git@forge.example:2222/other/repo.git", "https://forge.example:8443/team/project"],
+    ["https://forge.example:8444/team/project.git", "https://forge.example:8443/team/project"],
+    ["http://forge.example:8443/team/project.git", "https://forge.example:8443/team/project"],
+    ["https://forge.example:8443/other/repo.git", "https://forge.example:8443/team/project"],
+    ["https://forge.example:8443/team/project.git", "https://forge.example:8443/team/project.git"],
+  ])("targets the requested base repository for %s", async (remote, expected) => {
+    const { service } = makeService(
+      (args) =>
+        args[0] === "api"
+          ? ok(JSON.stringify({ head: { repo: null }, base: { repo: { id: 1 } } }))
+          : ok(
+              JSON.stringify({
+                ...STATUS_PR_VIEW,
+                url: "https://forge.example:8443/team/project/pulls/5",
+              }),
+            ),
+      { resolveRemoteUrl: async () => remote },
+    );
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+    expect(target.checkoutRefs).toEqual([{ remoteName: expected, remoteRef: "refs/pull/5/head" }]);
+  });
+
+  it("uses the base pull ref when the server sends no head ref", async () => {
     const { service } = makeService((args) =>
       args[0] === "api"
         ? ok(JSON.stringify({ head: { repo: { id: 1 } }, base: { repo: { id: 1 } } }))
@@ -2511,8 +2573,8 @@ describe("createGiteaService", () => {
     const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
 
     expect(target.checkoutRefs).toContainEqual({
-      remoteName: "origin",
-      remoteRef: "refs/heads/feat/sample-change",
+      remoteName: "https://gitea.com/example-user/sample-repo.git",
+      remoteRef: "refs/pull/5/head",
     });
     expect(target.headRefKind).toBe("branch");
   });

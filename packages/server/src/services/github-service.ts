@@ -495,6 +495,8 @@ const ForkPullRequestRefsSchema = z.array(
 const PullRequestCheckoutTargetSchema = z.object({
   data: z.object({
     repository: z.object({
+      sshUrl: z.string().min(1),
+      url: z.url(),
       pullRequest: z
         .object({
           number: z.number(),
@@ -523,6 +525,8 @@ const PullRequestCheckoutTargetSchema = z.object({
 const PULL_REQUEST_CHECKOUT_TARGET_QUERY = `
 query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
+    sshUrl
+    url
     pullRequest(number: $number) {
       number
       baseRefName
@@ -1079,6 +1083,7 @@ interface CreateGitHubServiceOptions {
   resolveRepoHost?: (cwd: string) => Promise<string | null>;
   resolveRepoSlug?: (cwd: string) => Promise<string | null>;
   resolveOriginRepository?: (cwd: string) => Promise<string | null>;
+  resolveSshHostname?: (host: string) => Promise<string | null>;
 }
 
 type PullRequestCheckRunNode = z.infer<typeof PullRequestCheckRunNodeSchema>;
@@ -1402,6 +1407,22 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       cwd: runOptions.cwd,
       emptyFallback,
     });
+  }
+
+  /**
+   * The repository a pull request number belongs to. A fork's own repository lists none of
+   * the pull requests opened against its parent and holds none of their `refs/pull/*` refs,
+   * and `gh repo view` with no argument names the fork. Ask about the origin remote and use
+   * the parent when the origin is a fork.
+   */
+  async function resolvePullRequestRepository(
+    cwd: string,
+  ): Promise<{ owner: string; name: string } | null> {
+    const origin = await deps.resolveOriginRepository(cwd);
+    const view = await getGitHubRepoView({ cwd, run, ...(origin ? { repo: origin } : {}) });
+    const owner = view?.parent?.owner?.login ?? view?.owner?.login;
+    const name = view?.parent?.name ?? view?.name;
+    return owner && name ? { owner, name } : null;
   }
 
   function getPollTargetKey(target: CurrentPullRequestLookup): string {
@@ -2404,8 +2425,8 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         args: { number: input.number },
         readOptions: input,
         load: async () => {
-          const repo = await getGitHubRepoView({ cwd: input.cwd, run });
-          const owner = repo?.owner?.login;
+          const repo = await resolvePullRequestRepository(input.cwd);
+          const owner = repo?.owner;
           const name = repo?.name;
           if (!owner || !name) {
             throw new Error("Unable to resolve GitHub repository for pull request checkout");
@@ -2428,7 +2449,18 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             PullRequestCheckoutTargetSchema,
             "{}",
           );
-          return toPullRequestCheckoutTarget(parsed);
+          const host = new URL(parsed.data.repository.url).hostname;
+          const remote = await resolveCheckoutRemote({
+            cwd: input.cwd,
+            repositoryUrl: parsed.data.repository.url,
+            resolveHostname: options.resolveSshHostname ?? resolveSshHostname,
+          });
+          const checkoutUrl =
+            remote ??
+            ((await resolveConfiguredCloneProtocol({ cwd: input.cwd, run, host })) === "ssh"
+              ? parsed.data.repository.sshUrl
+              : parsed.data.repository.url);
+          return toPullRequestCheckoutTarget(parsed, checkoutUrl);
         },
       });
     },
@@ -2634,7 +2666,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             ],
             { cwd: input.cwd },
           ),
-          resolveConfiguredCloneProtocol(input.cwd, run),
+          resolveConfiguredCloneProtocol({ cwd: input.cwd, run }),
         ]);
         return parseRepositoryList(stdout, cloneProtocol);
       }
@@ -2655,7 +2687,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         hasVisibilityFilter
           ? "[]"
           : run([...searchArgs, "--visibility=private"], { cwd: input.cwd }),
-        resolveConfiguredCloneProtocol(input.cwd, run),
+        resolveConfiguredCloneProtocol({ cwd: input.cwd, run }),
       ]);
       const repositories = parseRepositorySearch(stdout, cloneProtocol);
       const privateMatches = parseRepositorySearch(privateStdout, cloneProtocol);
@@ -3823,13 +3855,18 @@ function getPullRequestStateRank(status: CurrentPullRequestStatus): number {
 
 type GitHubCloneProtocol = "https" | "ssh";
 
-async function resolveConfiguredCloneProtocol(
-  cwd: string,
-  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>,
-): Promise<GitHubCloneProtocol> {
+async function resolveConfiguredCloneProtocol({
+  cwd,
+  run,
+  host = "github.com",
+}: {
+  cwd: string;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+  host?: string;
+}): Promise<GitHubCloneProtocol> {
   try {
     const protocol = (
-      await run(["config", "get", "git_protocol", "--host", "github.com"], {
+      await run(["config", "get", "git_protocol", "--host", host], {
         cwd,
       })
     )
@@ -3900,10 +3937,46 @@ function normalizeRepositorySummary(repository: {
   };
 }
 
+async function resolveCheckoutRemote({
+  cwd,
+  repositoryUrl,
+  resolveHostname,
+}: {
+  cwd: string;
+  repositoryUrl: string;
+  resolveHostname: (host: string) => Promise<string | null>;
+}): Promise<string | null> {
+  const repository = parseGitRemoteLocation(repositoryUrl);
+  if (!repository) return null;
+  let stdout: string;
+  try {
+    ({ stdout } = await runGitCommand(["remote", "-v"], { cwd, timeout: 5_000 }));
+  } catch {
+    return null;
+  }
+  for (const line of stdout.split(/\r?\n/u)) {
+    const match = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/u);
+    if (!match) continue;
+    const location = parseGitRemoteLocation(match[2]);
+    if (!location || location.path.toLowerCase() !== repository.path.toLowerCase()) continue;
+    const isSsh = location.transport === "ssh" || location.transport === "scp";
+    const host =
+      location.host !== repository.host && isSsh
+        ? ((await resolveHostname(location.host)) ?? location.host)
+        : location.host;
+    // SSH and web endpoints can listen on different ports.
+    const portMatches = isSsh || location.port === repository.port;
+    if (host === repository.host && portMatches) return match[1];
+  }
+  return null;
+}
+
 function toPullRequestCheckoutTarget(
   parsed: z.infer<typeof PullRequestCheckoutTargetSchema>,
+  checkoutUrl: string,
 ): PullRequestCheckoutTarget {
-  const pullRequest = parsed.data.repository.pullRequest;
+  const repository = parsed.data.repository;
+  const pullRequest = repository.pullRequest;
   if (!pullRequest) {
     throw new Error("Pull request not found");
   }
@@ -3911,10 +3984,8 @@ function toPullRequestCheckoutTarget(
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [
-      { remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` },
-      { remoteName: "upstream", remoteRef: `refs/pull/${pullRequest.number}/head` },
-    ],
+    // PR numbers are scoped to a repository, so fetch from the repository queried above.
+    checkoutRefs: [{ remoteName: checkoutUrl, remoteRef: `refs/pull/${pullRequest.number}/head` }],
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,

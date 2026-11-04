@@ -408,20 +408,26 @@ function pullRequestJson(title: string): string {
   ]);
 }
 
-function pullRequestCheckoutTargetJson(): string {
+function pullRequestCheckoutTargetJson({
+  host = "github.com",
+  headRepositoryDeleted = false,
+}: { host?: string; headRepositoryDeleted?: boolean } = {}): string {
+  const headRepository = {
+    sshUrl: `git@${host}:therainisme/paseo.git`,
+    url: `https://${host}/therainisme/paseo`,
+  };
   return JSON.stringify({
     data: {
       repository: {
+        sshUrl: `git@${host}:getpaseo/paseo.git`,
+        url: `https://${host}/getpaseo/paseo`,
         pullRequest: {
           number: 526,
           baseRefName: "main",
           headRefName: "main",
           isCrossRepository: true,
           headRepositoryOwner: { login: "therainisme" },
-          headRepository: {
-            sshUrl: "git@github.com:therainisme/paseo.git",
-            url: "https://github.com/therainisme/paseo",
-          },
+          headRepository: headRepositoryDeleted ? null : headRepository,
         },
       },
     },
@@ -835,7 +841,7 @@ describe("ForgeService", () => {
   });
 
   it("loads pull request checkout target details through GraphQL", async () => {
-    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson(), "https"]);
     const service = createGitHubService({
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
@@ -849,8 +855,10 @@ describe("ForgeService", () => {
       baseRefName: "main",
       headRefName: "main",
       checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/526/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+        {
+          remoteName: "https://github.com/getpaseo/paseo",
+          remoteRef: "refs/pull/526/head",
+        },
       ],
       headOwnerLogin: "therainisme",
       headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
@@ -859,7 +867,7 @@ describe("ForgeService", () => {
       headRefKind: "branch",
     });
 
-    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls).toHaveLength(3);
     expect(runner.calls[0]).toEqual({
       cwd: "/repo",
       args: ["repo", "view", "--json", "owner,name,parent,defaultBranchRef"],
@@ -869,6 +877,182 @@ describe("ForgeService", () => {
     expect(runner.calls[1]?.args).toContain("owner=getpaseo");
     expect(runner.calls[1]?.args).toContain("name=paseo");
     expect(runner.calls[1]?.args).toContain("number=526");
+    expect(runner.calls[1]?.args[3]).toContain(
+      "repository(owner: $owner, name: $name) {\n    sshUrl\n    url",
+    );
+    expect(runner.calls[2]?.args).toEqual([
+      "config",
+      "get",
+      "git_protocol",
+      "--host",
+      "github.com",
+    ]);
+  });
+
+  it("asks the parent repository for a pull request checked out from a fork", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "github-checkout-fork-"));
+    try {
+      execFileSync("git", ["init", "-q", repoDir]);
+      execFileSync("git", ["remote", "add", "origin", "git@github.com:octocat/paseo.git"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["remote", "add", "upstream", "git@github.com:getpaseo/paseo.git"], {
+        cwd: repoDir,
+      });
+      const runner = createRunner([
+        JSON.stringify({
+          owner: { login: "octocat" },
+          name: "paseo",
+          parent: { owner: { login: "getpaseo" }, name: "paseo" },
+        }),
+        pullRequestCheckoutTargetJson(),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+      });
+
+      const target = await service.getPullRequestCheckoutTarget({ cwd: repoDir, number: 526 });
+
+      expect(runner.calls[0]?.args).toEqual([
+        "repo",
+        "view",
+        "octocat/paseo",
+        "--json",
+        "owner,name,parent,defaultBranchRef",
+      ]);
+      expect(runner.calls[1]?.args).toContain("owner=getpaseo");
+      expect(runner.calls[1]?.args).toContain("name=paseo");
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+      ]);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      host: "github.com",
+      protocol: "ssh",
+      checkoutUrl: "git@github.com:getpaseo/paseo.git",
+    },
+    {
+      host: "github.acme.internal",
+      protocol: "https",
+      checkoutUrl: "https://github.acme.internal/getpaseo/paseo",
+    },
+    {
+      host: "github.acme.internal",
+      protocol: "ssh",
+      checkoutUrl: "git@github.acme.internal:getpaseo/paseo.git",
+    },
+  ])(
+    "fetches PRs over $protocol from their repository on $host",
+    async ({ host, protocol, checkoutUrl }) => {
+      const runner = createRunner([
+        repoViewJson(),
+        pullRequestCheckoutTargetJson({ host }),
+        protocol,
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => host,
+      });
+
+      const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 526 });
+
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: checkoutUrl, remoteRef: "refs/pull/526/head" },
+      ]);
+      expect(runner.calls[2]?.args).toEqual(["config", "get", "git_protocol", "--host", host]);
+    },
+  );
+
+  it("uses the matching configured remote with an SSH host alias", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "github-checkout-remote-"));
+    try {
+      execFileSync("git", ["init", "-q", repoDir]);
+      execFileSync("git", ["remote", "add", "origin", "git@other-host:getpaseo/paseo.git"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["remote", "add", "upstream", "git@github-work:getpaseo/paseo.git"], {
+        cwd: repoDir,
+      });
+      const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+        resolveSshHostname: async (host) => (host === "github-work" ? "github.com" : host),
+      });
+
+      const target = await service.getPullRequestCheckoutTarget({ cwd: repoDir, number: 526 });
+
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+      ]);
+      expect(runner.calls).toHaveLength(2);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["ssh://git@github.acme.internal:2222/getpaseo/paseo.git", "upstream"],
+    ["ssh://git@github-work:2222/getpaseo/paseo.git", "upstream"],
+    [
+      "https://github.acme.internal:8443/getpaseo/paseo.git",
+      "https://github.acme.internal/getpaseo/paseo",
+    ],
+  ])("selects the PR checkout remote for %s", async (remoteUrl, expectedRemote) => {
+    const repoDir = mkdtempSync(join(tmpdir(), "github-checkout-remote-"));
+    try {
+      execFileSync("git", ["init", "-q", repoDir]);
+      execFileSync("git", ["remote", "add", "upstream", remoteUrl], { cwd: repoDir });
+      const runner = createRunner([
+        repoViewJson(),
+        pullRequestCheckoutTargetJson({ host: "github.acme.internal" }),
+        "https",
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+        resolveSshHostname: async (host) =>
+          host === "github-work" ? "github.acme.internal" : host,
+      });
+
+      const target = await service.getPullRequestCheckoutTarget({ cwd: repoDir, number: 526 });
+
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: expectedRemote, remoteRef: "refs/pull/526/head" },
+      ]);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves the PR checkout repository when the contributor repository was deleted", async () => {
+    const runner = createRunner([
+      repoViewJson(),
+      pullRequestCheckoutTargetJson({ headRepositoryDeleted: true }),
+      "https",
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 526 });
+
+    expect(target.checkoutRefs).toEqual([
+      { remoteName: "https://github.com/getpaseo/paseo", remoteRef: "refs/pull/526/head" },
+    ]);
+    expect(target.headRepositorySshUrl).toBeNull();
+    expect(target.headRepositoryUrl).toBeNull();
   });
 
   it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {
