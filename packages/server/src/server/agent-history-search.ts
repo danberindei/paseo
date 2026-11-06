@@ -6,12 +6,13 @@ export interface AgentHistorySearchCandidate {
   project: ProjectPlacementPayload;
 }
 
-/** Search the names people recall, never an incomplete subset of transcripts. */
+/** Search agent metadata rather than an incomplete subset of transcripts. */
 export function matchesAgentHistoryQuery(
   query: string,
   { agent, project }: AgentHistorySearchCandidate,
 ): boolean {
   return (
+    agent.id.toLowerCase().includes(query.trim().toLowerCase()) ||
     scoreTextFields(
       query,
       [

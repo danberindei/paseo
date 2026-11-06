@@ -5,6 +5,7 @@ import {
 } from "./agent-history-search.js";
 
 function candidate(input: {
+  id?: string;
   title?: string | null;
   workspaceName?: string | null;
   branch?: string | null;
@@ -14,7 +15,7 @@ function candidate(input: {
   const branch = input.branch ?? null;
   return {
     agent: {
-      id: input.title ?? "agent",
+      id: input.id ?? "agent",
       title: input.title ?? null,
       updatedAt: input.updatedAt ?? "2026-08-07T00:00:00.000Z",
     },
@@ -32,12 +33,21 @@ function candidate(input: {
         mainRepoRoot: null,
       },
     },
-    // The module only reads the four names; the rest of the payload is the
+    // The module only reads search metadata; the rest of the payload is the
     // session's business.
   } as unknown as AgentHistorySearchCandidate & { agent: { id: string; updatedAt: string } };
 }
 
 describe("matchesAgentHistoryQuery", () => {
+  it("matches the agent ID", () => {
+    const entry = candidate({ id: "9179dbf1-3e2b-4b76-8f56-6caba7e22014" });
+    expect(matchesAgentHistoryQuery("9179dbf1-3e2b-4b76-8f56-6caba7e22014", entry)).toBe(true);
+    expect(matchesAgentHistoryQuery("3E2B-4B76", entry)).toBe(true);
+    expect(matchesAgentHistoryQuery("add", entry)).toBe(false);
+    expect(matchesAgentHistoryQuery("9179dbf2", entry)).toBe(false);
+    expect(matchesAgentHistoryQuery("f541c2a9-8ab0-493d-ae31-9f364b17d028", entry)).toBe(false);
+  });
+
   it("rejects scattered letters across words while keeping within-word subsequences", () => {
     expect(
       matchesAgentHistoryQuery(
