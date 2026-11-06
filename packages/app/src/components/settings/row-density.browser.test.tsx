@@ -57,6 +57,10 @@ function heightOf(testID: string): number {
   return element(testID).getBoundingClientRect().height;
 }
 
+function verticalPadding(testID: string): number {
+  return Number.parseFloat(getComputedStyle(element(testID)).paddingTop);
+}
+
 function titleFontSize(rowTestID: string, label: string): number {
   const title = [...element(rowTestID).querySelectorAll("div")].find(
     (node) => node.textContent === label && node.children.length === 0,
@@ -71,7 +75,10 @@ describe("settings row density", () => {
 
     expect(heightOf("nested-with-button")).toBe(heightOf("nested-without-button"));
     expect(heightOf("nested-with-button")).toBeLessThan(heightOf("card-row"));
-    expect(heightOf("group-toggle")).toBeGreaterThan(heightOf("nested-without-button"));
+    // The group header keeps card padding and its rows are nested, so the step is in the padding.
+    // Totals cannot carry it: on touch sizing a nested row is 32 of control plus 16 of padding,
+    // the same 48 as the text-only header above it.
+    expect(verticalPadding("nested-without-button")).toBeLessThan(verticalPadding("group-toggle"));
   });
 
   it("keeps a row that opens something as tall as a row holding a control", () => {
