@@ -167,14 +167,12 @@ function pruneSelectionsForKnownSpaces(spaces: readonly Space[]): void {
 // store too: before it hydrates, `spaces` is empty and pruning would drop the
 // selection for every existing space.
 function pruneSelectionsForHydratedSpaces(): void {
-  if (useSpaceStore.persist.hasHydrated()) {
+  const prune = () => {
+    if (useSpaceStore.hydration.getSnapshot() !== "ready") return;
     pruneSelectionsForKnownSpaces(useSpaceStore.getState().spaces);
-    return;
-  }
-  const unsubscribe = useSpaceStore.persist.onFinishHydration((state) => {
-    unsubscribe();
-    pruneSelectionsForKnownSpaces(state.spaces);
-  });
+  };
+  useSpaceStore.hydration.subscribe(prune);
+  prune();
 }
 
 void hydrateLastWorkspaceSelection().then(pruneSelectionsForHydratedSpaces);
@@ -185,5 +183,6 @@ useSpaceStore.subscribe((state) => {
     return;
   }
   lastKnownSpaces = state.spaces;
+  if (useSpaceStore.hydration.getSnapshot() !== "ready") return;
   pruneSelectionsForKnownSpaces(state.spaces);
 });

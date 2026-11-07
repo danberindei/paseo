@@ -1,10 +1,13 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react-native";
 import { useCallback, useRef, useState } from "react";
 import { ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/alert";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
@@ -21,6 +24,7 @@ import { buildSpaceSettingsRoute, buildSettingsRoute } from "@/utils/host-routes
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedTrash2 = withUnistyles(Trash2);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedTextInput = withUnistyles(EditingTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
@@ -48,17 +52,22 @@ export default function ManageSpacesScreen() {
     }
   }, []);
 
+  const createMutation = useMutation({
+    mutationFn: createSpace,
+    onSuccess: (id) => {
+      setActiveSpaceId(id);
+      setNewSpaceName("");
+      newSpaceInputRef.current?.replaceText("");
+    },
+  });
   const handleCreateSpace = useCallback(() => {
     const trimmed = newSpaceName.trim();
-    if (!trimmed) return;
-    const id = createSpace(trimmed);
-    setActiveSpaceId(id);
-    setNewSpaceName("");
-    newSpaceInputRef.current?.replaceText("");
-  }, [newSpaceName, createSpace, setActiveSpaceId]);
+    if (!trimmed || createMutation.isPending) return;
+    createMutation.mutate(trimmed);
+  }, [newSpaceName, createMutation]);
 
-  const handleDeleteSpace = useCallback(
-    async (space: Space) => {
+  const deleteMutation = useMutation({
+    mutationFn: async (space: Space) => {
       const confirmed = await confirmDialog({
         title: t("spaces.manage.deleteTitle"),
         message: t("spaces.manage.deleteMessage", { name: space.name }),
@@ -73,10 +82,15 @@ export default function ManageSpacesScreen() {
             return;
           }
         }
-        deleteSpace(space.id);
+        await deleteSpace(space.id);
       }
     },
-    [deleteSpace, t, toast],
+  });
+  const handleDeleteSpace = useCallback(
+    (space: Space) => {
+      if (!deleteMutation.isPending) deleteMutation.mutate(space);
+    },
+    [deleteMutation],
   );
 
   return (
@@ -93,6 +107,9 @@ export default function ManageSpacesScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
+        {createMutation.isError || deleteMutation.isError ? (
+          <Alert variant="error" description={t("common.errors.unableToSave")} />
+        ) : null}
         {spaces.length === 0 ? (
           <Text style={settingsStyles.rowHint}>{t("spaces.manage.empty")}</Text>
         ) : null}
@@ -107,6 +124,8 @@ export default function ManageSpacesScreen() {
                   space={space}
                   isFirst={index === 0}
                   onDelete={handleDeleteSpace}
+                  disabled={deleteMutation.isPending}
+                  pending={deleteMutation.isPending && deleteMutation.variables.id === space.id}
                 />
               ))}
             </View>
@@ -126,10 +145,12 @@ export default function ManageSpacesScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               autoFocus={focus === "new"}
+              editable={!createMutation.isPending}
             />
             <Button
               onPress={handleCreateSpace}
               disabled={!newSpaceName.trim()}
+              loading={createMutation.isPending}
               size="sm"
               variant="secondary"
             >
@@ -146,9 +167,11 @@ interface SpaceRowProps {
   space: Space;
   isFirst: boolean;
   onDelete: (space: Space) => void;
+  disabled: boolean;
+  pending: boolean;
 }
 
-function SpaceRow({ space, isFirst, onDelete }: SpaceRowProps) {
+function SpaceRow({ space, isFirst, onDelete, disabled, pending }: SpaceRowProps) {
   const { t } = useTranslation();
   const rowStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -181,8 +204,13 @@ function SpaceRow({ space, isFirst, onDelete }: SpaceRowProps) {
           onPress={handleDelete}
           style={styles.actionButton}
           hitSlop={4}
+          disabled={disabled}
         >
-          <ThemedTrash2 size={14} uniProps={redColorMapping} />
+          {pending ? (
+            <ThemedLoadingSpinner size="small" uniProps={mutedColorMapping} />
+          ) : (
+            <ThemedTrash2 size={14} uniProps={redColorMapping} />
+          )}
         </ToolbarButton>
         <ThemedChevronRight size={16} uniProps={mutedColorMapping} />
       </View>

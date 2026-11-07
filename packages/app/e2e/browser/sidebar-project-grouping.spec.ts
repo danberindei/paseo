@@ -343,8 +343,8 @@ const test = base.extend<{
 
 async function readSpaceProjectIds(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const stored = JSON.parse(localStorage.getItem("space-store") ?? "{}");
-    return stored.state.spaces[0].projectIds;
+    const stored = JSON.parse(localStorage.getItem("space-storage") ?? "{}");
+    return stored.spaces[0].projectIds;
   });
 }
 

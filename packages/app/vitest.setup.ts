@@ -23,6 +23,24 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
     });
 }
 
+// Node and JSDOM ship no Web Locks, but the web build of Space storage serializes
+// its single AsyncStorage document through `navigator.locks`. This queue keeps the
+// serialization real so concurrent Space writes cannot interleave.
+if (typeof globalThis.navigator !== "undefined" && !globalThis.navigator.locks) {
+  const lockTails = new Map<string, Promise<unknown>>();
+  globalThis.navigator.locks = {
+    request(name: string, operation: (lock: { name: string; mode: "exclusive" }) => unknown) {
+      const previous = lockTails.get(name) ?? Promise.resolve();
+      const held = previous.then(() => operation({ name, mode: "exclusive" }));
+      lockTails.set(
+        name,
+        held.catch(() => undefined),
+      );
+      return held;
+    },
+  };
+}
+
 if (typeof globalThis.self === "undefined") {
   globalWithTestShims.self = globalThis;
 }

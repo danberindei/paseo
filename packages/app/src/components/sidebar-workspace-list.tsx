@@ -1,6 +1,7 @@
 import { useWorkspaceRowPress } from "../../modules/paseo-press-feedback";
 import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useMutation } from "@tanstack/react-query";
 import {
   View,
   Text,
@@ -529,6 +530,11 @@ const AllProjectsContext = createContext<{
   isLoading: true,
 });
 
+interface HideProjectInput {
+  spaceId: string;
+  projectIds: string[];
+}
+
 function ProjectMenuItem({
   surface,
   children,
@@ -584,12 +590,24 @@ function ProjectMenuItems({
       )
     : undefined;
   const removeProjectFromSpace = useSpaceStore((s) => s.removeProjectFromSpace);
+  const hideMutation = useMutation({
+    mutationFn: (input: HideProjectInput) =>
+      removeProjectFromSpace(input.spaceId, input.projectIds),
+    onError: () => {
+      toast.show(t("common.errors.unableToSave"), {
+        variant: "error",
+        durationMs: null,
+        nativeAndroid: false,
+      });
+    },
+  });
   const handleHideFromSpace = useCallback(() => {
-    if (!activeSpace || !groupedProject || projectsLoading) return;
-    for (const host of groupedProject.hosts) {
-      removeProjectFromSpace(activeSpace.id, host.projectId);
-    }
-  }, [activeSpace, groupedProject, projectsLoading, removeProjectFromSpace]);
+    if (!activeSpace || !groupedProject || projectsLoading || hideMutation.isPending) return;
+    hideMutation.mutate({
+      spaceId: activeSpace.id,
+      projectIds: groupedProject.hosts.map((host) => host.projectId),
+    });
+  }, [activeSpace, groupedProject, projectsLoading, hideMutation]);
 
   return (
     <>
@@ -625,6 +643,8 @@ function ProjectMenuItems({
           leading={eyeOffLeadingIcon}
           onSelect={handleHideFromSpace}
           disabled={projectsLoading || !groupedProject}
+          status={hideMutation.isPending ? "pending" : "idle"}
+          pendingLabel={t("common.loading")}
         >
           {t("spaces.hideFromSpace", { name: activeSpace.name })}
         </ProjectMenuItem>

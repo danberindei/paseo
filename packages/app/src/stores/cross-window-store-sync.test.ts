@@ -18,6 +18,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceLayoutIdSource } from "@/stores/workspace-layout-ids";
 import { createHydrationSettlement } from "@/stores/hydration-settlement";
+import { SPACE_STORAGE_KEY, useSpaceStore } from "@/stores/space-store";
 
 it("waits for the latest overlapping hydration attempt", async () => {
   const hydration = createHydrationSettlement();
@@ -36,6 +37,30 @@ it("waits for the latest overlapping hydration attempt", async () => {
 });
 
 describe("cross-window listener installation", () => {
+  it("refreshes Spaces on another window's write and stops after removal", async () => {
+    const events = new EventTarget();
+    vi.stubGlobal("window", events);
+    const refresh = vi.spyOn(useSpaceStore, "hydrate");
+    const remove = installCrossWindowStoreSync({
+      storageKey: "test-drafts",
+      reconcile: async () => {},
+    });
+    try {
+      refresh.mockClear();
+      events.dispatchEvent(Object.assign(new Event("storage"), { key: SPACE_STORAGE_KEY }));
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+      events.dispatchEvent(Object.assign(new Event("storage"), { key: "unrelated-key" }));
+      expect(refresh).toHaveBeenCalledTimes(1);
+      remove();
+      events.dispatchEvent(Object.assign(new Event("storage"), { key: SPACE_STORAGE_KEY }));
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      remove();
+      refresh.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("runs a queued draft reconciliation after a failure", async () => {
     const events = new EventTarget();
     vi.stubGlobal("window", events);

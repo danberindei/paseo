@@ -12,6 +12,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import { mergeWorkspaceLayoutSnapshots, stableStringify } from "@/stores/workspace-layout-sync";
 import { isWeb } from "@/constants/platform";
+import { SPACE_STORAGE_KEY, useSpaceStore } from "@/stores/space-store";
 
 export interface DraftStoreSyncAdapter {
   storageKey: string;
@@ -137,12 +138,19 @@ export function installCrossWindowStoreSync(
       scheduleDraftsWrite();
       return;
     }
+    if (event.key === SPACE_STORAGE_KEY) {
+      // Space mutations carry their own revision, so re-reading the snapshot is
+      // enough; `apply` drops a read that lost a race with a local mutation.
+      void useSpaceStore.hydrate();
+      return;
+    }
     if (event.key === WORKSPACE_LAYOUT_STORE_STORAGE_KEY) {
       scheduleWorkspaceLayoutWrite();
     }
   };
 
   window.addEventListener("storage", onStorage);
+  void useSpaceStore.hydrate();
   scheduleWorkspaceLayoutWrite();
   scheduleDraftsWrite();
   return () => {

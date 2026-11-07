@@ -1,4 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const storageControl = vi.hoisted(() => ({ failWrites: false }));
+
+vi.mock("@/stores/spaces/storage-async-storage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/stores/spaces/storage-async-storage")>();
+  const { withSpaceStorageLock } = await import("@/stores/spaces/storage-lock-queue");
+  function createAsyncStorageSpaceStorage() {
+    const storage = actual.createAsyncStorageSpaceStorage(withSpaceStorageLock);
+    async function mutate(mutation: Parameters<typeof storage.mutate>[0]) {
+      if (storageControl.failWrites) throw new Error("Disk full");
+      return storage.mutate(mutation);
+    }
+    return { ...storage, mutate };
+  }
+  return { ...actual, createAsyncStorageSpaceStorage };
+});
 
 import {
   cloneGithubProjectDirectly,
@@ -71,6 +87,7 @@ function createFakeGithubCloneClient(project: ReturnType<typeof buildProjectPayl
 
 describe("openProjectDirectly", () => {
   beforeEach(() => {
+    storageControl.failWrites = false;
     useSpaceStore.setState({ spaces: [] });
     useActiveSpaceStore.setState({ activeSpaceId: null });
   });
@@ -115,7 +132,7 @@ describe("openProjectDirectly", () => {
 
   it("adds the new project id to the active space", async () => {
     const session = createFakeSession();
-    const spaceId = useSpaceStore.getState().createSpace("Work");
+    const spaceId = await useSpaceStore.getState().createSpace("Work");
     useActiveSpaceStore.getState().setActiveSpaceId(spaceId);
 
     const result = await openProjectDirectly({
@@ -140,6 +157,34 @@ describe("openProjectDirectly", () => {
       name: "Work",
       projectIds: ["project-1"],
     });
+  });
+
+  it("reports a failed Space membership write so opening can be retried", async () => {
+    const session = createFakeSession();
+    const id = await useSpaceStore.getState().createSpace("Work");
+    useActiveSpaceStore.getState().setActiveSpaceId(id);
+    storageControl.failWrites = true;
+    const result = await openProjectDirectly({
+      serverId: SERVER_ID,
+      projectPath: PROJECT_PATH,
+      isConnected: true,
+      canAddProject: true,
+      client: {
+        addProject: async () => ({
+          requestId: "request-space-failure",
+          error: null,
+          project: buildProjectPayload(),
+        }),
+      },
+      upsertProject: session.upsertProject,
+      setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
+    });
+    expect(result).toEqual({
+      ok: false,
+      errorCode: null,
+      error: "Unable to save the project in this space. Try again.",
+    });
+    expect(useSpaceStore.getState().spaces).toContainEqual({ id, name: "Work", projectIds: [] });
   });
 
   it("fails before sending when the host does not support adding projects without workspaces", async () => {

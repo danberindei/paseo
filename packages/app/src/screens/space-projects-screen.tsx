@@ -1,10 +1,12 @@
 import { router } from "expo-router";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, Check } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { PressHighlight } from "@/components/ui/press-highlight";
+import { Alert } from "@/components/ui/alert";
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
@@ -21,6 +23,11 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+interface MembershipInput {
+  projectIds: string[];
+  isMember: boolean;
+}
 
 export default function SpaceProjectsScreen({ spaceId }: { spaceId: string }) {
   const { t } = useTranslation();
@@ -48,27 +55,30 @@ export default function SpaceProjectsScreen({ spaceId }: { spaceId: string }) {
     }
   }, []);
 
+  const renameMutation = useMutation({ mutationFn: (name: string) => renameSpace(spaceId, name) });
+  const membershipMutation = useMutation({
+    mutationFn: (input: MembershipInput) => {
+      if (input.isMember) return removeProjectFromSpace(spaceId, input.projectIds);
+      return addProjectToSpace(spaceId, input.projectIds);
+    },
+  });
+
   const handleRename = useCallback(() => {
+    if (renameMutation.isPending) return;
     const nextName = draftName.trim();
     if (!space || !nextName || nextName === space.name) {
       setDraftName(space?.name ?? "");
       nameInputRef.current?.replaceText(space?.name ?? "");
       return;
     }
-    renameSpace(space.id, nextName);
-  }, [draftName, renameSpace, space]);
+    renameMutation.mutate(nextName);
+  }, [draftName, renameMutation, space]);
 
   const handleToggle = useCallback(
     (projectIds: string[], isMember: boolean) => {
-      for (const projectId of projectIds) {
-        if (isMember) {
-          removeProjectFromSpace(spaceId, projectId);
-        } else {
-          addProjectToSpace(spaceId, projectId);
-        }
-      }
+      if (!membershipMutation.isPending) membershipMutation.mutate({ projectIds, isMember });
     },
-    [spaceId, addProjectToSpace, removeProjectFromSpace],
+    [membershipMutation],
   );
 
   const projectsSection = useMemo(() => {
@@ -95,6 +105,11 @@ export default function SpaceProjectsScreen({ spaceId }: { spaceId: string }) {
                   isMember={isMember}
                   isFirst={index === 0}
                   onToggle={handleToggle}
+                  disabled={membershipMutation.isPending}
+                  pending={
+                    membershipMutation.isPending &&
+                    membershipMutation.variables.projectIds.some((id) => projectIds.includes(id))
+                  }
                 />
               );
             })}
@@ -108,7 +123,15 @@ export default function SpaceProjectsScreen({ spaceId }: { spaceId: string }) {
     }
 
     return null;
-  }, [handleToggle, isLoading, projectIdSet, projects, t]);
+  }, [
+    handleToggle,
+    isLoading,
+    projectIdSet,
+    projects,
+    t,
+    membershipMutation.isPending,
+    membershipMutation.variables,
+  ]);
 
   if (!space) {
     return null;
@@ -128,6 +151,9 @@ export default function SpaceProjectsScreen({ spaceId }: { spaceId: string }) {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
+        {renameMutation.isError || membershipMutation.isError ? (
+          <Alert variant="error" description={t("common.errors.unableToSave")} />
+        ) : null}
         <SettingsSection title={t("spaces.detail.sectionTitle")}>
           <View style={settingsStyles.card}>
             <View style={settingsStyles.row}>
@@ -144,7 +170,11 @@ export default function SpaceProjectsScreen({ spaceId }: { spaceId: string }) {
                 autoCapitalize="none"
                 autoCorrect={false}
                 returnKeyType="done"
+                editable={!renameMutation.isPending}
               />
+              {renameMutation.isPending ? (
+                <ThemedLoadingSpinner size="small" uniProps={mutedColorMapping} />
+              ) : null}
             </View>
           </View>
         </SettingsSection>
@@ -161,6 +191,8 @@ interface ProjectMembershipRowProps {
   isMember: boolean;
   isFirst: boolean;
   onToggle: (projectIds: string[], isMember: boolean) => void;
+  disabled: boolean;
+  pending: boolean;
 }
 
 function ProjectMembershipRow({
@@ -169,6 +201,8 @@ function ProjectMembershipRow({
   isMember,
   isFirst,
   onToggle,
+  disabled,
+  pending,
 }: ProjectMembershipRowProps) {
   const rowStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -183,18 +217,29 @@ function ProjectMembershipRow({
   const handleToggle = useCallback(() => {
     onToggle(projectIds, isMember);
   }, [onToggle, projectIds, isMember]);
+  const accessibilityState = useMemo(
+    () => ({ checked: isMember, disabled, busy: pending }),
+    [isMember, disabled, pending],
+  );
 
   return (
-    <PressHighlight style={rowStyle} highlightStyle={styles.rowPressed} onPress={handleToggle}>
+    <PressHighlight
+      style={rowStyle}
+      highlightStyle={styles.rowPressed}
+      onPress={handleToggle}
+      disabled={disabled}
+      accessibilityRole="checkbox"
+      accessibilityState={accessibilityState}
+      aria-checked={isMember}
+      aria-busy={pending}
+    >
       <Text style={settingsStyles.rowTitle} numberOfLines={1}>
         {projectName}
       </Text>
       <View style={styles.checkboxSlot}>
-        {isMember ? (
-          <ThemedCheck size={16} uniProps={foregroundColorMapping} />
-        ) : (
-          <View style={styles.checkboxEmpty} />
-        )}
+        {pending ? <ThemedLoadingSpinner size="small" uniProps={mutedColorMapping} /> : null}
+        {!pending && isMember ? <ThemedCheck size={16} uniProps={foregroundColorMapping} /> : null}
+        {!pending && !isMember ? <View style={styles.checkboxEmpty} /> : null}
       </View>
     </PressHighlight>
   );

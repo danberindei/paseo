@@ -1,180 +1,38 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { useActiveSpaceStore } from "@/stores/active-space-store";
-import {
-  createPersistHydrationTracker,
-  type PersistHydrationStatus,
-  usePersistHydrationStatus,
-} from "@/stores/persist-hydration";
+import { type PersistHydrationStatus, usePersistHydrationStatus } from "@/stores/persist-hydration";
+import { createAsyncStorageSpaceStorage, SPACE_STORAGE_KEY } from "./spaces/storage-async-storage";
+import { createSpaceStore } from "./spaces/store";
+import type { Space } from "./spaces/types";
 
-export interface Space {
-  id: string;
-  name: string;
-  projectIds: string[];
-}
+/** Key written by the zustand persist middleware before spaces moved to `SPACE_STORAGE_KEY`. */
+export const LEGACY_SPACE_STORE_KEY = "space-store";
 
-export interface SpaceStoreState {
-  spaces: Space[];
-  createSpace: (name: string) => string;
-  deleteSpace: (id: string) => void;
-  renameSpace: (id: string, name: string) => void;
-  addProjectToSpace: (spaceId: string, projectId: string) => void;
-  removeProjectFromSpace: (spaceId: string, projectId: string) => void;
-}
+export { SPACE_STORAGE_KEY };
+export type { Space } from "./spaces/types";
+export type { SpaceStoreState } from "./spaces/store";
 
-function normalizeName(name: string): string {
-  const trimmed = name.trim();
-  return trimmed.length > 0 ? trimmed : "New space";
-}
+export const useSpaceStore = createSpaceStore({
+  storage: createAsyncStorageSpaceStorage(),
+  readLegacy: () => AsyncStorage.getItem(LEGACY_SPACE_STORE_KEY),
+  onDeleted: (id) => {
+    const active = useActiveSpaceStore.getState();
+    if (active.activeSpaceId === id) active.setActiveSpaceId(null);
+  },
+});
 
-function normalizeProjectIds(projectIds: string[]): string[] {
-  const next: string[] = [];
-  const seen = new Set<string>();
-  for (const value of projectIds) {
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) {
-      continue;
-    }
-    seen.add(trimmed);
-    next.push(trimmed);
-  }
-  return next;
-}
-
-function removeKey(keys: string[], key: string): string[] {
-  return keys.filter((candidate) => candidate !== key);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function trimString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function readPersistedProjectIds(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return normalizeProjectIds(value.filter((entry): entry is string => typeof entry === "string"));
-}
-
-function migrateSpaceStoreState(persistedState: unknown): Pick<SpaceStoreState, "spaces"> {
-  if (!isRecord(persistedState)) {
-    return { spaces: [] };
-  }
-
-  const spacesInput = Array.isArray(persistedState.spaces) ? persistedState.spaces : [];
-  const spaces: Space[] = [];
-  for (const entry of spacesInput) {
-    if (!isRecord(entry)) {
-      continue;
-    }
-
-    const id = trimString(entry.id);
-    if (!id) {
-      continue;
-    }
-
-    const projectIds = readPersistedProjectIds(entry.projectIds ?? entry.projectKeys);
-
-    spaces.push({
-      id,
-      name: normalizeName(trimString(entry.name)),
-      projectIds,
-    });
-  }
-
-  return { spaces };
-}
-
-function generateSpaceId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-const hydrationTracker = createPersistHydrationTracker();
-
-export const useSpaceStore = create<SpaceStoreState>()(
-  persist(
-    (set) => ({
-      spaces: [],
-      createSpace: (name) => {
-        const id = generateSpaceId();
-        set((state) => ({
-          spaces: [...state.spaces, { id, name: normalizeName(name), projectIds: [] }],
-        }));
-        return id;
-      },
-      deleteSpace: (id) => {
-        set((state) => ({
-          spaces: state.spaces.filter((space) => space.id !== id),
-        }));
-        const activeSpace = useActiveSpaceStore.getState();
-        if (activeSpace.activeSpaceId === id) {
-          activeSpace.setActiveSpaceId(null);
-        }
-      },
-      renameSpace: (id, name) =>
-        set((state) => ({
-          spaces: state.spaces.map((space) =>
-            space.id === id ? { ...space, name: normalizeName(name) } : space,
-          ),
-        })),
-      addProjectToSpace: (spaceId, projectId) => {
-        const normalizedProjectId = projectId.trim();
-        if (!normalizedProjectId) {
-          return;
-        }
-        set((state) => ({
-          spaces: state.spaces.map((space) =>
-            space.id === spaceId && !space.projectIds.includes(normalizedProjectId)
-              ? { ...space, projectIds: [...space.projectIds, normalizedProjectId] }
-              : space,
-          ),
-        }));
-      },
-      removeProjectFromSpace: (spaceId, projectId) => {
-        const normalizedProjectId = projectId.trim();
-        set((state) => ({
-          spaces: state.spaces.map((space) =>
-            space.id === spaceId
-              ? { ...space, projectIds: removeKey(space.projectIds, normalizedProjectId) }
-              : space,
-          ),
-        }));
-      },
-    }),
-    {
-      name: "space-store",
-      version: 2,
-      storage: createJSONStorage(() => AsyncStorage),
-      migrate: migrateSpaceStoreState,
-      partialize: (state) => ({
-        spaces: state.spaces,
-      }),
-      onRehydrateStorage: () => {
-        hydrationTracker.begin();
-        return (_state, error) => hydrationTracker.complete(error);
-      },
-    },
-  ),
-);
+void useSpaceStore.hydrate();
 
 export function useSpaceStoreHydrationStatus(): PersistHydrationStatus {
-  return usePersistHydrationStatus(hydrationTracker);
+  return usePersistHydrationStatus(useSpaceStore.hydration);
 }
 
 export function getSpaceStoreHydrationStatus(): PersistHydrationStatus {
-  return hydrationTracker.getSnapshot();
+  return useSpaceStore.hydration.getSnapshot();
 }
 
 export async function retrySpaceStoreHydration(): Promise<void> {
-  await useSpaceStore.persist.rehydrate();
+  await useSpaceStore.hydrate();
 }
 
 function findActiveSpace(spaces: Space[], activeSpaceId: string | null): Space | null {

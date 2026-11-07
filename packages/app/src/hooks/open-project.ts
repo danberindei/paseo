@@ -6,6 +6,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { normalizeProjectDescriptor, type ProjectDescriptor } from "@/stores/session-store";
 import { getActiveSpace, useSpaceStore } from "@/stores/space-store";
+import { SpaceStorageError } from "@/stores/spaces/types";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
 type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;
@@ -114,7 +115,16 @@ export async function openProjectDirectly(
     const projectId = payload.project?.projectId;
     const activeSpace = getActiveSpace();
     if (activeSpace && projectId) {
-      useSpaceStore.getState().addProjectToSpace(activeSpace.id, projectId);
+      try {
+        await useSpaceStore.getState().addProjectToSpace(activeSpace.id, projectId);
+      } catch (error) {
+        if (!(error instanceof SpaceStorageError)) throw error;
+        return {
+          ok: false,
+          errorCode: null,
+          error: "Unable to save the project in this space. Try again.",
+        };
+      }
     }
   }
   return registered

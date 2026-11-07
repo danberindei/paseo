@@ -14,7 +14,7 @@ import {
   navigateToWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { useSpaceStore } from "@/stores/space-store";
+import { LEGACY_SPACE_STORE_KEY, useSpaceStore } from "@/stores/space-store";
 
 const routerMock = vi.hoisted(() => ({
   dismissTo: vi.fn(),
@@ -25,10 +25,16 @@ const pathnameState = vi.hoisted(() => ({
 const localParamsState = vi.hoisted(() => ({
   value: {} as { serverId?: string | string[]; workspaceId?: string | string[] },
 }));
-const asyncStorageMock = vi.hoisted(() => ({
-  getItem: vi.fn<(key: string) => Promise<string | null>>(async () => null),
-  setItem: vi.fn<(key: string, value: string) => Promise<void>>(async () => undefined),
-}));
+const asyncStorageMock = vi.hoisted(() => {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: vi.fn<(key: string) => Promise<string | null>>(async (key) => values.get(key) ?? null),
+    setItem: vi.fn<(key: string, value: string) => Promise<void>>(async (key, value) => {
+      values.set(key, value);
+    }),
+  };
+});
 
 vi.mock("expo-router", () => ({
   router: routerMock,
@@ -81,7 +87,10 @@ describe("workspace navigation", () => {
   afterEach(() => {
     unregisterNavigationRef?.();
     unregisterNavigationRef = null;
-    asyncStorageMock.getItem.mockImplementation(async () => null);
+    asyncStorageMock.values.clear();
+    asyncStorageMock.getItem.mockImplementation(
+      async (key) => asyncStorageMock.values.get(key) ?? null,
+    );
   });
 
   it("reports when no last workspace is known", () => {
@@ -173,7 +182,7 @@ describe("workspace navigation", () => {
       finishSpaceRead = resolve;
     });
     asyncStorageMock.getItem.mockImplementation((key) => {
-      if (key === "space-store") {
+      if (key === LEGACY_SPACE_STORE_KEY) {
         return spaceRead;
       }
       if (key === LAST_WORKSPACE_SELECTION_STORAGE_KEY) {
@@ -185,7 +194,7 @@ describe("workspace navigation", () => {
           }),
         );
       }
-      return Promise.resolve(null);
+      return Promise.resolve(asyncStorageMock.values.get(key) ?? null);
     });
 
     vi.resetModules();
