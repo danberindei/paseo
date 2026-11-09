@@ -68,8 +68,8 @@ function paintedLinesByLabel(element: HTMLElement): Record<string, number> {
   return lines;
 }
 
-// The footer shows the duration and swaps to the end timestamp on hover or tap. Neither label
-// may be sized by the other: a timestamp with more characters can still paint narrower.
+// The footer paints the end timestamp and the duration side by side. Neither label may be
+// sized by the other: a timestamp with more characters can still paint narrower.
 it.each([
   {
     language: "en",
@@ -91,4 +91,20 @@ it.each([
     [input.duration]: 1,
     "Friday 11:11 PM": 1,
   });
+});
+
+it("keeps timing labels inside a narrow footer", async () => {
+  await i18n.changeLanguage("en");
+  host.style.width = "130px";
+  renderCompletedFooter({ completedAt: FRIDAY_NIGHT, durationMs: 59 * 60_000 + 58_000 });
+
+  const footer = host.querySelector<HTMLElement>('[data-testid="assistant-turn-footer"]')!;
+  const bounds = footer.getBoundingClientRect();
+  for (const testId of ["turn-footer-timestamp-label", "turn-footer-timing-label"]) {
+    const label = footer.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!;
+    const labelBounds = label.getBoundingClientRect();
+    expect(labelBounds.left).toBeGreaterThanOrEqual(bounds.left);
+    expect(labelBounds.right).toBeLessThanOrEqual(bounds.right);
+    expect(labelBounds.bottom).toBeLessThanOrEqual(bounds.bottom);
+  }
 });

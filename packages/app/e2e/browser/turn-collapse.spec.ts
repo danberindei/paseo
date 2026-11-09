@@ -784,7 +784,7 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
     await agent.client.waitForFinish(agent.agentId, 30_000);
     await expect(summaries).toHaveCount(2);
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
-    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(2);
+    await expect(page.getByText(/^Worked for/)).toHaveCount(2);
     await expect(running).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(0);
     await tasks.click();

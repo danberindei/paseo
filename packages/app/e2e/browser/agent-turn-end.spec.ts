@@ -398,22 +398,27 @@ test.describe("Turn end", () => {
 });
 
 async function expectTimingInsideFooter(page: Page): Promise<void> {
-  const label = page.getByRole("button", { name: /^Worked for/ }).last();
-  const paintedLines = await label.getByTestId("turn-footer-timing-label").evaluate((element) => {
-    const labelBounds = element.parentElement!.getBoundingClientRect();
-    const rowBounds = element.closest('[data-testid="turn-footer"]')!.getBoundingClientRect();
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const footer = page.getByTestId("turn-footer").last();
+  const paintedLines = await footer.evaluate((row) => {
+    const rowBounds = row.getBoundingClientRect();
     const lines: boolean[] = [];
-    while (walker.nextNode()) {
-      const range = document.createRange();
-      range.selectNodeContents(walker.currentNode);
-      for (const rect of range.getClientRects()) {
-        lines.push(
-          rect.left >= Math.max(rowBounds.left, labelBounds.left) - 0.5 &&
-            rect.right <= Math.min(rowBounds.right, labelBounds.right) + 0.5 &&
-            rect.top >= Math.max(rowBounds.top, labelBounds.top) - 0.5 &&
-            rect.bottom <= Math.min(rowBounds.bottom, labelBounds.bottom) + 0.5,
-        );
+    const labels = row.querySelectorAll<HTMLElement>(
+      '[data-testid="turn-footer-timing-label"], [data-testid="turn-footer-timestamp-label"]',
+    );
+    for (const label of labels) {
+      const labelBounds = label.getBoundingClientRect();
+      const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const range = document.createRange();
+        range.selectNodeContents(walker.currentNode);
+        for (const rect of range.getClientRects()) {
+          lines.push(
+            rect.left >= Math.max(rowBounds.left, labelBounds.left) - 0.5 &&
+              rect.right <= Math.min(rowBounds.right, labelBounds.right) + 0.5 &&
+              rect.top >= Math.max(rowBounds.top, labelBounds.top) - 0.5 &&
+              rect.bottom <= Math.min(rowBounds.bottom, labelBounds.bottom) + 0.5,
+          );
+        }
       }
     }
     return lines;
@@ -427,47 +432,31 @@ async function expectFooterWithinWidth(page: Page, width: number): Promise<void>
   await footer.evaluate((element, availableWidth) => {
     element.style.width = `${availableWidth}px`;
   }, width);
-  const label = page.getByRole("button", { name: /^Worked for/ }).last();
-  await expect(label).toBeVisible();
+  await expect(footer.getByTestId("turn-footer-timestamp-label")).toBeVisible();
+  await expect(footer.getByTestId("turn-footer-timing-label")).toBeVisible();
   await expectTimingInsideFooter(page);
   const controls = footer.getByRole("button", { name: /Copy turn|Fork chat/ });
-  const before = await controls.evaluateAll((elements) =>
+  const controlBoxes = await controls.evaluateAll((elements) =>
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
-      return { x: rect.x, y: rect.y };
+      return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom };
     }),
   );
-  const footerBefore = await footer.boundingBox();
-  const labelBefore = await label.boundingBox();
-  await label.hover({ position: { x: labelBefore!.width - 2, y: labelBefore!.height - 2 } });
-  await expect(label.getByTestId("turn-footer-timing-label")).toContainText(/\d:\d\d/);
-  expect(await label.boundingBox()).toMatchObject({
-    x: labelBefore!.x,
-    width: labelBefore!.width,
-    height: labelBefore!.height,
-  });
+  const footerBox = await footer.boundingBox();
+  expect(footerBox).not.toBeNull();
   expect(
-    await controls.evaluateAll((elements) =>
-      elements.map((element) => {
-        const rect = element.getBoundingClientRect();
-        return { x: rect.x, y: rect.y };
-      }),
+    controlBoxes.every(
+      (box) =>
+        box.x >= footerBox!.x - 0.5 &&
+        box.right <= footerBox!.x + footerBox!.width + 0.5 &&
+        box.y >= footerBox!.y - 0.5 &&
+        box.bottom <= footerBox!.y + footerBox!.height + 0.5,
     ),
-  ).toEqual(before);
-  expect(await footer.boundingBox()).toMatchObject({
-    x: footerBefore!.x,
-    y: footerBefore!.y,
-    width: footerBefore!.width,
-  });
-  await expectTimingInsideFooter(page);
-  await page.mouse.move(0, 0);
-  await expect(label.getByTestId("turn-footer-timing-label")).toContainText("Worked for");
+    `the copy and fork controls must stay inside a ${width}px footer`,
+  ).toBe(true);
 }
 
-test("footer timing fits the chat column and swapping labels keeps controls in place", async ({
-  page,
-  agent,
-}) => {
+test("footer timing fits the chat column at every chat width", async ({ page, agent }) => {
   await openAgentRoute(page, agent);
   await expectFooterWithinWidth(page, 140);
   await expectFooterWithinWidth(page, 150);
