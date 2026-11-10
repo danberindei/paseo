@@ -115,7 +115,7 @@ export class DiffSubscriptions {
       return materializeDiffFile(
         file.entry,
         record.kind === "ready" ? record.body : null,
-        record.kind === "too_large",
+        record.kind !== "ready",
       );
     } finally {
       await comparison.close();
@@ -429,23 +429,31 @@ export class DiffSubscriptions {
     comparison.selectBodies(
       new Set(entries.filter((entry) => entry.body).map((entry) => entry.path)),
     );
+    let budgetExceeded = false;
     for (let index = 0; index < comparison.files.length; index++) {
       if (isInterrupted(target)) return;
       const file = comparison.files[index];
       const entry = entries[index];
       if (entry.content === "binary") continue;
+      // Later small patches must also be omitted once a patch exceeds the remaining budget.
+      if (budgetExceeded || state.total >= TOTAL_DIFF_MAX_BYTES) {
+        state.omitted.push(entry.path);
+        continue;
+      }
       let record = target.cache.get(entry.path);
       if (entry.body || !record) {
         const read = await comparison.read(file, {
           remainingBytes: TOTAL_DIFF_MAX_BYTES - state.total,
         });
-        if (read.kind === "too_large") {
+        if (read.kind !== "ready") {
+          budgetExceeded = read.kind === "budget_exceeded";
           state.omitted.push(entry.path);
           continue;
         }
         record = { identity: file.identity, body: read.body, bytes: read.bytes };
       }
       if (exceedsBudget(state.total, record.bytes)) {
+        budgetExceeded = true;
         state.omitted.push(entry.path);
         continue;
       }

@@ -51,7 +51,10 @@ interface ResolvedComparison {
   mergeBaseSha: string;
   comparisonBaseSha: string;
 }
-export type DiffFileRead = { kind: "ready"; body: DiffBody; bytes: number } | { kind: "too_large" };
+export type DiffFileRead =
+  | { kind: "ready"; body: DiffBody; bytes: number }
+  | { kind: "too_large" }
+  | { kind: "budget_exceeded" };
 export interface Comparison extends Pick<
   ResolvedComparison,
   "baseSha" | "headSha" | "mergeBaseSha"
@@ -284,6 +287,7 @@ async function readComparisonList(
     async read(file, budget = {}) {
       const maxPatchBytes = budget.maxPatchBytes ?? PER_FILE_DIFF_MAX_BYTES;
       const remainingBytes = budget.remainingBytes ?? maxPatchBytes;
+      if (remainingBytes <= 0) return { kind: "budget_exceeded" };
       if (file.source.kind === "untracked" && file.source.size > maxPatchBytes) {
         return { kind: "too_large" };
       }
@@ -307,8 +311,8 @@ async function readComparisonList(
             )
           : await patches.read(file, maxPatchBytes);
       const bytes = Buffer.byteLength(result.stdout);
-      if (result.truncated || bytes > remainingBytes || bytes > maxPatchBytes)
-        return { kind: "too_large" };
+      if (result.truncated || bytes > maxPatchBytes) return { kind: "too_large" };
+      if (bytes > remainingBytes) return { kind: "budget_exceeded" };
       // File-type changes have a deletion and addition section for the same path.
       const sections = parseDiff(result.stdout).filter(
         (candidate) => candidate.path === file.entry.path,

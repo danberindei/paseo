@@ -9,11 +9,12 @@ import { createFileObserver } from "../file-observer/index.js";
 import {
   configureGitProcessPolicy,
   getGitCommandMetrics,
-  startGitCommandMetrics,
-  stopGitCommandMetrics,
   runGitCommand,
   runWithGitCommandPriority,
+  startGitCommandMetrics,
+  stopGitCommandMetrics,
 } from "../../utils/run-git-command.js";
+import { PER_FILE_DIFF_MAX_BYTES } from "../../utils/checkout-git.js";
 import {
   DEFAULT_GIT_PROCESS_POLICY,
   resolveGitProcessPolicy,
@@ -118,6 +119,166 @@ test("a cold diff finishes ahead of a queued background Git burst", async () => 
     await fixture.close();
   }
 }, 30_000);
+
+test("caps the total diff before reading the remaining files and replays their omissions", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-total-cap-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const subscriptions = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root) {
+      return { repoRoot: root, unsubscribe: async () => {} };
+    },
+  });
+  const frames: DiffFrame[] = [];
+  const replayed: DiffFrame[] = [];
+  const paths = Array.from(
+    { length: 14 },
+    (_, index) => `file-${String(index).padStart(2, "0")}.txt`,
+  );
+  try {
+    git("init", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    await writeFile(join(cwd, "README"), "base\n");
+    git("add", "README");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(join(cwd, "a-oversized.txt"), "x".repeat(PER_FILE_DIFF_MAX_BYTES + 1));
+    for (const path of paths) await writeFile(join(cwd, path), "x".repeat(190 * 1024) + "\n");
+    await writeFile(join(cwd, "z-tail.txt"), "small file\n");
+    await writeFile(join(cwd, "zz-binary.bin"), Buffer.from([0, 1, 2]));
+    const compare = {
+      cwd,
+      base: { kind: "rev" as const, rev: "HEAD" },
+      head: { kind: "worktree" as const },
+      highlight: false,
+    };
+    const subscription = await subscriptions.subscribe(compare, async (frame) => {
+      frames.push(frame);
+    });
+    startGitCommandMetrics();
+    await subscription.start();
+    const metrics = stopGitCommandMetrics();
+    const completed = frames.filter((frame) => frame.revision === frames.at(-1)?.revision);
+    expect(
+      completed.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files.map((file) => file.path) : [],
+      ),
+    ).toEqual(paths.slice(0, 10));
+    const omitted = ["a-oversized.txt", ...paths.slice(10), "z-tail.txt"];
+    expect(frames.at(-1)).toMatchObject({
+      opcode: DiffOpcode.End,
+      diffTooLarge: true,
+      omitted,
+      error: null,
+    });
+    expect(
+      metrics.commands
+        .filter((command) => command.args.includes("--no-index"))
+        .map((command) => command.args.at(-1)),
+    ).toEqual(paths.slice(0, 11));
+    const computations = subscriptions.getMetrics().computations;
+    const joining = await subscriptions.subscribe(compare, async (frame) => {
+      replayed.push(frame);
+    });
+    await joining.start();
+    expect(replayed).toEqual(completed);
+    expect(subscriptions.getMetrics().computations).toBe(computations);
+    await joining.release();
+    await subscription.release();
+  } finally {
+    await subscriptions.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("caps cached bodies during refresh and restores them when the diff shrinks", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-cached-total-cap-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const subscriptions = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root) {
+      return { repoRoot: root, unsubscribe: async () => {} };
+    },
+  });
+  const frames: DiffFrame[] = [];
+  const replayed: DiffFrame[] = [];
+  const paths = Array.from(
+    { length: 10 },
+    (_, index) => `file-${String(index).padStart(2, "0")}.txt`,
+  );
+  const content = "x".repeat(190 * 1024) + "\n";
+  try {
+    git("init", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    await writeFile(join(cwd, "README"), "base\n");
+    git("add", "README");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    for (const path of paths) await writeFile(join(cwd, path), content);
+    await writeFile(join(cwd, "z-tail.txt"), "small file\n");
+    const compare = {
+      cwd,
+      base: { kind: "rev" as const, rev: "HEAD" },
+      head: { kind: "worktree" as const },
+      highlight: false,
+    };
+    const subscription = await subscriptions.subscribe(compare, async (frame) => {
+      frames.push(frame);
+    });
+    await subscription.start();
+    expect(frames.at(-1)).toMatchObject({
+      opcode: DiffOpcode.End,
+      diffTooLarge: false,
+      omitted: [],
+      error: null,
+    });
+    frames.length = 0;
+    await writeFile(join(cwd, "a-prefix.txt"), content);
+    startGitCommandMetrics();
+    await subscriptions.invalidateForCwd(cwd);
+    await expect.poll(() => frames.at(-1)?.opcode, { timeout: 5000 }).toBe(DiffOpcode.End);
+    const metrics = stopGitCommandMetrics();
+    expect(frames.at(-1)).toMatchObject({
+      opcode: DiffOpcode.End,
+      diffTooLarge: true,
+      omitted: [paths[9], "z-tail.txt"],
+      error: null,
+    });
+    expect(
+      metrics.commands
+        .filter((command) => command.args.includes("--no-index"))
+        .map((command) => command.args.at(-1)),
+    ).toEqual(["a-prefix.txt"]);
+    const joining = await subscriptions.subscribe(compare, async (frame) => {
+      replayed.push(frame);
+    });
+    await joining.start();
+    expect(
+      replayed.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files.map((file) => file.path) : [],
+      ),
+    ).toEqual(["a-prefix.txt", ...paths.slice(0, 9)]);
+    expect(replayed.at(-1)).toEqual(frames.at(-1));
+    await joining.release();
+    frames.length = 0;
+    await rm(join(cwd, "a-prefix.txt"));
+    await subscriptions.invalidateForCwd(cwd);
+    await expect.poll(() => frames.at(-1)?.opcode, { timeout: 5000 }).toBe(DiffOpcode.End);
+    expect(frames.at(-1)).toMatchObject({
+      opcode: DiffOpcode.End,
+      diffTooLarge: false,
+      omitted: [],
+      error: null,
+    });
+    expect(
+      frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files.map((file) => file.path) : [],
+      ),
+    ).toEqual([paths[9], "z-tail.txt"]);
+    await subscription.release();
+  } finally {
+    await subscriptions.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test("shares computation, highlights only the changed file, recovers refs and releases observations", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "diff-subscriptions-"));
