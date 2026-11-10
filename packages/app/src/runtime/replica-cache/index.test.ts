@@ -391,6 +391,24 @@ describe("ReplicaCache", () => {
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
   });
 
+  it("restores a workspace with an upstream remote and its checkpoint", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      gitRuntime: { upstreamRemoteUrl: "git@github.com:getpaseo/paseo.git" },
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.get(workspace.id)).toEqual(workspace);
+    expect(restored.checkpoint).toEqual(baseline.checkpoint);
+    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
+  });
+
   it.each(["createdAt", "lastUserMessageAt"])(
     "refetches workspaces cached without %s",
     async (field) => {

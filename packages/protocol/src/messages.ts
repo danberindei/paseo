@@ -4450,6 +4450,8 @@ const WorkspaceGitRuntimePayloadSchema = z
   .object({
     currentBranch: z.string().nullable().optional(),
     remoteUrl: z.string().nullable().optional(),
+    // Keep accepting this optional field for protocol compatibility with older peers.
+    upstreamRemoteUrl: z.string().nullable().optional(),
     isPaseoOwnedWorktree: z.boolean().optional(),
     isDirty: z.boolean().nullable().optional(),
     aheadBehind: z

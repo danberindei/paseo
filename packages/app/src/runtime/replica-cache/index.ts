@@ -295,6 +295,7 @@ const WorkspaceGitRuntimeSchema = z
   .strictObject({
     currentBranch: z.string().nullable().optional(),
     remoteUrl: z.string().nullable().optional(),
+    upstreamRemoteUrl: z.string().nullable().optional(),
     isPaseoOwnedWorktree: z.boolean().optional(),
     isDirty: z.boolean().nullable().optional(),
     aheadBehind: z.strictObject({ ahead: z.number(), behind: z.number() }).nullable().optional(),

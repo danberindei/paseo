@@ -56,6 +56,24 @@ describe("createForgeShorthand", () => {
     ).toBe("https://github.com/a/b/issues/1");
   });
 
+  it.each([null, { host: "github.com" }])(
+    "keeps references on origin when no parent is reported: %j",
+    (forgeWeb) => {
+      const workspace = {
+        forge: "github",
+        remoteUrl: "git@github.com:dan/paseo.git",
+        forgeWeb,
+        upstreamRemoteUrl: "git@github.com:getpaseo/paseo.git",
+      };
+      const shorthand = createForgeShorthand(workspace)!;
+
+      expect(shorthand.resolve("#568")).toBe("https://github.com/dan/paseo/issues/568");
+      expect(shorthand.resolve("getpaseo/site#3")).toBe(
+        "https://github.com/getpaseo/site/issues/3",
+      );
+    },
+  );
+
   it("is absent without a remote or a known forge", () => {
     expect(createForgeShorthand({ forge: "github", remoteUrl: null })).toBeNull();
     expect(
