@@ -3,6 +3,8 @@ import { usePanelStore } from "@/stores/panel-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
+import { getIsElectron } from "@/constants/platform";
+import { getDesktopHost } from "@/desktop/host";
 import {
   createLastWorkspaceSelectionStore,
   LAST_WORKSPACE_SELECTION_STORAGE_KEY,
@@ -17,6 +19,8 @@ import {
   type NavigateToWorkspaceInput,
 } from "./navigation";
 import { useSessionStore } from "@/stores/session-store";
+import { useActiveSpaceStore } from "@/stores/active-space-store";
+import { type Space, useSpaceStore } from "@/stores/space-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
@@ -47,7 +51,12 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
     deferOpenTab: (input) => useWorkspaceLayoutStore.getState().deferOpenTab(input),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
-    rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
+    rememberLastWorkspace: (selection) =>
+      lastWorkspaceSelectionStore.remember(
+        selection,
+        normalizeWorkspaceSelectionScope(useActiveSpaceStore.getState().activeSpaceId) ??
+          getCurrentWorkspaceSelectionScope(),
+      ),
     navigateToRoute: (route) => {
       navigateToHostWorkspaceRoute(route);
       stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit();
@@ -59,8 +68,29 @@ export function hydrateLastWorkspaceSelection(): Promise<void> {
   return lastWorkspaceSelectionStore.hydrate();
 }
 
-export function getLastWorkspaceSelection(): ActiveWorkspaceSelection | null {
-  return lastWorkspaceSelectionStore.getSelection();
+function normalizeWorkspaceSelectionScope(spaceId: string | null | undefined): string | null {
+  if (typeof spaceId !== "string") {
+    return null;
+  }
+  const trimmed = spaceId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function getCurrentWorkspaceSelectionScope(): string | null {
+  if (!getIsElectron()) {
+    return null;
+  }
+  return normalizeWorkspaceSelectionScope(getDesktopHost()?.initialSpaceId);
+}
+
+export function getLastWorkspaceSelection(
+  spaceId?: string | null,
+): ActiveWorkspaceSelection | null {
+  const scope =
+    spaceId !== undefined
+      ? normalizeWorkspaceSelectionScope(spaceId)
+      : getCurrentWorkspaceSelectionScope();
+  return lastWorkspaceSelectionStore.getSelection(scope);
 }
 
 export function getIsLastWorkspaceSelectionHydrated(): boolean {
@@ -72,9 +102,12 @@ export function navigateToWorkspace(input: NavigateToWorkspaceInput): string {
 }
 
 export function navigateToLastWorkspace(): boolean {
+  const scope =
+    normalizeWorkspaceSelectionScope(useActiveSpaceStore.getState().activeSpaceId) ??
+    getCurrentWorkspaceSelectionScope();
   return navigateToLastWorkspacePure({
     ...navigateDeps(),
-    getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
+    getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(scope),
   });
 }
 
@@ -90,16 +123,27 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
     if (!serverId || !workspaceId) {
       return;
     }
-    lastWorkspaceSelectionStore.remember({ serverId, workspaceId });
+    lastWorkspaceSelectionStore.remember(
+      { serverId, workspaceId },
+      normalizeWorkspaceSelectionScope(useActiveSpaceStore.getState().activeSpaceId) ??
+        getCurrentWorkspaceSelectionScope(),
+    );
   }, [serverId, workspaceId]);
   return selection;
 }
 
-export function useLastWorkspaceSelection(): ActiveWorkspaceSelection | null {
+export function useLastWorkspaceSelection(
+  spaceId?: string | null,
+): ActiveWorkspaceSelection | null {
+  const activeSpaceId = useActiveSpaceStore((state) => state.activeSpaceId);
+  const scope =
+    spaceId !== undefined
+      ? normalizeWorkspaceSelectionScope(spaceId)
+      : (normalizeWorkspaceSelectionScope(activeSpaceId) ?? getCurrentWorkspaceSelectionScope());
   return useSyncExternalStore(
     lastWorkspaceSelectionStore.subscribe,
-    getLastWorkspaceSelection,
-    getLastWorkspaceSelection,
+    () => getLastWorkspaceSelection(scope),
+    () => getLastWorkspaceSelection(scope),
   );
 }
 
@@ -111,4 +155,35 @@ export function useIsLastWorkspaceSelectionHydrated(): boolean {
   );
 }
 
-void hydrateLastWorkspaceSelection();
+// Drop per-space selections for spaces that no longer exist. Pruning against the
+// full known-id set on every spaces change (rather than only on an explicit
+// delete) keeps the stored selections in sync even if a delete event is missed.
+function pruneSelectionsForKnownSpaces(spaces: readonly Space[]): void {
+  lastWorkspaceSelectionStore.prune(spaces.map((space) => space.id));
+}
+
+// Prune once the stored selections are hydrated, so selections loaded from
+// storage for already-deleted spaces are dropped immediately. Wait for the space
+// store too: before it hydrates, `spaces` is empty and pruning would drop the
+// selection for every existing space.
+function pruneSelectionsForHydratedSpaces(): void {
+  if (useSpaceStore.persist.hasHydrated()) {
+    pruneSelectionsForKnownSpaces(useSpaceStore.getState().spaces);
+    return;
+  }
+  const unsubscribe = useSpaceStore.persist.onFinishHydration((state) => {
+    unsubscribe();
+    pruneSelectionsForKnownSpaces(state.spaces);
+  });
+}
+
+void hydrateLastWorkspaceSelection().then(pruneSelectionsForHydratedSpaces);
+
+let lastKnownSpaces = useSpaceStore.getState().spaces;
+useSpaceStore.subscribe((state) => {
+  if (state.spaces === lastKnownSpaces) {
+    return;
+  }
+  lastKnownSpaces = state.spaces;
+  pruneSelectionsForKnownSpaces(state.spaces);
+});

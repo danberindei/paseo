@@ -1,8 +1,4 @@
-import type {
-  NavigationAction,
-  NavigationContainerRef,
-  NavigationContainerRefWithCurrent,
-} from "expo-router/react-navigation";
+import type { NavigationAction, NavigationContainerRef } from "expo-router/react-navigation";
 import { router, type Href } from "expo-router";
 import {
   encodeWorkspaceIdForPathSegment,
@@ -21,13 +17,18 @@ const defaultNavigateToHostWorkspaceRouteDeps: NavigateToHostWorkspaceRouteDeps 
   dismissTo: (route) => router.dismissTo(route as Href),
 };
 
-let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
-  null;
+export interface WorkspaceRouteNavigationRef {
+  current: Pick<
+    NavigationContainerRef<ReactNavigation.RootParamList>,
+    "isReady" | "getRootState" | "dispatch"
+  > | null;
+  addListener: (event: "ready", listener: () => void) => () => void;
+}
+
+let rootNavigationRef: WorkspaceRouteNavigationRef | null = null;
 let pendingIntent: { route: string; deps: NavigateToHostWorkspaceRouteDeps } | null = null;
 
-export function registerWorkspaceRouteNavigationRef(
-  ref: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>,
-): () => void {
+export function registerWorkspaceRouteNavigationRef(ref: WorkspaceRouteNavigationRef): () => void {
   rootNavigationRef = ref;
   const unsubscribe = ref.addListener("ready", flushPendingIntent);
   flushPendingIntent();
@@ -105,7 +106,10 @@ function findStackWithMountedRouteName(
 
 function dispatchHostWorkspacePopTo(
   route: string,
-  navigation: NavigationContainerRef<ReactNavigation.RootParamList>,
+  navigation: Pick<
+    NavigationContainerRef<ReactNavigation.RootParamList>,
+    "getRootState" | "dispatch"
+  >,
 ): boolean {
   const selection = parseHostWorkspaceRouteFromPathname(route);
   if (!selection) {

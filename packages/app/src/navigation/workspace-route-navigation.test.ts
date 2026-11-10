@@ -1,27 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { NavigationContainerRefWithCurrent } from "expo-router/react-navigation";
+import type { NavigationState } from "expo-router/react-navigation";
 import {
   navigateToHostWorkspaceRoute,
   registerWorkspaceRouteNavigationRef,
+  type WorkspaceRouteNavigationRef,
 } from "./workspace-route-navigation";
 
-function createNavigationRef(rootState: unknown, options: { ready?: boolean } = {}) {
+function createNavigationRef(
+  rootState: Partial<NavigationState>,
+  options: { ready?: boolean } = {},
+) {
   const dispatch = vi.fn();
+  const state: NavigationState = {
+    key: "root-stack",
+    index: 0,
+    routeNames: [],
+    routes: [],
+    type: "stack",
+    stale: false,
+    ...rootState,
+  };
   let ready = options.ready ?? true;
   const readyListeners = new Set<() => void>();
   const navigation = {
     isReady: () => ready,
-    getRootState: () => rootState,
+    getRootState: () => state,
     dispatch,
     addListener: (event: string, listener: () => void) => {
       if (event === "ready") readyListeners.add(listener);
       return () => readyListeners.delete(listener);
     },
   };
-  const navigationRef = {
-    ...navigation,
+  const navigationRef: WorkspaceRouteNavigationRef = {
     current: navigation,
-  } as unknown as NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>;
+    addListener: navigation.addListener,
+  };
 
   return {
     navigationRef,
