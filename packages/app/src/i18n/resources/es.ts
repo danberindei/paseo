@@ -1685,6 +1685,12 @@ export const es: TranslationResources = {
     errorTitle: "algo salió mal",
     errorDescription:
       "El servidor local no pudo iniciarse. Si esto continúa sucediendo, informe el problema enGitHube incluya los registros a continuación.",
+    spaces: {
+      errorTitle: "No se pudieron cargar los espacios",
+      errorDescription:
+        "Paseo no pudo leer tus espacios guardados. Tus espacios no se han modificado.",
+      retry: "Intentar de nuevo",
+    },
     logs: {
       loading: "Cargando registros de demonio...",
       unavailable: "No hay registros de demonios disponibles.",
@@ -2363,6 +2369,37 @@ export const es: TranslationResources = {
       minutesAgo: "hace {{value}} min",
       updated: "Actualizado {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "Espacios",
+    switcher: {
+      switchSpace: "Cambiar de espacio",
+      all: "Todos",
+      openWindow: "Abierto",
+      newSpace: "Nuevo espacio...",
+      manage: "Gestionar espacios",
+      quit: "Salir",
+    },
+    manage: {
+      title: "Gestionar espacios",
+      empty:
+        "Aún no hay espacios. Crea uno para filtrar la barra lateral a un subconjunto de proyectos.",
+      sectionTitle: "Espacios",
+      newSpaceSectionTitle: "Nuevo espacio",
+      namePlaceholder: "Nombre del espacio...",
+      add: "Añadir",
+      deleteTitle: "Eliminar espacio",
+      deleteMessage: '¿Eliminar "{{name}}"? Tus proyectos no se verán afectados.',
+      deleteAction: "Eliminar",
+      deleteAccessibilityLabel: "Eliminar {{name}}",
+      windowInUse: "Cierra la ventana que muestra este espacio antes de eliminarlo.",
+    },
+    detail: {
+      sectionTitle: "Espacio",
+      name: "Nombre",
+      noProjects: "No se encontraron proyectos.",
+    },
+    hideFromSpace: "Ocultar de {{name}}",
   },
   settings: {
     title: "Ajustes",

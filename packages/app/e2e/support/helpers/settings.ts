@@ -618,9 +618,11 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "Daemon", exact: true })).toHaveCount(0);
 
+  // Projects is a global app-group entry; the per-host projects row no longer exists.
+  await expect(sidebar.getByTestId("settings-projects")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-projects")).toHaveCount(0);
   // Host group rows are now flat top-level sections (no drill-in).
   await expect(sidebar.getByTestId("settings-host-section-connections")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-projects")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-agents")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-workspaces")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-providers")).toBeVisible();

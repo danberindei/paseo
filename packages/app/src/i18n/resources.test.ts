@@ -210,6 +210,43 @@ describe("translation resources", () => {
     }
   });
 
+  it("localizes the space hydration error in every supported language", () => {
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      expect(resource.startup.spaces.errorTitle).not.toBe(en.startup.spaces.errorTitle);
+      expect(resource.startup.spaces.errorDescription).not.toBe(en.startup.spaces.errorDescription);
+      expect(resource.startup.spaces.retry).not.toBe(en.startup.spaces.retry);
+    }
+  });
+
+  it("localizes the space controls in every supported language", () => {
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      const spaces = resource.spaces;
+      expect(spaces.switcher.switchSpace).not.toBe(en.spaces.switcher.switchSpace);
+      expect(spaces.switcher.all).not.toBe(en.spaces.switcher.all);
+      expect(spaces.switcher.openWindow).not.toBe(en.spaces.switcher.openWindow);
+      expect(spaces.switcher.newSpace).not.toBe(en.spaces.switcher.newSpace);
+      expect(spaces.switcher.manage).not.toBe(en.spaces.switcher.manage);
+      expect(spaces.switcher.quit).not.toBe(en.spaces.switcher.quit);
+      expect(spaces.manage.title).not.toBe(en.spaces.manage.title);
+      expect(spaces.manage.empty).not.toBe(en.spaces.manage.empty);
+      expect(spaces.manage.sectionTitle).not.toBe(en.spaces.manage.sectionTitle);
+      expect(spaces.manage.newSpaceSectionTitle).not.toBe(en.spaces.manage.newSpaceSectionTitle);
+      expect(spaces.manage.namePlaceholder).not.toBe(en.spaces.manage.namePlaceholder);
+      expect(spaces.manage.add).not.toBe(en.spaces.manage.add);
+      expect(spaces.manage.deleteTitle).not.toBe(en.spaces.manage.deleteTitle);
+      expect(spaces.manage.deleteMessage).not.toBe(en.spaces.manage.deleteMessage);
+      expect(spaces.manage.deleteAction).not.toBe(en.spaces.manage.deleteAction);
+      expect(spaces.manage.deleteAccessibilityLabel).not.toBe(
+        en.spaces.manage.deleteAccessibilityLabel,
+      );
+      expect(spaces.manage.windowInUse).not.toBe(en.spaces.manage.windowInUse);
+      expect(spaces.detail.sectionTitle).not.toBe(en.spaces.detail.sectionTitle);
+      expect(spaces.detail.name).not.toBe(en.spaces.detail.name);
+      expect(spaces.detail.noProjects).not.toBe(en.spaces.detail.noProjects);
+      expect(spaces.hideFromSpace).not.toBe(en.spaces.hideFromSpace);
+    }
+  });
+
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);

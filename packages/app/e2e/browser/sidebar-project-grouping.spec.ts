@@ -1,3 +1,4 @@
+import { expect, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test as base } from "../support/fixtures";
@@ -23,6 +24,8 @@ import {
 } from "../support/helpers/isolated-host-daemon";
 import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { openSidebarHostFilter, toggleHostFilter } from "../support/helpers/hosts";
+import { closeSidebarDisplayPreferences } from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
@@ -81,7 +84,10 @@ async function removePersistedProjectKeys(host: IsolatedHostDaemon): Promise<voi
 }
 
 const test = base.extend<{
-  crossHostProject: ProjectDirectoryScenario;
+  crossHostProject: ProjectDirectoryScenario & {
+    primaryProjectId: string;
+    secondaryProjectId: string;
+  };
   reconciledCrossHostProject: ProjectDirectoryScenario;
   rootAndSubdirectoryProjects: ProjectDirectoryScenario;
   crossHostSubdirectoryProject: ProjectDirectoryScenario;
@@ -113,7 +119,22 @@ const test = base.extend<{
         workspaceName: "Secondary workspace",
         projectName: GROUPED_PROJECT_NAME,
       });
+      const primaryDescriptor = (await primaryClient.listProjects()).projects.find(
+        (project) => project.projectId === primary?.projectId,
+      );
+      const secondaryDescriptor = (await secondaryClient.listProjects()).projects.find(
+        (project) => project.projectId === secondary?.projectId,
+      );
+      if (
+        !primaryDescriptor?.projectKey ||
+        primaryDescriptor.projectKey !== secondaryDescriptor?.projectKey ||
+        primary.projectId === secondary.projectId
+      ) {
+        throw new Error("Expected distinct project IDs with the same project key");
+      }
       await provide({
+        primaryProjectId: primary.projectId,
+        secondaryProjectId: secondary.projectId,
         primaryLabel: PRIMARY_HOST_LABEL,
         hosts: [
           {
@@ -320,6 +341,13 @@ const test = base.extend<{
   },
 });
 
+async function readSpaceProjectIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("space-store") ?? "{}");
+    return stored.state.spaces[0].projectIds;
+  });
+}
+
 async function openScenario(
   page: Parameters<typeof openProjectDirectory>[0],
   scenario: ProjectDirectoryScenario,
@@ -344,6 +372,47 @@ test.describe("Sidebar project grouping", () => {
       workspaceNames: ["Primary workspace", "Secondary workspace"],
     });
   });
+
+  for (const filtered of [false, true]) {
+    test(`hides all grouped host projects from a space${filtered ? " with a host filter" : " when only the second host is a member"}`, async ({
+      page,
+      crossHostProject,
+    }) => {
+      test.setTimeout(45_000);
+      const { primaryProjectId, secondaryProjectId } = crossHostProject;
+      await page.addInitScript(
+        ({ ids }) => {
+          localStorage.setItem(
+            "space-store",
+            JSON.stringify({
+              state: { spaces: [{ id: "space-grouped", name: "Grouped", projectIds: ids }] },
+              version: 2,
+            }),
+          );
+        },
+        { ids: filtered ? [primaryProjectId, secondaryProjectId] : [secondaryProjectId] },
+      );
+      await openScenario(page, crossHostProject);
+      await expectProjectContainsWorkspaces(page, {
+        projectName: GROUPED_PROJECT_NAME,
+        workspaceNames: ["Primary workspace", "Secondary workspace"],
+      });
+      if (filtered) {
+        await openSidebarHostFilter(page);
+        await toggleHostFilter(page, getServerId());
+        await closeSidebarDisplayPreferences(page);
+      }
+      await page.getByLabel("Switch space").click();
+      await page.getByTestId("space-switcher-space-grouped").click();
+      const group = page.getByRole("group", { name: GROUPED_PROJECT_NAME, exact: true });
+      await expect(group).toBeVisible();
+      await page.locator('[data-testid^="sidebar-project-row-"]:visible').hover();
+      await page.locator('[data-testid^="sidebar-project-kebab-"]:visible').click();
+      await page.locator('[data-testid^="sidebar-project-menu-hide-from-space-"]:visible').click();
+      await expect(group).toHaveCount(0);
+      await expect.poll(() => readSpaceProjectIds(page)).toEqual([]);
+    });
+  }
 
   test("groups persisted projects missing project keys after boot", async ({
     page,

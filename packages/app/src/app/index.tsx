@@ -13,6 +13,7 @@ import {
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { getDesktopHost } from "@/desktop/host";
 
 const isDesktop = shouldUseDesktopDaemon();
 
@@ -22,7 +23,9 @@ export default function Index() {
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const hosts = useHosts();
   const hostRegistryStatus = useHostRegistryStatus();
-  const workspaceSelection = useLastWorkspaceSelection();
+  const workspaceSelection = useLastWorkspaceSelection(
+    getDesktopHost()?.initialSpaceId ?? undefined,
+  );
   const isWorkspaceSelectionLoaded = useIsLastWorkspaceSelectionHydrated();
   const workspaceSelectionServerId = workspaceSelection?.serverId ?? null;
   const workspaceSelectionWorkspaceId = workspaceSelection?.workspaceId ?? null;

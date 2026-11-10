@@ -1622,6 +1622,11 @@ export const zhCN: TranslationResources = {
   startup: {
     errorTitle: "出现问题",
     errorDescription: "本地服务器启动失败。如果持续发生，请在 GitHub 报告问题并附上下方日志。",
+    spaces: {
+      errorTitle: "无法加载空间",
+      errorDescription: "Paseo 无法读取已保存的空间。您的空间未被更改。",
+      retry: "重试",
+    },
     logs: {
       loading: "正在加载 daemon 日志...",
       unavailable: "没有可用的 daemon 日志。",
@@ -2291,6 +2296,36 @@ export const zhCN: TranslationResources = {
       minutesAgo: "{{value}}分钟前",
       updated: "更新于 {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "空间",
+    switcher: {
+      switchSpace: "切换空间",
+      all: "全部",
+      openWindow: "已打开",
+      newSpace: "新建空间...",
+      manage: "管理空间",
+      quit: "退出",
+    },
+    manage: {
+      title: "管理空间",
+      empty: "还没有空间。创建一个空间即可将侧边栏筛选为部分项目。",
+      sectionTitle: "空间",
+      newSpaceSectionTitle: "新建空间",
+      namePlaceholder: "空间名称...",
+      add: "添加",
+      deleteTitle: "删除空间",
+      deleteMessage: "删除“{{name}}”？您的项目不会受到影响。",
+      deleteAction: "删除",
+      deleteAccessibilityLabel: "删除{{name}}",
+      windowInUse: "请先关闭显示此空间的窗口，然后再删除。",
+    },
+    detail: {
+      sectionTitle: "空间",
+      name: "名称",
+      noProjects: "未找到项目。",
+    },
+    hideFromSpace: "从{{name}}中隐藏",
   },
   settings: {
     title: "设置",

@@ -12,6 +12,8 @@ import {
 } from "react-native";
 import {
   memo,
+  createContext,
+  useContext,
   useCallback,
   useMemo,
   useState,
@@ -39,7 +41,7 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { useSidebarWorkspaceRename } from "@/workspace-rename";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import { ExternalLink, EyeOff, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -57,6 +59,8 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIcons } from "@/projects/icons";
+import { useProjects } from "@/hooks/use-projects";
+import { getProjectSummaryForHostProject, type ProjectSummary } from "@/utils/projects";
 import {
   buildNewWorkspaceRoute,
   buildProjectSettingsRoute,
@@ -71,6 +75,7 @@ import {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { useActiveSpace, useSpaceStore } from "@/stores/space-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import {
   ContextMenu,
@@ -168,6 +173,7 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedEyeOff = withUnistyles(EyeOff);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -460,6 +466,7 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
+const eyeOffLeadingIcon = <ThemedEyeOff size={14} uniProps={foregroundMutedColorMapping} />;
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -514,6 +521,14 @@ function ProjectKebabMenu({
 
 type ProjectMenuSurface = "context" | "dropdown";
 
+const AllProjectsContext = createContext<{
+  projects: readonly ProjectSummary[];
+  isLoading: boolean;
+}>({
+  projects: [],
+  isLoading: true,
+});
+
 function ProjectMenuItem({
   surface,
   children,
@@ -559,6 +574,22 @@ function ProjectMenuItems({
         toast.error(t("sidebar.project.actions.openNewWindowFailed"));
       });
   }, [projectPath, t, toast]);
+  const activeSpace = useActiveSpace();
+  const { projects: allProjects, isLoading: projectsLoading } = useContext(AllProjectsContext);
+  const groupedProject = settingsTarget
+    ? getProjectSummaryForHostProject(
+        allProjects,
+        settingsTarget.serverId,
+        settingsTarget.projectId,
+      )
+    : undefined;
+  const removeProjectFromSpace = useSpaceStore((s) => s.removeProjectFromSpace);
+  const handleHideFromSpace = useCallback(() => {
+    if (!activeSpace || !groupedProject || projectsLoading) return;
+    for (const host of groupedProject.hosts) {
+      removeProjectFromSpace(activeSpace.id, host.projectId);
+    }
+  }, [activeSpace, groupedProject, projectsLoading, removeProjectFromSpace]);
 
   return (
     <>
@@ -587,6 +618,17 @@ function ProjectMenuItems({
         path={projectPath}
         testID={`sidebar-project-menu-open-folder-${projectViewKey}`}
       />
+      {activeSpace ? (
+        <ProjectMenuItem
+          surface={surface}
+          testID={`sidebar-project-menu-hide-from-space-${projectViewKey}`}
+          leading={eyeOffLeadingIcon}
+          onSelect={handleHideFromSpace}
+          disabled={projectsLoading || !groupedProject}
+        >
+          {t("spaces.hideFromSpace", { name: activeSpace.name })}
+        </ProjectMenuItem>
+      ) : null}
       <ProjectMenuItem
         surface={surface}
         testID={`sidebar-project-menu-remove-${projectViewKey}`}
@@ -1939,6 +1981,13 @@ export function SidebarWorkspaceList({
   dragGestureHostActive,
 }: SidebarWorkspaceListProps) {
   const pathname = usePathname();
+  const { projects: allProjects, isLoading: projectsLoading } = useProjects({
+    enabled: groupMode === "project",
+  });
+  const allProjectsContext = useMemo(
+    () => ({ projects: allProjects, isLoading: projectsLoading }),
+    [allProjects, projectsLoading],
+  );
   const hosts = useHosts();
   const rowItems = useSidebarRowItems();
   // Host badge visibility is a lattice, not three competing switches: this gate is the global
@@ -2038,7 +2087,9 @@ export function SidebarWorkspaceList({
       />
     );
 
-  return content;
+  return (
+    <AllProjectsContext.Provider value={allProjectsContext}>{content}</AllProjectsContext.Provider>
+  );
 }
 
 /**

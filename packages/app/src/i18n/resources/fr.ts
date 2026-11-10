@@ -1681,6 +1681,12 @@ export const fr: TranslationResources = {
     errorTitle: "Une erreur s’est produite",
     errorDescription:
       "Le serveur local n’a pas pu démarrer. Si le problème persiste, signalez-le sur GitHub en joignant les journaux ci-dessous.",
+    spaces: {
+      errorTitle: "Impossible de charger les espaces",
+      errorDescription:
+        "Paseo n'a pas pu lire vos espaces enregistrés. Vos espaces n'ont pas été modifiés.",
+      retry: "Réessayer",
+    },
     logs: {
       loading: "Chargement des journaux du daemon…",
       unavailable: "Aucun journal du daemon disponible.",
@@ -2364,6 +2370,37 @@ export const fr: TranslationResources = {
       minutesAgo: "il y a {{value}} min",
       updated: "Mis à jour {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "Espaces",
+    switcher: {
+      switchSpace: "Changer d’espace",
+      all: "Tous",
+      openWindow: "Ouvert",
+      newSpace: "Nouvel espace…",
+      manage: "Gérer les espaces",
+      quit: "Quitter",
+    },
+    manage: {
+      title: "Gérer les espaces",
+      empty:
+        "Aucun espace pour l’instant. Créez-en un pour limiter la barre latérale à un sous-ensemble de projets.",
+      sectionTitle: "Espaces",
+      newSpaceSectionTitle: "Nouvel espace",
+      namePlaceholder: "Nom de l’espace…",
+      add: "Ajouter",
+      deleteTitle: "Supprimer l’espace",
+      deleteMessage: "Supprimer « {{name}} » ? Vos projets ne seront pas modifiés.",
+      deleteAction: "Supprimer",
+      deleteAccessibilityLabel: "Supprimer {{name}}",
+      windowInUse: "Fermez la fenêtre qui affiche cet espace avant de le supprimer.",
+    },
+    detail: {
+      sectionTitle: "Espace",
+      name: "Nom",
+      noProjects: "Aucun projet trouvé.",
+    },
+    hideFromSpace: "Masquer de {{name}}",
   },
   settings: {
     title: "Paramètres",

@@ -1649,6 +1649,12 @@ export const ko: TranslationResources = {
     errorTitle: "문제가 발생했습니다",
     errorDescription:
       "로컬 서버를 시작하지 못했습니다. 이 문제가 계속되면 아래 로그를 포함하여 GitHub에 문제를 보고해 주세요.",
+    spaces: {
+      errorTitle: "스페이스를 불러오지 못했습니다",
+      errorDescription:
+        "Paseo에서 저장된 스페이스를 읽지 못했습니다. 스페이스는 변경되지 않았습니다.",
+      retry: "다시 시도",
+    },
     logs: {
       loading: "데몬 로그 불러오는 중...",
       unavailable: "사용 가능한 데몬 로그가 없습니다.",
@@ -2325,6 +2331,37 @@ export const ko: TranslationResources = {
       minutesAgo: "{{value}}분 전",
       updated: "{{relativeTime}}에 업데이트됨",
     },
+  },
+  spaces: {
+    title: "스페이스",
+    switcher: {
+      switchSpace: "스페이스 전환",
+      all: "전체",
+      openWindow: "열림",
+      newSpace: "새 스페이스...",
+      manage: "스페이스 관리",
+      quit: "종료",
+    },
+    manage: {
+      title: "스페이스 관리",
+      empty:
+        "아직 스페이스가 없습니다. 스페이스를 만들면 사이드바를 일부 프로젝트로 필터링할 수 있습니다.",
+      sectionTitle: "스페이스",
+      newSpaceSectionTitle: "새 스페이스",
+      namePlaceholder: "스페이스 이름...",
+      add: "추가",
+      deleteTitle: "스페이스 삭제",
+      deleteMessage: '"{{name}}" 스페이스를 삭제할까요? 프로젝트에는 영향을 주지 않습니다.',
+      deleteAction: "삭제",
+      deleteAccessibilityLabel: "{{name}} 삭제",
+      windowInUse: "이 스페이스를 표시하는 창을 닫은 후 삭제하세요.",
+    },
+    detail: {
+      sectionTitle: "스페이스",
+      name: "이름",
+      noProjects: "프로젝트를 찾을 수 없습니다.",
+    },
+    hideFromSpace: "{{name}}에서 숨기기",
   },
   settings: {
     title: "설정",

@@ -1656,6 +1656,12 @@ export const ja: TranslationResources = {
     errorTitle: "問題が発生しました",
     errorDescription:
       "ローカルサーバーの起動に失敗しました。この問題が続く場合は、以下のログを添えてGitHubでIssueを作成してください。",
+    spaces: {
+      errorTitle: "スペースを読み込めませんでした",
+      errorDescription:
+        "Paseo は保存済みのスペースを読み込めませんでした。スペースは変更されていません。",
+      retry: "もう一度試す",
+    },
     logs: {
       loading: "デーモンログを読み込み中...",
       unavailable: "利用可能なデーモンログがありません。",
@@ -2337,6 +2343,36 @@ export const ja: TranslationResources = {
       minutesAgo: "{{value}}分前",
       updated: "更新: {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "スペース",
+    switcher: {
+      switchSpace: "スペースを切り替え",
+      all: "すべて",
+      openWindow: "表示中",
+      newSpace: "新しいスペース...",
+      manage: "スペースを管理",
+      quit: "終了",
+    },
+    manage: {
+      title: "スペースを管理",
+      empty: "スペースはまだありません。作成すると、サイドバーを一部のプロジェクトに絞り込めます。",
+      sectionTitle: "スペース",
+      newSpaceSectionTitle: "新しいスペース",
+      namePlaceholder: "スペース名...",
+      add: "追加",
+      deleteTitle: "スペースを削除",
+      deleteMessage: "「{{name}}」を削除しますか？プロジェクトには影響しません。",
+      deleteAction: "削除",
+      deleteAccessibilityLabel: "{{name}}を削除",
+      windowInUse: "このスペースを表示しているウィンドウを閉じてから削除してください。",
+    },
+    detail: {
+      sectionTitle: "スペース",
+      name: "名前",
+      noProjects: "プロジェクトが見つかりません。",
+    },
+    hideFromSpace: "{{name}}から非表示",
   },
   settings: {
     title: "設定",

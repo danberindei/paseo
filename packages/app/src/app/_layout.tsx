@@ -107,6 +107,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
+import { useInitialSpaceId } from "@/hooks/use-initial-space-id";
 import { useKeyboardShortcuts } from "@/keyboard/use-shortcuts";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
@@ -434,6 +435,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     // Off a workspace route there is no explorer — only the agent list.
     toggleAgentList();
   }, [keyboardActionDispatcher, toggleAgentList]);
+
+  useInitialSpaceId();
+
   // TODO: stop matching pathname here as a branch. `chromeEnabled` should not
   // conflate workspace/project-specific chrome (sidebar, mobile gesture) with
   // global concerns like keyboard shortcuts. Split those out so settings (and
@@ -931,6 +935,10 @@ function RootStack() {
         <Stack.Screen name="schedules" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />
+      <Stack.Screen name="spaces/[id]" />
+      <Stack.Screen name="spaces/manage" />
+      <Stack.Screen name="settings/spaces/index" />
+      <Stack.Screen name="settings/spaces/[spaceId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
       <Stack.Screen name="settings/hosts/[serverId]/plugins/[pluginId]/index" />

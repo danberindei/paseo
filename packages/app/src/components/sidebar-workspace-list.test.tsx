@@ -46,14 +46,6 @@ import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { defaultHostAppearance } from "@/hosts/appearance";
 
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
-
 const SERVER_ID = "sidebar-render-count";
 
 interface RenderCounts {

@@ -1670,6 +1670,12 @@ export const ptBR: TranslationResources = {
     errorTitle: "Algo deu errado",
     errorDescription:
       "O servidor local falhou ao iniciar. Se isso continuar acontecendo, reporte o problema no GitHub e inclua os logs abaixo.",
+    spaces: {
+      errorTitle: "Não foi possível carregar os espaços",
+      errorDescription:
+        "O Paseo não conseguiu ler seus espaços salvos. Seus espaços não foram alterados.",
+      retry: "Tentar novamente",
+    },
     logs: {
       loading: "Carregando logs do daemon...",
       unavailable: "Nenhum log do daemon disponível.",
@@ -2348,6 +2354,37 @@ export const ptBR: TranslationResources = {
       minutesAgo: "há {{value}} min",
       updated: "Atualizado {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "Espaços",
+    switcher: {
+      switchSpace: "Trocar espaço",
+      all: "Todos",
+      openWindow: "Aberto",
+      newSpace: "Novo espaço...",
+      manage: "Gerenciar espaços",
+      quit: "Sair",
+    },
+    manage: {
+      title: "Gerenciar espaços",
+      empty:
+        "Ainda não há espaços. Crie um para filtrar a barra lateral para um subconjunto de projetos.",
+      sectionTitle: "Espaços",
+      newSpaceSectionTitle: "Novo espaço",
+      namePlaceholder: "Nome do espaço...",
+      add: "Adicionar",
+      deleteTitle: "Excluir espaço",
+      deleteMessage: 'Excluir "{{name}}"? Seus projetos não serão afetados.',
+      deleteAction: "Excluir",
+      deleteAccessibilityLabel: "Excluir {{name}}",
+      windowInUse: "Feche a janela que mostra este espaço antes de excluí-lo.",
+    },
+    detail: {
+      sectionTitle: "Espaço",
+      name: "Nome",
+      noProjects: "Nenhum projeto encontrado.",
+    },
+    hideFromSpace: "Ocultar de {{name}}",
   },
   settings: {
     title: "Configurações",

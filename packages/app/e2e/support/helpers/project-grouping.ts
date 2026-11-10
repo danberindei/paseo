@@ -115,7 +115,7 @@ export async function openGroupedProjectSettings(
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(/\/settings\/general$/);
   await selectSettingsHost(page, input.serverId);
-  await page.locator('[data-testid="settings-host-section-projects"]:visible').click();
+  await page.locator('[data-testid="settings-projects"]:visible').click();
   await expect(page).toHaveURL(/\/settings\/hosts\/[^/]+\/projects$/);
   await openProjectSettings(page, input.projectName);
 }
@@ -125,6 +125,10 @@ export async function openProjectsForSettingsHost(
   input: { serverId: string; projectName: string },
 ): Promise<void> {
   await selectSettingsHost(page, input.serverId);
+  // Picking a host does not navigate off the project settings view, so the
+  // Projects sidebar entry must be visited once more to load the new host's list.
+  // The detail view mounts a hidden compact sidebar too, so require visibility.
+  await page.locator('[data-testid="settings-projects"]:visible').click();
   await expect(page).toHaveURL(buildProjectsSettingsRoute(input.serverId));
   await openProjectSettings(page, input.projectName);
 }

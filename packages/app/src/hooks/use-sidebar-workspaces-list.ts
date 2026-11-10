@@ -21,6 +21,8 @@ import {
   type SidebarWorkspacePlacement,
 } from "./sidebar-workspaces-view-model";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { useActiveSpace, useSpaceStoreHydrationStatus } from "@/stores/space-store";
+import { useActiveSpaceStoreHydrationStatus } from "@/stores/active-space-store";
 
 export {
   appendMissingOrderKeys,
@@ -90,12 +92,21 @@ export interface SidebarWorkspacesListResult {
   workspacePlacements: SidebarWorkspacePlacement[];
   projects: SidebarProjectEntry[];
   projectNamesByViewKey: Map<string, string>;
+  hasSpaceHydrationError: boolean;
   isLoading: boolean;
   isInitialLoad: boolean;
   isRevalidating: boolean;
   refreshAll: () => void;
 }
 
+export function filterProjectsBySpaceProjectIds(
+  projects: SidebarProjectEntry[],
+  spaceProjectIds: string[] | null,
+): SidebarProjectEntry[] {
+  if (!spaceProjectIds) return projects;
+  const keySet = new Set(spaceProjectIds);
+  return projects.filter((p) => p.hosts.some((host) => keySet.has(host.projectId)));
+}
 export function useSidebarWorkspacesList(options?: {
   hostFilters?: readonly string[];
   enabled?: boolean;
@@ -164,6 +175,28 @@ export function useSidebarWorkspacesList(options?: {
       ? sidebarModel.projectNamesByViewKey
       : EMPTY_PROJECT_NAMES;
 
+  const activeSpace = useActiveSpace();
+  // Until the persisted spaces hydrate, the active-space filter is unknown, so
+  // showing the list now would flash every project before scoping to the space.
+  const spaceStoreStatus = useSpaceStoreHydrationStatus();
+  const activeSpaceStoreStatus = useActiveSpaceStoreHydrationStatus();
+  const spacesUnavailable = spaceStoreStatus !== "ready" || activeSpaceStoreStatus !== "ready";
+  const hasSpaceHydrationError = spaceStoreStatus === "error" || activeSpaceStoreStatus === "error";
+  const filteredProjects = useMemo(
+    () =>
+      spacesUnavailable
+        ? EMPTY_PROJECTS
+        : filterProjectsBySpaceProjectIds(projects, activeSpace?.projectIds ?? null),
+    [activeSpace, projects, spacesUnavailable],
+  );
+  // Status grouping reads the placements, not the projects, so they have to carry the
+  // same space filter or grouping by state shows workspaces outside the active space.
+  const filteredWorkspacePlacements = useMemo(() => {
+    if (filteredProjects === projects) return workspacePlacements;
+    const placements = filteredProjects.flatMap((project) => project.workspaces);
+    return placements.length > 0 ? placements : EMPTY_WORKSPACES;
+  }, [filteredProjects, projects, workspacePlacements]);
+
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
@@ -192,18 +225,21 @@ export function useSidebarWorkspacesList(options?: {
     }
   }, [isActive, runtime, serverIds]);
 
-  const loadingState = deriveSidebarLoadingState({
-    isActive,
-    serverIds,
-    hydratedServerIds: directoryServerIds,
-    hasProjects: projects.length > 0,
-  });
+  const loadingState = spacesUnavailable
+    ? { isLoading: true, isInitialLoad: true, isRevalidating: false }
+    : deriveSidebarLoadingState({
+        isActive,
+        serverIds,
+        hydratedServerIds: directoryServerIds,
+        hasProjects: filteredProjects.length > 0,
+      });
 
   return {
     workspaceSortSupported,
-    workspacePlacements,
-    projects,
-    projectNamesByViewKey,
+    workspacePlacements: filteredWorkspacePlacements,
+    projects: filteredProjects,
+    projectNamesByViewKey: spacesUnavailable ? EMPTY_PROJECT_NAMES : projectNamesByViewKey,
+    hasSpaceHydrationError,
     ...loadingState,
     refreshAll,
   };

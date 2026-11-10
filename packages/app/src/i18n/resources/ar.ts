@@ -1639,6 +1639,11 @@ export const ar: TranslationResources = {
     errorTitle: "حدث خطأ ما",
     errorDescription:
       "فشل الخادم المحلي في البدء. إذا استمر حدوث ذلك، فيرجى الإبلاغ عن المشكلة على GitHub وتضمين السجلات أدناه.",
+    spaces: {
+      errorTitle: "تعذر تحميل المساحات",
+      errorDescription: "تعذر على Paseo قراءة مساحاتك المحفوظة. لم يتم تغيير مساحاتك.",
+      retry: "حاول مرة أخرى",
+    },
     logs: {
       loading: "جارٍ تحميل سجلات البرنامج الخفي...",
       unavailable: "لا توجد سجلات خفية متاحة.",
@@ -2350,6 +2355,36 @@ export const ar: TranslationResources = {
       minutesAgo_other: "قبل {{value}} دقيقة",
       updated: "تم التحديث {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "المساحات",
+    switcher: {
+      switchSpace: "تبديل المساحة",
+      all: "الكل",
+      openWindow: "مفتوحة",
+      newSpace: "مساحة جديدة...",
+      manage: "إدارة المساحات",
+      quit: "إنهاء",
+    },
+    manage: {
+      title: "إدارة المساحات",
+      empty: "لا توجد مساحات بعد. أنشئ مساحة لتصفية الشريط الجانبي إلى مجموعة من المشاريع.",
+      sectionTitle: "المساحات",
+      newSpaceSectionTitle: "مساحة جديدة",
+      namePlaceholder: "اسم المساحة...",
+      add: "إضافة",
+      deleteTitle: "حذف المساحة",
+      deleteMessage: 'حذف "{{name}}"؟ لن تتأثر مشاريعك.',
+      deleteAction: "حذف",
+      deleteAccessibilityLabel: "حذف {{name}}",
+      windowInUse: "أغلق النافذة التي تعرض هذه المساحة قبل حذفها.",
+    },
+    detail: {
+      sectionTitle: "المساحة",
+      name: "الاسم",
+      noProjects: "لم يتم العثور على مشاريع.",
+    },
+    hideFromSpace: "إخفاء من {{name}}",
   },
   settings: {
     title: "إعدادات",

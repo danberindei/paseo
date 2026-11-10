@@ -107,6 +107,7 @@ import { UsageSidebarItem, UsageSidebarRoot, useUsageSummary, useOpenSidebarUsag
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { SpaceStoreHydrationGate } from "./space-store-hydration-gate";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -124,6 +125,7 @@ interface SidebarSharedProps {
   hasProjectsBeforeFilter: boolean;
   hasActiveProjectFilter: boolean;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  hasSpaceHydrationError: boolean;
   isInitialLoad: boolean;
   isRevalidating: boolean;
   isManualRefresh: boolean;
@@ -181,6 +183,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     hasProjectsBeforeFilter,
     resolvedProjectFilters,
     workspaceEntriesByKey,
+    hasSpaceHydrationError,
     isInitialLoad,
     isRevalidating,
     refreshAll,
@@ -253,6 +256,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     hasProjectsBeforeFilter,
     hasActiveProjectFilter: resolvedProjectFilters.length > 0,
     workspaceEntriesByKey,
+    hasSpaceHydrationError,
     isInitialLoad,
     isRevalidating,
     isManualRefresh,
@@ -574,6 +578,7 @@ function MobileSidebar({
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
   workspaceEntriesByKey,
+  hasSpaceHydrationError,
   isInitialLoad,
   isRevalidating,
   isManualRefresh,
@@ -630,6 +635,36 @@ function MobileSidebar({
     />
   );
 
+  let workspaceListContent = (
+    <SidebarWorkspaceList
+      collapsedProjectKeys={collapsedProjectKeys}
+      onToggleProjectCollapsed={toggleProjectCollapsed}
+      shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+      groupMode={groupMode}
+      workspaceGroups={workspaceGroups}
+      projectIconTargets={projectIconTargets}
+      pinnedGroups={pinnedGroups}
+      projects={projects}
+      hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+      hasActiveProjectFilter={hasActiveProjectFilter}
+      workspaceEntriesByKey={workspaceEntriesByKey}
+      isRefreshing={isManualRefresh && isRevalidating}
+      onRefresh={handleRefresh}
+      onWorkspacePress={handleWorkspacePress}
+      onAddProject={handleOpenProject}
+      onImportSession={handleImportSession}
+      parentGestureRef={closeGestureRef}
+      dragGestureHostActive={active}
+      listHeaderComponent={workspacesSectionHeaderElement}
+    />
+  );
+  if (isInitialLoad && !hasActiveHostFilter) {
+    workspaceListContent = <SidebarAgentListSkeleton />;
+  }
+  if (hasSpaceHydrationError) {
+    workspaceListContent = <SpaceStoreHydrationGate>{null}</SpaceStoreHydrationGate>;
+  }
+
   return (
     <MobilePanelOverlay
       panel="agent-list"
@@ -641,33 +676,7 @@ function MobileSidebar({
         <SidebarNavScroll closeGestureRef={closeGestureRef}>{navRows}</SidebarNavScroll>
 
         <SidebarViewSlot dismiss={handleWorkspacePress}>
-          <SidebarToastRegion active={active}>
-            {isInitialLoad && !hasActiveHostFilter ? (
-              <SidebarAgentListSkeleton />
-            ) : (
-              <SidebarWorkspaceList
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                groupMode={groupMode}
-                workspaceGroups={workspaceGroups}
-                projectIconTargets={projectIconTargets}
-                pinnedGroups={pinnedGroups}
-                projects={projects}
-                hasProjectsBeforeFilter={hasProjectsBeforeFilter}
-                hasActiveProjectFilter={hasActiveProjectFilter}
-                workspaceEntriesByKey={workspaceEntriesByKey}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={handleWorkspacePress}
-                onAddProject={handleOpenProject}
-                onImportSession={handleImportSession}
-                parentGestureRef={closeGestureRef}
-                dragGestureHostActive={active}
-                listHeaderComponent={workspacesSectionHeaderElement}
-              />
-            )}
-          </SidebarToastRegion>
+          <SidebarToastRegion active={active}>{workspaceListContent}</SidebarToastRegion>
         </SidebarViewSlot>
 
         <SidebarFooter
@@ -733,6 +742,7 @@ function DesktopSidebar({
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
   workspaceEntriesByKey,
+  hasSpaceHydrationError,
   isInitialLoad,
   isRevalidating,
   isManualRefresh,
@@ -852,6 +862,35 @@ function DesktopSidebar({
   // nav scroller existed: no strip above it and no divider below it.
   const hasNavRows = useVisibleSidebarNavItems().length > 0;
   const showsDragStrip = hasNavRows && !showsChromeRow && !inTopBand;
+  let workspaceListContent = (
+    <SidebarWorkspaceList
+      collapsedProjectKeys={collapsedProjectKeys}
+      onToggleProjectCollapsed={toggleProjectCollapsed}
+      shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+      groupMode={groupMode}
+      workspaceGroups={workspaceGroups}
+      projectIconTargets={projectIconTargets}
+      pinnedGroups={pinnedGroups}
+      projects={projects}
+      hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+      hasActiveProjectFilter={hasActiveProjectFilter}
+      workspaceEntriesByKey={workspaceEntriesByKey}
+      isRefreshing={isManualRefresh && isRevalidating}
+      onRefresh={handleRefresh}
+      onAddProject={handleOpenProject}
+      onImportSession={handleImportSession}
+      onWorkspacePress={closeSidebar}
+      parentGestureRef={closeGestureRef}
+      dragGestureHostActive={active}
+      listHeaderComponent={workspacesSectionHeaderElement}
+    />
+  );
+  if (isInitialLoad && !hasActiveHostFilter) {
+    workspaceListContent = <SidebarAgentListSkeleton />;
+  }
+  if (hasSpaceHydrationError) {
+    workspaceListContent = <SpaceStoreHydrationGate>{null}</SpaceStoreHydrationGate>;
+  }
   return (
     <MobilePanelOverlay
       panel="agent-list"
@@ -896,33 +935,7 @@ function DesktopSidebar({
           ) : null}
 
           <SidebarViewSlot dismiss={closeSidebar}>
-            <SidebarToastRegion active={active}>
-              {isInitialLoad && !hasActiveHostFilter ? (
-                <SidebarAgentListSkeleton />
-              ) : (
-                <SidebarWorkspaceList
-                  collapsedProjectKeys={collapsedProjectKeys}
-                  onToggleProjectCollapsed={toggleProjectCollapsed}
-                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                  groupMode={groupMode}
-                  workspaceGroups={workspaceGroups}
-                  projectIconTargets={projectIconTargets}
-                  pinnedGroups={pinnedGroups}
-                  projects={projects}
-                  hasProjectsBeforeFilter={hasProjectsBeforeFilter}
-                  hasActiveProjectFilter={hasActiveProjectFilter}
-                  workspaceEntriesByKey={workspaceEntriesByKey}
-                  isRefreshing={isManualRefresh && isRevalidating}
-                  onRefresh={handleRefresh}
-                  onAddProject={handleOpenProject}
-                  onImportSession={handleImportSession}
-                  onWorkspacePress={closeSidebar}
-                  parentGestureRef={closeGestureRef}
-                  dragGestureHostActive={active}
-                  listHeaderComponent={workspacesSectionHeaderElement}
-                />
-              )}
-            </SidebarToastRegion>
+            <SidebarToastRegion active={active}>{workspaceListContent}</SidebarToastRegion>
           </SidebarViewSlot>
 
           <SidebarCalloutSlot />

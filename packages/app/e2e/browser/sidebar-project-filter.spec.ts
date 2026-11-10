@@ -15,6 +15,51 @@ import {
 test.describe("Sidebar project filter", () => {
   test.describe.configure({ timeout: 180_000 });
 
+  test("shows only projects in the selected space in both grouping modes", async ({ page }) => {
+    const alpha = await seedWorkspace({ repoPrefix: "space-filter-alpha-", title: "Alpha work" });
+    const beta = await seedWorkspace({ repoPrefix: "space-filter-beta-", title: "Beta work" });
+    const serverId = getServerId();
+    const alphaRow = page.getByTestId(`sidebar-workspace-row-${serverId}:${alpha.workspaceId}`);
+    const betaRow = page.getByTestId(`sidebar-workspace-row-${serverId}:${beta.workspaceId}`);
+
+    try {
+      await page.addInitScript(
+        ({ alphaProjectId, betaProjectId }) => {
+          localStorage.setItem(
+            "space-store",
+            JSON.stringify({
+              state: {
+                spaces: [
+                  { id: "space-alpha", name: "Alpha", projectIds: [alphaProjectId] },
+                  { id: "space-beta", name: "Beta", projectIds: [betaProjectId] },
+                ],
+              },
+              version: 2,
+            }),
+          );
+        },
+        { alphaProjectId: alpha.projectId, betaProjectId: beta.projectId },
+      );
+      await gotoAppShell(page);
+      await expect(alphaRow).toBeVisible({ timeout: 30_000 });
+      await expect(betaRow).toBeVisible({ timeout: 30_000 });
+
+      await page.getByLabel("Switch space").click();
+      await page.getByTestId("space-switcher-space-alpha").click();
+
+      await expect(alphaRow).toBeVisible();
+      await expect(betaRow).toHaveCount(0);
+
+      await selectSidebarStatusGrouping(page);
+      await closeSidebarDisplayPreferences(page);
+      await expect(alphaRow).toBeVisible({ timeout: 15_000 });
+      await expect(betaRow).toHaveCount(0);
+    } finally {
+      await beta.cleanup();
+      await alpha.cleanup();
+    }
+  });
+
   test("pins the sidebar to one project across both grouping modes", async ({ page }) => {
     // Two temp repos means two projects, which is also what makes the `Project ›` row appear.
     const alpha = await seedWorkspace({ repoPrefix: "project-filter-alpha-", title: "Alpha work" });

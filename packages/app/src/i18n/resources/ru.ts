@@ -1668,6 +1668,12 @@ export const ru: TranslationResources = {
     errorTitle: "Что-то пошло не так",
     errorDescription:
       "Не удалось запустить локальный сервер. Если ошибка повторится, сообщите о ней на GitHub и приложите приведённые ниже журналы.",
+    spaces: {
+      errorTitle: "Не удалось загрузить пространства",
+      errorDescription:
+        "Paseo не удалось прочитать сохранённые пространства. Ваши пространства не были изменены.",
+      retry: "Повторить",
+    },
     logs: {
       loading: "Загрузка журналов демона...",
       unavailable: "Журналы демона отсутствуют.",
@@ -2350,6 +2356,37 @@ export const ru: TranslationResources = {
       minutesAgo: "{{value}} мин назад",
       updated: "Обновлено {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "Пространства",
+    switcher: {
+      switchSpace: "Сменить пространство",
+      all: "Все",
+      openWindow: "Открыто",
+      newSpace: "Новое пространство...",
+      manage: "Управление пространствами",
+      quit: "Выйти",
+    },
+    manage: {
+      title: "Управление пространствами",
+      empty:
+        "Пространств пока нет. Создайте пространство, чтобы ограничить боковую панель подмножеством проектов.",
+      sectionTitle: "Пространства",
+      newSpaceSectionTitle: "Новое пространство",
+      namePlaceholder: "Название пространства...",
+      add: "Добавить",
+      deleteTitle: "Удалить пространство",
+      deleteMessage: "Удалить «{{name}}»? Ваши проекты не пострадают.",
+      deleteAction: "Удалить",
+      deleteAccessibilityLabel: "Удалить {{name}}",
+      windowInUse: "Закройте окно с этим пространством, прежде чем удалять его.",
+    },
+    detail: {
+      sectionTitle: "Пространство",
+      name: "Название",
+      noProjects: "Проекты не найдены.",
+    },
+    hideFromSpace: "Скрыть из {{name}}",
   },
   settings: {
     title: "Настройки",

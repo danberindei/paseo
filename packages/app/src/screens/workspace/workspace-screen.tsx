@@ -69,6 +69,7 @@ import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton, useWorkspaceScriptActions } from "@/screens/workspace/scripts";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
+import { SpaceSwitcher } from "@/components/space-switcher";
 import { useToast } from "@/contexts/toast-context";
 import { useOpenOutsideWorkspaceFolder } from "@/workspace/open-in-file-manager/outside-folder";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -3305,6 +3306,7 @@ function WorkspaceScreenContent({
           left={
             <>
               <SidebarMenuToggle />
+              <SpaceSwitcher />
               <WorkspaceHeaderTitleBar
                 isLoading={isWorkspaceHeaderLoading}
                 title={workspaceHeaderTitle}

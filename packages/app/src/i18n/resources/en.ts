@@ -1666,6 +1666,12 @@ export const en = {
     errorTitle: "Something went wrong",
     errorDescription:
       "The local server failed to start. If this keeps happening, please report the issue on GitHub and include the logs below.",
+    spaces: {
+      errorTitle: "Could not load spaces",
+      errorDescription:
+        "Paseo could not read your saved spaces. Your spaces have not been changed.",
+      retry: "Try again",
+    },
     logs: {
       loading: "Loading daemon logs...",
       unavailable: "No daemon logs available.",
@@ -2342,6 +2348,36 @@ export const en = {
       minutesAgo: "{{value}}m ago",
       updated: "Updated {{relativeTime}}",
     },
+  },
+  spaces: {
+    title: "Spaces",
+    switcher: {
+      switchSpace: "Switch space",
+      all: "All",
+      openWindow: "Open",
+      newSpace: "New space...",
+      manage: "Manage spaces",
+      quit: "Quit",
+    },
+    manage: {
+      title: "Manage spaces",
+      empty: "No spaces yet. Create one to filter the sidebar to a subset of projects.",
+      sectionTitle: "Spaces",
+      newSpaceSectionTitle: "New space",
+      namePlaceholder: "Space name...",
+      add: "Add",
+      deleteTitle: "Delete space",
+      deleteMessage: 'Delete "{{name}}"? Your projects are not affected.',
+      deleteAction: "Delete",
+      deleteAccessibilityLabel: "Delete {{name}}",
+      windowInUse: "Close the window showing this space before deleting it.",
+    },
+    detail: {
+      sectionTitle: "Space",
+      name: "Name",
+      noProjects: "No projects found.",
+    },
+    hideFromSpace: "Hide from {{name}}",
   },
   settings: {
     title: "Settings",
