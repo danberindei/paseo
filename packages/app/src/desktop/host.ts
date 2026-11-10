@@ -121,6 +121,14 @@ export interface DesktopWindowModuleBridge {
   getCurrentWindow?: () => DesktopWindowBridge;
 }
 
+export interface DesktopWindowsBridge {
+  openWithSpace?: (spaceId: string | null) => Promise<void>;
+  getOpenSpaceIds?: () => Promise<Array<string | null>>;
+  isSpaceInUse?: (spaceId: string) => Promise<boolean>;
+  onWindowsChanged?: (handler: (payload: unknown) => void) => Promise<() => void>;
+  quit?: () => Promise<void>;
+}
+
 export interface DesktopEventsBridge {
   on?: (event: string, handler: (payload: unknown) => void) => Promise<() => void> | (() => void);
 }
@@ -177,11 +185,13 @@ export interface DesktopHostBridge {
   windowChromeMode?: string;
   browserHostLabel?: string;
   browserHostInstanceId?: string;
+  initialSpaceId?: string | null;
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
   events?: DesktopEventsBridge;
   window?: DesktopWindowModuleBridge;
+  windows?: DesktopWindowsBridge;
   dialog?: DesktopDialogBridge;
   notification?: DesktopNotificationBridge;
   opener?: DesktopOpenerBridge;

@@ -73,6 +73,7 @@ import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/inde
 import { reloadWhenRendererExits } from "./window/renderer-recovery.js";
 import { showWindowWhenReady } from "./window/show-when-ready.js";
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
+import { readPersistedWindows, writePersistedWindows } from "./features/window-persistence.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
@@ -159,6 +160,7 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 });
 let bootstrapIsComplete = false;
 
+const WINDOWS_CHANGED_EVENT = "paseo:event:windows-changed";
 app.setName(APP_NAME);
 log.info("[desktop] app startup", {
   version: app.getVersion(),
@@ -214,6 +216,9 @@ function readActiveBrowserInput(
 
 const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
 browserKeyboard.registerIpc();
+
+const windowRegistry = new Map<BrowserWindow, string | null>();
+let lastFocusedWindow: BrowserWindow | null = null;
 
 function showBrowserWebviewContextMenu(
   win: BrowserWindow,
@@ -704,16 +709,83 @@ const browserHostComputerName =
 const browserHostSessionCode = randomBytes(3).toString("hex").toUpperCase();
 let browserHostWindowNumber = 0;
 
+function getWindowsSnapshot(): Array<{ spaceId: string | null }> {
+  return Array.from(windowRegistry.entries())
+    .filter(([win]) => !win.isDestroyed())
+    .map(([, spaceId]) => ({ spaceId }));
+}
+
+// True after before-quit fires with live windows. Skips redundant saves in the
+// closed handlers, which fire after windows are destroyed.
+let savedBeforeQuit = false;
+
+function persistWindowRegistry(): void {
+  const snapshot = getWindowsSnapshot();
+  // Never overwrite with an empty list: on Linux, before-quit fires after all
+  // windows are already destroyed (close-all-windows path), so an empty snapshot
+  // would wipe the correctly-saved space assignments.
+  if (snapshot.length > 0) {
+    writePersistedWindows(snapshot);
+  }
+}
+
+function broadcastWindowsChanged(): void {
+  for (const win of windowRegistry.keys()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(WINDOWS_CHANGED_EVENT, {});
+    }
+  }
+}
+
+function getFallbackWindow(exclude?: BrowserWindow): BrowserWindow | null {
+  for (const win of windowRegistry.keys()) {
+    if (win !== exclude && !win.isDestroyed()) {
+      return win;
+    }
+  }
+  return null;
+}
+
+function registerWindowBinding(win: BrowserWindow, spaceId: string | null): void {
+  windowRegistry.set(win, spaceId);
+  lastFocusedWindow = win;
+
+  win.on("focus", () => {
+    lastFocusedWindow = win;
+  });
+
+  win.once("closed", () => {
+    windowRegistry.delete(win);
+    if (lastFocusedWindow === win) {
+      lastFocusedWindow = getFallbackWindow(win);
+    }
+    // Persist remaining windows so an intentional single-window close is
+    // reflected on next launch. Skip if before-quit already snapshotted the
+    // full set (macOS Cmd+Q path), since its snapshot is the authoritative one
+    // and we'd only overwrite it with a shrinking list.
+    if (!savedBeforeQuit) {
+      persistWindowRegistry();
+    }
+    broadcastWindowsChanged();
+  });
+
+  persistWindowRegistry();
+  broadcastWindowsChanged();
+}
+
 async function createWindow(
   options: {
     initialRoute?: string | null;
     restoreWindowState?: boolean;
     onCreated?: (webContentsId: number) => void;
     onClosed?: (webContentsId: number) => void;
+    spaceId?: string | null;
   } = {},
 ): Promise<BrowserWindow> {
   const iconPath = await getEffectiveAppIconPath();
   const systemTheme = resolveSystemWindowTheme();
+  const spaceId = options.spaceId ?? null;
+  const initialSpaceArg = `--paseo-space-id=${spaceId ?? ""}`;
 
   // Only the first window of a session restores and persists saved geometry.
   // Additional windows (⌘N, second-instance, "Open in new window") open at the
@@ -745,6 +817,7 @@ async function createWindow(
         windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE),
         `--paseo-browser-host-label=${browserHostLabel}`,
         `--paseo-browser-host-instance-id=${randomUUID()}`,
+        initialSpaceArg,
       ],
       contextIsolation: true,
       nodeIntegration: false,
@@ -783,6 +856,7 @@ async function createWindow(
   }
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+  registerWindowBinding(mainWindow, spaceId);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     if (!isPaseoBrowserWebviewAttach(params)) {
       event.preventDefault();
@@ -856,6 +930,7 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
     const win = await createWindow({
       initialRoute: input.initialRoute,
       restoreWindowState: input.restoreWindowState,
+      spaceId: input.spaceId,
       onCreated: input.onCreated,
       onClosed: input.onClosed,
     });
@@ -1009,12 +1084,19 @@ async function bootstrap(): Promise<void> {
   });
   ensureNotificationCenterRegistration();
   registerDaemonManager();
-  registerWindowManager({ mode: DESKTOP_WINDOW_CHROME_MODE });
   registerDialogHandlers();
-  registerNotificationHandlers();
+  registerNotificationHandlers({
+    getWindowRegistry: () => windowRegistry,
+    getLastFocusedWindow: () => lastFocusedWindow,
+  });
   const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
+  registerWindowManager({
+    mode: DESKTOP_WINDOW_CHROME_MODE,
+    getWindowRegistry: () => windowRegistry,
+    createMainWindow: (spaceId) => desktopWindowOwner.openAdditional({ spaceId }),
+  });
   registerBrowserAutomationIpc();
 
   // In-app "Open in new window": opens a window that lands on the given project
@@ -1029,14 +1111,36 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  // The first window of the session restores and persists saved geometry.
+  // The first window of the session restores and persists saved geometry, and
+  // opens any pending agent deep link.
   const initialAgentNavigation = pendingAgentNavigation;
   pendingAgentNavigation = null;
-  await desktopWindowOwner.openPrimary({
-    initialRoute: initialAgentNavigation ? buildAgentDeepLinkRoute(initialAgentNavigation) : null,
-    pendingProjectPath: pendingOpenProjectPath,
-  });
-  pendingOpenProjectPath = null;
+  const initialRoute = initialAgentNavigation
+    ? buildAgentDeepLinkRoute(initialAgentNavigation)
+    : null;
+
+  const persistedWindows = readPersistedWindows();
+  if (persistedWindows.length > 0) {
+    for (const [index, windowState] of persistedWindows.entries()) {
+      if (index === 0) {
+        await desktopWindowOwner.openPrimary({
+          initialRoute,
+          pendingProjectPath: pendingOpenProjectPath,
+          spaceId: windowState.spaceId,
+        });
+        pendingOpenProjectPath = null;
+      } else {
+        await desktopWindowOwner.openAdditional({ spaceId: windowState.spaceId });
+      }
+    }
+  } else {
+    await desktopWindowOwner.openPrimary({
+      initialRoute,
+      pendingProjectPath: pendingOpenProjectPath,
+      spaceId: null,
+    });
+    pendingOpenProjectPath = null;
+  }
 
   // Protocol + IPC handlers and the first window now exist: release any
   // second-instance launches that arrived during cold start.
@@ -1098,6 +1202,23 @@ const quitLifecycle = createQuitLifecycle({
   onUpdateError: (error) => {
     log.error("[auto-updater] failed to validate downloaded update on quit", error);
   },
+});
+
+app.on("before-quit", () => {
+  // When the user quits via menu or keyboard shortcut, before-quit fires while
+  // windows are still alive. We snapshot the full set and set savedBeforeQuit
+  // so the subsequent closed handlers skip their own saves and don't overwrite
+  // the snapshot with a shrinking list.
+  // On Linux, closing the last window takes a different path: window-all-closed
+  // -> app.quit() -> before-quit, by which point all windows are already
+  // destroyed. getWindowsSnapshot() returns [] so we skip the write, and the
+  // last non-empty state written by registerWindowBinding or a closed handler
+  // is preserved.
+  const snapshot = getWindowsSnapshot();
+  if (snapshot.length > 0) {
+    writePersistedWindows(snapshot);
+    savedBeforeQuit = true;
+  }
 });
 
 // electron-updater forwards this event through Electron's built-in autoUpdater.

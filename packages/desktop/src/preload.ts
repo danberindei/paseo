@@ -33,11 +33,16 @@ interface AttachedBrowserRegistration {
   webContentsId: number;
 }
 
+function readInitialSpaceId(): string | null {
+  return readArgValue("--paseo-space-id=")?.trim() || null;
+}
+
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
   windowChromeMode: readWindowChromeMode(),
   browserHostLabel: readArgValue("--paseo-browser-host-label="),
   browserHostInstanceId: readArgValue("--paseo-browser-host-instance-id="),
+  initialSpaceId: readInitialSpaceId(),
   invoke: (command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke("paseo:invoke", command, args),
   getPendingOpenProject: () =>
@@ -57,6 +62,23 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.on(`paseo:event:${event}`, listener);
       return Promise.resolve(() => {
         ipcRenderer.removeListener(`paseo:event:${event}`, listener);
+      });
+    },
+  },
+  windows: {
+    openWithSpace: (spaceId: string | null) =>
+      ipcRenderer.invoke("paseo:window:openWithSpace", spaceId),
+    getOpenSpaceIds: () =>
+      ipcRenderer.invoke("paseo:window:getOpenSpaceIds") as Promise<Array<string | null>>,
+    isSpaceInUse: (spaceId: string) => ipcRenderer.invoke("paseo:window:isSpaceInUse", spaceId),
+    quit: () => ipcRenderer.invoke("paseo:window:quit"),
+    onWindowsChanged: (handler: EventHandler): Promise<() => void> => {
+      const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
+        handler(payload);
+      };
+      ipcRenderer.on("paseo:event:windows-changed", listener);
+      return Promise.resolve(() => {
+        ipcRenderer.removeListener("paseo:event:windows-changed", listener);
       });
     },
   },
