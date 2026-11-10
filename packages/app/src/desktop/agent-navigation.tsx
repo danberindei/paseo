@@ -7,6 +7,7 @@ import { navigateToAgent } from "@/utils/navigate-to-agent";
 interface OpenAgentEventPayload {
   serverId?: unknown;
   agentId?: unknown;
+  pin?: unknown;
 }
 
 export function AgentNavigationListener() {
@@ -16,7 +17,7 @@ export function AgentNavigationListener() {
     if (!serverId || !agentId) {
       return;
     }
-    navigateToAgent({ serverId, agentId });
+    navigateToAgent({ serverId, agentId, pin: payload?.pin === true });
   });
 
   useEffect(() => {

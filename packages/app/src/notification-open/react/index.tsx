@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 import { router, usePathname, useRootNavigationState, type Href } from "expo-router";
+import { openAgentInProjectWindow } from "@/desktop/open-agent-window";
+import { openAgentTarget } from "@/navigation/open-agent-target";
 import { useHostRegistryStatus } from "@/runtime/host-runtime";
 import {
   navigateToWorkspace,
@@ -11,9 +13,11 @@ import { createNotificationOpenSource } from "../source";
 
 let ready = false;
 const waiters = new Set<() => void>();
+
 const notificationRouter = createNotificationOpenRouter({
   source: createNotificationOpenSource(),
-  openAgent: (target) => navigateToAgent({ ...target, pin: true }),
+  openAgent: (target) =>
+    openAgentTarget({ ...target, pin: true }, { navigateToAgent, openAgentInProjectWindow }),
   openTerminal: ({ serverId, workspaceId, terminalId }) =>
     navigateToWorkspace({
       serverId,

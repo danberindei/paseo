@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:agent-navigation:ready") as Promise<{
         serverId: string;
         agentId: string;
+        pin?: boolean;
       } | null>,
   },
   events: {
@@ -68,6 +69,12 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   windows: {
     openWithSpace: (spaceId: string | null) =>
       ipcRenderer.invoke("paseo:window:openWithSpace", spaceId),
+    openAgentInSpace: (input: {
+      spaceId: string;
+      serverId: string;
+      agentId: string;
+      pin?: boolean;
+    }) => ipcRenderer.invoke("paseo:window:openAgentInSpace", input) as Promise<void>,
     getOpenSpaceIds: () =>
       ipcRenderer.invoke("paseo:window:getOpenSpaceIds") as Promise<Array<string | null>>,
     isSpaceInUse: (spaceId: string) => ipcRenderer.invoke("paseo:window:isSpaceInUse", spaceId),

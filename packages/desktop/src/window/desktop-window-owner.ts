@@ -2,6 +2,8 @@ import { PendingOpenProjectStore } from "../pending-open-project-store.js";
 
 export interface OwnedDesktopWindow<TAgentTarget> {
   webContentsId: number;
+  /** Space this window is bound to; null for a window bound to no space. */
+  spaceId: string | null;
   isDestroyed(): boolean;
   isVisible(): boolean;
   isMinimized(): boolean;
@@ -32,10 +34,16 @@ export interface DesktopWindowOwner<TAgentTarget> {
     spaceId?: string | null;
   }): Promise<void>;
   openAdditional(input?: {
+    initialRoute?: string | null;
     pendingProjectPath?: string | null;
     spaceId?: string | null;
   }): Promise<void>;
   openOrFocusAgent(target: TAgentTarget): Promise<void>;
+  /**
+   * Focuses the window bound to `spaceId` and opens the agent there, or opens a
+   * new window bound to that space on the agent's route.
+   */
+  openOrFocusAgentInSpace(spaceId: string, target: TAgentTarget): Promise<void>;
   restoreWhenActivated(): Promise<void>;
   takePendingProject(webContentsId: number): string | null;
 }
@@ -45,6 +53,7 @@ export function createDesktopWindowOwner<TAgentTarget>(
 ): DesktopWindowOwner<TAgentTarget> {
   const pendingProjects = new PendingOpenProjectStore();
   let agentWindowCreation: Promise<void> | null = null;
+  const spaceWindowCreations = new Map<string, Promise<void>>();
 
   const open = async (input: {
     initialRoute: string | null;
@@ -61,6 +70,18 @@ export function createDesktopWindowOwner<TAgentTarget>(
     });
   };
 
+  /** Focuses the window and hands the agent to it, queueing while it loads. */
+  const focusAndDeliver = (
+    window: OwnedDesktopWindow<TAgentTarget>,
+    target: TAgentTarget,
+  ): void => {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+    const deliverable = port.deliverAgent(window.webContentsId, target);
+    if (deliverable) window.sendAgent(deliverable);
+  };
+
   const owner: DesktopWindowOwner<TAgentTarget> = {
     openPrimary: (input = {}) =>
       open({
@@ -71,7 +92,7 @@ export function createDesktopWindowOwner<TAgentTarget>(
       }),
     openAdditional: (input = {}) =>
       open({
-        initialRoute: null,
+        initialRoute: input.initialRoute ?? null,
         pendingProjectPath: input.pendingProjectPath ?? null,
         restoreWindowState: false,
         spaceId: input.spaceId ?? null,
@@ -94,11 +115,27 @@ export function createDesktopWindowOwner<TAgentTarget>(
         await owner.openOrFocusAgent(target);
         return;
       }
-      if (window.isMinimized()) window.restore();
-      window.show();
-      window.focus();
-      const deliverable = port.deliverAgent(window.webContentsId, target);
-      if (deliverable) window.sendAgent(deliverable);
+      focusAndDeliver(window, target);
+    },
+    async openOrFocusAgentInSpace(spaceId, target) {
+      const creation = spaceWindowCreations.get(spaceId);
+      if (creation) {
+        await creation;
+        await owner.openOrFocusAgentInSpace(spaceId, target);
+        return;
+      }
+      const existing = port
+        .windows()
+        .find((candidate) => !candidate.isDestroyed() && candidate.spaceId === spaceId);
+      if (existing) {
+        focusAndDeliver(existing, target);
+        return;
+      }
+      const newCreation = owner
+        .openAdditional({ spaceId, initialRoute: port.agentRoute(target) })
+        .finally(() => spaceWindowCreations.delete(spaceId));
+      spaceWindowCreations.set(spaceId, newCreation);
+      await newCreation;
     },
     async restoreWhenActivated() {
       if (port.windows().length === 0) await owner.openPrimary();

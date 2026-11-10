@@ -3,6 +3,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { useMemo } from "react";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { openAgentInProjectWindow } from "@/desktop/open-agent-window";
+import { openAgentTarget } from "@/navigation/open-agent-target";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
@@ -22,7 +24,17 @@ export function usePluginHostNavigation(
           getHostRuntimeStore()
             .getHosts()
             .some((host) => host.serverId === targetServerId),
-        openAgent: navigateToAgent,
+        openAgent: ({ serverId: targetServerId, agentId }) => {
+          let route: string | null = null;
+          openAgentTarget(
+            { serverId: targetServerId, agentId },
+            {
+              navigateToAgent: (input, target) => (route = navigateToAgent(input, target)),
+              openAgentInProjectWindow,
+            },
+          );
+          return route;
+        },
         openWorkspace: navigateToWorkspace,
         createBrowser: createWorkspaceBrowser,
         focusHost: (targetServerId) => useSidebarViewStore.getState().focusHost(targetServerId),

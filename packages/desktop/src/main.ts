@@ -130,12 +130,13 @@ import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
+import { buildAgentDeepLinkRoute, parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import {
-  buildAgentDeepLinkRoute,
-  parseAgentDeepLink,
-  type AgentDeepLinkTarget,
-} from "@getpaseo/protocol/agent-deep-link";
-import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+  AgentNavigationInbox,
+  parseAgentDeepLinkFromArgv,
+  readAgentOpenInSpaceRequest,
+  type DesktopAgentTarget,
+} from "./agent-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -400,7 +401,7 @@ let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
 // webContents id, so deep-linked windows (second-instance launches, the
 // in-app "Open in new window" action) land on the right project without
 // racing a global.
-let desktopWindowOwner: DesktopWindowOwner<AgentDeepLinkTarget>;
+let desktopWindowOwner: DesktopWindowOwner<DesktopAgentTarget>;
 
 if (PASEO_DEBUG) {
   log.info("[open-project] argv:", process.argv);
@@ -422,6 +423,18 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
 
 ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
+});
+
+// A renderer opens an agent whose project is outside its own space. The renderer
+// names the space that lists the project; this hands the agent to that space's window.
+ipcMain.handle("paseo:window:openAgentInSpace", async (_event, rawInput: unknown) => {
+  const request = readAgentOpenInSpaceRequest(rawInput);
+  if (!request) {
+    return;
+  }
+  await desktopWindowOwner
+    .openOrFocusAgentInSpace(request.spaceId, request.target)
+    .catch((error) => log.error("[window] failed to route agent to its space window", error));
 });
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
@@ -912,9 +925,10 @@ async function createWindow(
   return mainWindow;
 }
 
-function ownedDesktopWindow(win: BrowserWindow): OwnedDesktopWindow<AgentDeepLinkTarget> {
+function ownedDesktopWindow(win: BrowserWindow): OwnedDesktopWindow<DesktopAgentTarget> {
   return {
     webContentsId: win.webContents.id,
+    spaceId: windowRegistry.get(win) ?? null,
     isDestroyed: () => win.isDestroyed(),
     isVisible: () => win.isVisible(),
     isMinimized: () => win.isMinimized(),
@@ -925,7 +939,7 @@ function ownedDesktopWindow(win: BrowserWindow): OwnedDesktopWindow<AgentDeepLin
   };
 }
 
-desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
+desktopWindowOwner = createDesktopWindowOwner<DesktopAgentTarget>({
   async create(input) {
     const win = await createWindow({
       initialRoute: input.initialRoute,

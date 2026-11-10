@@ -18,6 +18,12 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
+import { useActiveSpace } from "@/stores/space-store";
+import { useSessionStore } from "@/stores/session-store";
+import {
+  buildWorkspaceProjectIdIndex,
+  filterAgentsBySpaceProjectIds,
+} from "./sessions-space-filter";
 
 /** Long enough that a typed word is one request, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 200;
@@ -70,6 +76,7 @@ export function SessionsScreen() {
   return <SessionsScreenContent />;
 }
 
+// oxlint-disable-next-line complexity
 function SessionsScreenContent() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -117,6 +124,25 @@ function SessionsScreenContent() {
     void refreshAll().finally(() => setIsManualRefresh(false));
   }, [refreshAll]);
 
+  const activeSpace = useActiveSpace();
+  const sessions = useSessionStore((state) => state.sessions);
+
+  // Multi-host: index each project by host and workspace id. A space can hold
+  // projects from several hosts, including hosts that reuse a directory path.
+  const workspaceProjectIdIndex = useMemo(() => buildWorkspaceProjectIdIndex(sessions), [sessions]);
+
+  // `useAgentHistory` owns the order: recency at rest, relevance under a query.
+  // The active-space filter narrows that list without reordering it.
+  const visibleAgents = useMemo(
+    () =>
+      filterAgentsBySpaceProjectIds(
+        agents,
+        activeSpace ? activeSpace.projectIds : null,
+        workspaceProjectIdIndex,
+      ),
+    [agents, activeSpace, workspaceProjectIdIndex],
+  );
+
   // Searching filters the chronological history without changing its date buckets.
   const emptyText = resolveEmptyText({
     t,
@@ -125,7 +151,7 @@ function SessionsScreenContent() {
   });
   const showHostFilter = hosts.length > 1;
   const showFilterRow = showHostFilter || isSearchSupported;
-  const showLoadError = isError && agents.length === 0;
+  const showLoadError = isError && visibleAgents.length === 0;
 
   const handleBack = useCallback(() => {
     router.navigate(buildOpenProjectRoute());
@@ -195,7 +221,7 @@ function SessionsScreenContent() {
           </Button>
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && agents.length === 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length === 0 ? (
         <View style={styles.emptyContainer} testID="sessions-empty">
           <Text style={styles.emptyText}>{emptyText}</Text>
           {isSearching ? (
@@ -212,9 +238,9 @@ function SessionsScreenContent() {
           </Button>
         </View>
       ) : null}
-      {!isInitialLoad && !showLoadError && agents.length > 0 ? (
+      {!isInitialLoad && !showLoadError && visibleAgents.length > 0 ? (
         <AgentList
-          agents={agents}
+          agents={visibleAgents}
           showCheckoutInfo={false}
           isRefreshing={isManualRefresh}
           onRefresh={handleRefresh}

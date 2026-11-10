@@ -6,7 +6,7 @@ import { isHttpUrl } from "@/utils/http-url";
 interface HostNavigationOwner {
   browserAvailable: boolean;
   isHostRegistered(serverId: string): boolean;
-  openAgent(input: { serverId: string; agentId: string }): string;
+  openAgent(input: { serverId: string; agentId: string }): string | null;
   openWorkspace(input: NavigateToWorkspaceInput): string;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
@@ -28,7 +28,7 @@ export function createPluginHostNavigation(
     supportsFocusHost: true,
     openAgent: ({ agentId, serverId: targetServerId, focusHost }) => {
       const route = owner.openAgent({ serverId: targetServerId ?? serverId, agentId });
-      if (focusHost) focusRouteHost(route);
+      if (focusHost && route !== null) focusRouteHost(route);
     },
     openWorkspace: ({ workspaceId, serverId: targetServerId, focusHost }) => {
       const route = owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId });

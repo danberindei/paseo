@@ -3,8 +3,17 @@ import type { NotificationOpenSource, NotificationTap } from "./source";
 
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 
+export interface AgentNotificationTarget {
+  serverId: string;
+  agentId: string;
+  // Workspace named by the notification. Not the navigation target: the agent
+  // can move after the notification is sent, so the session record wins when it
+  // exists. It still names the project while that record is missing.
+  workspaceId?: string;
+}
+
 export type NotificationOpenTarget =
-  | { kind: "agent"; serverId: string; agentId: string }
+  | ({ kind: "agent" } & AgentNotificationTarget)
   | { kind: "terminal"; serverId: string; workspaceId: string; terminalId: string }
   | { kind: "host"; serverId: string };
 
@@ -21,13 +30,17 @@ export function parseNotificationOpenTarget(data: unknown): NotificationOpenTarg
   const terminalId = readId(data, "terminalId");
   if (workspaceId && terminalId) return { kind: "terminal", serverId, workspaceId, terminalId };
   const agentId = readId(data, "agentId");
-  if (agentId) return { kind: "agent", serverId, agentId };
+  if (agentId) {
+    return workspaceId
+      ? { kind: "agent", serverId, agentId, workspaceId }
+      : { kind: "agent", serverId, agentId };
+  }
   return { kind: "host", serverId };
 }
 
 interface NotificationOpenRouterDeps {
   source: NotificationOpenSource;
-  openAgent: (target: { serverId: string; agentId: string }) => void;
+  openAgent: (target: AgentNotificationTarget) => void;
   openRoute: (route: string) => void;
   openTerminal: (target: Extract<NotificationOpenTarget, { kind: "terminal" }>) => void;
   whenReadyToNavigate: () => Promise<void>;
@@ -42,7 +55,11 @@ export function createNotificationOpenRouter(deps: NotificationOpenRouterDeps) {
     await deps.whenReadyToNavigate();
     const target = parseNotificationOpenTarget(tap.data);
     if (target?.kind === "agent") {
-      deps.openAgent({ serverId: target.serverId, agentId: target.agentId });
+      deps.openAgent({
+        serverId: target.serverId,
+        agentId: target.agentId,
+        ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+      });
     } else if (target?.kind === "terminal") {
       deps.openTerminal(target);
     } else if (target?.kind === "host") {

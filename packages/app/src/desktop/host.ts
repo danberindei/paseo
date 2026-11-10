@@ -123,6 +123,12 @@ export interface DesktopWindowModuleBridge {
 
 export interface DesktopWindowsBridge {
   openWithSpace?: (spaceId: string | null) => Promise<void>;
+  openAgentInSpace?: (input: {
+    spaceId: string;
+    serverId: string;
+    agentId: string;
+    pin?: boolean;
+  }) => Promise<void>;
   getOpenSpaceIds?: () => Promise<Array<string | null>>;
   isSpaceInUse?: (spaceId: string) => Promise<boolean>;
   onWindowsChanged?: (handler: (payload: unknown) => void) => Promise<() => void>;
@@ -134,7 +140,11 @@ export interface DesktopEventsBridge {
 }
 
 export interface DesktopAgentNavigationBridge {
-  ready?: () => Promise<{ serverId: string; agentId: string } | null>;
+  ready?: () => Promise<{
+    serverId: string;
+    agentId: string;
+    pin?: boolean;
+  } | null>;
 }
 
 export type DesktopBrowserShortcutEvent =

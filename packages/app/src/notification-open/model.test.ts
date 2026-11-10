@@ -46,7 +46,7 @@ describe("notification open", () => {
     ],
     [
       { serverId: "h", workspaceId: "stale", agentId: "a" },
-      { kind: "agent", serverId: "h", agentId: "a" },
+      { kind: "agent", serverId: "h", agentId: "a", workspaceId: "stale" },
     ],
     [
       { serverId: "h", workspaceId: "w", terminalId: "t", agentId: "a" },
@@ -83,7 +83,7 @@ describe("notification open", () => {
     const stop = router.start();
     await flush();
     expect(source.launchReads).toBe(1);
-    expect(agents).toEqual([{ serverId: "host", agentId: "agent" }]);
+    expect(agents).toEqual([{ serverId: "host", agentId: "agent", workspaceId: "stale" }]);
     stop();
   });
 
@@ -95,7 +95,7 @@ describe("notification open", () => {
     const stopAgain = router.start();
     source.tap(launch);
     await flush();
-    expect(agents).toEqual([{ serverId: "host", agentId: "agent" }]);
+    expect(agents).toEqual([{ serverId: "host", agentId: "agent", workspaceId: "stale" }]);
     expect(source.acknowledged).toEqual(["one"]);
     stopAgain();
   });
@@ -112,7 +112,7 @@ describe("notification open", () => {
     expect(source.acknowledged).toEqual([]);
     ready();
     await flush();
-    expect(agents).toEqual([{ serverId: "host", agentId: "agent" }]);
+    expect(agents).toEqual([{ serverId: "host", agentId: "agent", workspaceId: "stale" }]);
     expect(source.acknowledged).toEqual(["one"]);
     stop();
   });
@@ -125,7 +125,7 @@ describe("notification open", () => {
     source.tap({ id: "invalid", data: undefined });
     await flush();
     expect(agents).toEqual([
-      { serverId: "host", agentId: "agent" },
+      { serverId: "host", agentId: "agent", workspaceId: "stale" },
       { serverId: "host", agentId: "second" },
     ]);
     expect(source.acknowledged).toEqual(["one", "two", "invalid"]);

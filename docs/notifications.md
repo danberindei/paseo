@@ -11,6 +11,14 @@ the agent can move after a notification is sent. Use `navigateToAgent`, which
 uses the current store record or the agent route to resolve the workspace from
 the host. Terminal payloads name their workspace and use `navigateToWorkspace`.
 
+Each desktop window is bound to one space. A tap that names an agent whose
+project that space does not list belongs to the window that does list it: the
+main process sends the click to the window bound to the payload's space, and a
+tap still refused after that handoff goes through `openAgentTarget`, which opens
+the agent in the window bound to the agent's project and creates that window
+when none is bound to the space. Plugin `navigation.openAgent` calls use the same
+`openAgentTarget`, so a plugin link to a foreign-space agent behaves like a tap.
+
 See [agent targets and deferred opens](expo-router.md#agent-targets) for route
 ownership and workspace recovery. Notification generation, presence, and push
 eligibility remain daemon concerns.

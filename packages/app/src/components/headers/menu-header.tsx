@@ -4,6 +4,7 @@ import { ScreenHeader } from "./screen-header";
 import { ScreenTitle } from "./screen-title";
 import { CompactHeader } from "./compact-header";
 import { SidebarMenuToggle } from "./sidebar-menu-toggle";
+import { SpaceSwitcher } from "@/components/space-switcher";
 import { useIsCompactFormFactor } from "@/constants/layout";
 
 interface MenuHeaderProps {
@@ -22,6 +23,7 @@ export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps)
       left={
         <>
           <SidebarMenuToggle />
+          <SpaceSwitcher />
           {title && <ScreenTitle>{title}</ScreenTitle>}
         </>
       }
