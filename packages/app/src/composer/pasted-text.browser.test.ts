@@ -116,6 +116,22 @@ describe("pasted prompt links", () => {
     expect(input.value).toBe(`[Issue](https://example.com/)${caption}`);
   });
 
+  it("keeps an underscore inside a word when pasting external HTML", () => {
+    const input = editor();
+    expect(
+      pasteLinkedClipboardText(
+        input,
+        clipboard(
+          '<a href="https://example.com/issue">Issue</a> about max_retries, café_au_lait and _word_.',
+          "Issue about max_retries, café_au_lait and _word_.",
+        ),
+      ),
+    ).toBe(true);
+    expect(input.value).toBe(
+      "[Issue](https://example.com/issue) about max_retries, café_au_lait and \\_word\\_.",
+    );
+  });
+
   it("leaves plain text and rich text without links to native paste", () => {
     const input = editor();
     expect(pasteLinkedClipboardText(input, clipboard("", "[link](https://example.com)"))).toBe(

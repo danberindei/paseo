@@ -6,6 +6,14 @@ const markdown = new TurndownService({
   codeBlockStyle: "fenced",
   bulletListMarker: "-",
 });
+
+// A pasted prompt is Markdown the user reads and sends, so an escape that protects nothing
+// is noise: `max_retries` would arrive as `max\_retries`. An underscore between two word
+// characters cannot open or close emphasis, so that one escape is dropped.
+const escapeMarkdown = markdown.escape.bind(markdown);
+markdown.escape = (text) =>
+  escapeMarkdown(text).replace(/(?<=[\p{L}\p{N}])\\_(?=[\p{L}\p{N}])/gu, "_");
+
 // Heading tables become Markdown; headerless tables retain their HTML structure.
 markdown.use(tables);
 markdown.addRule("rowlessTable", {
