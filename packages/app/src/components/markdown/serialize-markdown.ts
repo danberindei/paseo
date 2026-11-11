@@ -1,69 +1,87 @@
 import type { MarkdownNode } from "react-native-enriched-markdown";
 
+/**
+ * Markdown with text escapes: the `text/html` flavor. Rendering it yields the text the user
+ * saw, so literal Markdown characters stay literal in a rich target.
+ */
 export function astNodesToMarkdown(nodes: MarkdownNode[]): string {
-  return serializeBlocks(nodes).trim();
+  return serializeBlocks(nodes, true).trim();
 }
 
-function serializeBlocks(nodes: MarkdownNode[]): string {
+/**
+ * The same structure with the text exactly as displayed: the `text/plain` flavor. A plain
+ * target shows backslashes literally, so nothing is escaped here.
+ */
+export function astNodesToMarkdownPlain(nodes: MarkdownNode[]): string {
+  return serializeBlocks(nodes, false).trim();
+}
+
+// escapeText selects the flavor: true escapes text and block markers, false emits both raw.
+function serializeBlocks(nodes: MarkdownNode[], escapeText: boolean): string {
   return nodes
-    .map(serializeBlockNode)
+    .map((node) => serializeBlockNode(node, escapeText))
     .filter((block) => block.length > 0)
     .join("\n\n");
 }
 
-function serializeBlockNode(node: MarkdownNode): string {
+function serializeBlockNode(node: MarkdownNode, escapeText: boolean): string {
   switch (node.type) {
     case "Heading": {
-      const content = serializeInline(node.children ?? []);
-      const heading = content.replace(/(^|[ \t])(#+)([ \t]*)$/, "$1\\$2$3");
+      const content = serializeInline(node.children ?? [], escapeText);
+      // A closing run of # would be read as an ATX closing sequence.
+      const heading = escapeText ? content.replace(/(^|[ \t])(#+)([ \t]*)$/, "$1\\$2$3") : content;
       return `${"#".repeat(headingLevel(node))} ${heading}`;
     }
-    case "Paragraph":
-      return escapeBlockMarkers(serializeInline(node.children ?? []));
+    case "Paragraph": {
+      const content = serializeInline(node.children ?? [], escapeText);
+      return escapeText ? escapeBlockMarkers(content) : content;
+    }
     case "CodeBlock":
       return fenceBlock(node.attributes?.language ?? "", codeText(node));
     case "ThematicBreak":
       return "---";
     default:
-      return serializeNestedBlock(node);
+      return serializeNestedBlock(node, escapeText);
   }
 }
 
-function serializeNestedBlock(node: MarkdownNode): string {
+function serializeNestedBlock(node: MarkdownNode, escapeText: boolean): string {
   switch (node.type) {
     case "UnorderedList":
-      return serializeList(node, false);
+      return serializeList(node, false, escapeText);
     case "OrderedList":
-      return serializeList(node, true);
+      return serializeList(node, true, escapeText);
     case "Blockquote":
-      return prefixLines(serializeBlocks(node.children ?? []), QUOTE_PREFIXES);
+      return prefixLines(serializeBlocks(node.children ?? [], escapeText), QUOTE_PREFIXES);
     case "Admonition":
-      return prefixLines(admonitionBody(node), QUOTE_PREFIXES);
+      return prefixLines(admonitionBody(node, escapeText), QUOTE_PREFIXES);
     default:
-      return node.children?.length ? serializeBlocks(node.children) : (node.content ?? "");
+      return node.children?.length
+        ? serializeBlocks(node.children, escapeText)
+        : (node.content ?? "");
   }
 }
 
-function serializeInline(nodes: MarkdownNode[]): string {
-  return nodes.map(serializeInlineNode).join("");
+function serializeInline(nodes: MarkdownNode[], escapeText: boolean): string {
+  return nodes.map((node) => serializeInlineNode(node, escapeText)).join("");
 }
 
-function serializeInlineNode(node: MarkdownNode): string {
+function serializeInlineNode(node: MarkdownNode, escapeText: boolean): string {
   switch (node.type) {
     case "Text":
-      return escapeInlineText(node.content ?? "");
+      return escapeText ? escapeInlineText(node.content ?? "") : (node.content ?? "");
     case "SoftBreak":
     case "LineBreak":
       return "\n";
     case "Code":
       return inlineCode(codeText(node));
     default:
-      return serializeInlineContainer(node);
+      return serializeInlineContainer(node, escapeText);
   }
 }
 
-function serializeInlineContainer(node: MarkdownNode): string {
-  const content = serializeInline(node.children ?? []);
+function serializeInlineContainer(node: MarkdownNode, escapeText: boolean): string {
+  const content = serializeInline(node.children ?? [], escapeText);
   const url = node.attributes?.url ?? "";
   switch (node.type) {
     case "Strong":
@@ -79,18 +97,18 @@ function serializeInlineContainer(node: MarkdownNode): string {
         : `[${content}](${linkTarget(url)})`;
     // Copy only alt text: node URLs are adapted preview URLs, not authored sources.
     case "Image":
-      return imageAltText(node);
+      return imageAltText(node, escapeText);
     default:
       return node.children?.length ? content : (node.content ?? "");
   }
 }
 
-function serializeList(node: MarkdownNode, ordered: boolean): string {
+function serializeList(node: MarkdownNode, ordered: boolean, escapeText: boolean): string {
   const start = ordered ? Number(node.attributes?.start ?? 1) : 0;
   return (node.children ?? [])
     .map((item, index) => {
       const marker = listItemMarker(item, ordered ? `${start + index}. ` : "- ");
-      const body = serializeBlocks(item.children ?? []);
+      const body = serializeBlocks(item.children ?? [], escapeText);
       return prefixLines(body, { first: marker, rest: " ".repeat(marker.length), empty: "" });
     })
     .join("\n");
@@ -101,9 +119,9 @@ function listItemMarker(item: MarkdownNode, marker: string): string {
   return `${marker}${item.attributes.taskChecked === "true" ? "[x] " : "[ ] "}`;
 }
 
-function admonitionBody(node: MarkdownNode): string {
+function admonitionBody(node: MarkdownNode, escapeText: boolean): string {
   const type = (node.attributes?.admonitionType ?? "note").toUpperCase();
-  return `[!${type}]\n\n${serializeBlocks(node.children ?? [])}`;
+  return `[!${type}]\n\n${serializeBlocks(node.children ?? [], escapeText)}`;
 }
 
 // MD4C stores inline code and image alt text as Text children, not as node content.
@@ -111,9 +129,9 @@ function codeText(node: MarkdownNode): string {
   return node.content ?? (node.children ?? []).map((child) => child.content ?? "").join("");
 }
 
-function imageAltText(node: MarkdownNode): string {
+function imageAltText(node: MarkdownNode, escapeText: boolean): string {
   const text = (node.children ?? []).map(plainText).join("").trim();
-  return escapeInlineText(text);
+  return escapeText ? escapeInlineText(text) : text;
 }
 
 function escapeInlineText(text: string): string {

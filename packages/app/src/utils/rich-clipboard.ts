@@ -21,17 +21,24 @@ export interface MarkdownClipboardEnvironment {
   writePlainText: (text: string) => Promise<unknown>;
 }
 
-export function createMarkdownClipboardContent(markdown: string): MarkdownClipboardContent {
+/**
+ * Clipboard payload for Markdown text. `markdown` feeds `text/html`, which renders it;
+ * `plainText` goes to `text/plain` unchanged, so callers that escape for the rich flavor
+ * can hand over the same text the user saw.
+ */
+export function createMarkdownClipboardContent(
+  markdown: string,
+  plainText: string = markdown,
+): MarkdownClipboardContent {
   return {
-    plainText: markdown,
+    plainText,
     html: `<meta charset="utf-8">${markdownRenderer.render(markdown)}`,
   };
 }
 
 /**
- * Clipboard payload for Markdown text. `markdown` is escaped and feeds `text/html`, which
- * renders it; `plainText` goes to `text/plain` unchanged, so callers that escape for the
- * rich flavor can hand over the same text the user saw.
+ * `createMarkdownClipboardContent` for a selection: `text/html` renders with linkify
+ * disabled, so text unwrapped from a recognized link stays unlinked.
  */
 export function createSelectionClipboardContent(
   markdown: string,
@@ -85,9 +92,11 @@ export function createCodeClipboardContent(
 export async function writeMarkdownToRichClipboard(
   markdown: string,
   environment: MarkdownClipboardEnvironment,
+  // The text/plain flavor: the text as displayed when it differs from `markdown`.
+  plainText: string = markdown,
 ): Promise<void> {
   if (environment.richWriter?.supportsHtml()) {
-    const content = createMarkdownClipboardContent(markdown);
+    const content = createMarkdownClipboardContent(markdown, plainText);
     try {
       await environment.richWriter.write({
         "text/plain": new Blob([content.plainText], { type: "text/plain" }),
@@ -100,5 +109,5 @@ export async function writeMarkdownToRichClipboard(
     }
   }
 
-  await environment.writePlainText(markdown);
+  await environment.writePlainText(plainText);
 }

@@ -27,7 +27,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
-import { astNodesToMarkdown } from "./serialize-markdown";
+import { astNodesToMarkdown, astNodesToMarkdownPlain } from "./serialize-markdown";
 import { isRecognizedLink, markdownLinkSource } from "./source";
 
 const ThemedCodeBlock = withUnistyles(HighlightedCodeBlock);
@@ -52,7 +52,13 @@ function WebBlockquote({ node, style, children }: BlockquoteRendererProps) {
   const handlePointerLeave = useCallback(() => setHovered(false), []);
   const quoteStyle = useMemo(() => ({ ...style, position: "relative" as const }), [style]);
   // The quote body without its markers: nested quotes keep their own prefix.
-  const getText = useCallback(() => astNodesToMarkdown(node.children ?? []), [node]);
+  const getContent = useCallback(
+    () => ({
+      plainText: astNodesToMarkdownPlain(node.children ?? []),
+      markdown: astNodesToMarkdown(node.children ?? []),
+    }),
+    [node],
+  );
   return (
     <blockquote
       style={quoteStyle}
@@ -61,7 +67,7 @@ function WebBlockquote({ node, style, children }: BlockquoteRendererProps) {
     >
       {children}
       <CopyButton
-        getText={getText}
+        getContent={getContent}
         visible={hovered || isCompact}
         copyLabel={t("message.actions.copyQuote")}
       />

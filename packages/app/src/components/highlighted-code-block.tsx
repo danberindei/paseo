@@ -85,7 +85,10 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   // Copy the code without its trailing blank lines. A fence body ends in a newline,
   // and ends in more than one when the author left a blank line before the closing
   // fence; pasting any of them into a terminal runs the last line.
-  const getCode = useCallback(() => code.replace(TRAILING_CODE_LINE_BREAKS, ""), [code]);
+  const getContent = useCallback(
+    () => ({ plainText: code.replace(TRAILING_CODE_LINE_BREAKS, "") }),
+    [code],
+  );
 
   return (
     <View
@@ -104,7 +107,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
         </Text>
       )}
       <CopyButton
-        getText={getCode}
+        getContent={getContent}
         visible={controlsVisible}
         copyLabel={t("message.actions.copyCode")}
       />

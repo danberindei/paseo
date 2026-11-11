@@ -4,10 +4,20 @@ import * as Clipboard from "expo-clipboard";
 import { Check, Copy } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { PressHighlight } from "@/components/ui/press-highlight";
+import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
+import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 
+interface CopyButtonContent {
+  // text/plain: the text exactly as the user sees it, with no Markdown escapes.
+  plainText: string;
+  // Escaped Markdown rendered into text/html, so literal Markdown stays literal in a
+  // rich target. Absent for content that has no Markdown flavor, such as code.
+  markdown?: string;
+}
+
 interface CopyButtonProps {
-  getText: () => string;
+  getContent: () => CopyButtonContent | null;
   visible: boolean;
   copyLabel: string;
 }
@@ -15,7 +25,7 @@ interface CopyButtonProps {
 const COPIED_RESET_MS = 1500;
 
 export const CopyButton = React.memo(function CopyButton({
-  getText,
+  getContent,
   visible,
   copyLabel,
 }: CopyButtonProps) {
@@ -31,16 +41,24 @@ export const CopyButton = React.memo(function CopyButton({
   );
 
   const handlePress = useCallback(async () => {
-    const content = getText();
-    if (!content) return;
-    await Clipboard.setStringAsync(content);
+    const content = getContent();
+    if (!content?.plainText) return;
+    if (content.markdown === undefined) {
+      await Clipboard.setStringAsync(content.plainText);
+    } else {
+      await writeMarkdownToRichClipboard(
+        content.markdown,
+        getDefaultMarkdownClipboardEnvironment(),
+        content.plainText,
+      );
+    }
     setCopied(true);
     if (resetRef.current) clearTimeout(resetRef.current);
     resetRef.current = setTimeout(() => {
       setCopied(false);
       resetRef.current = null;
     }, COPIED_RESET_MS);
-  }, [getText]);
+  }, [getContent]);
 
   const visibilityStyle = visible
     ? copyButtonStyles.containerVisible

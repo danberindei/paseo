@@ -3,7 +3,7 @@ import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkd
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { prepareMarkdownSource } from "./source";
-import { astNodesToMarkdown } from "./serialize-markdown";
+import { astNodesToMarkdown, astNodesToMarkdownPlain } from "./serialize-markdown";
 
 // Copy must serialize the AST the chat actually renders, so keep these flags in
 // step with MD4C_FLAGS in renderer.tsx.
@@ -19,6 +19,11 @@ async function blockquoteOf(markdown: string): Promise<ASTNode> {
 async function serializeBlockquote(markdown: string): Promise<string> {
   const blockquote = await blockquoteOf(markdown);
   return astNodesToMarkdown(blockquote.children ?? []);
+}
+
+async function serializeBlockquotePlain(markdown: string): Promise<string> {
+  const blockquote = await blockquoteOf(markdown);
+  return astNodesToMarkdownPlain(blockquote.children ?? []);
 }
 
 interface ImageAdaptation {
@@ -42,6 +47,23 @@ describe("astNodesToMarkdown", () => {
       "@Handi no, `log_call_entry` doesn't take a `project_id` param. For calls placed through `/outbound-vai`, the server already uses the `project_id` the reminder workflow sends when it places the call, so the bot doesn't need to pass it.";
 
     expect(await serializeBlockquote(`> ${text}`)).toBe(text);
+  });
+
+  it("leaves underscores that cannot form emphasis alone in the plain flavor", async () => {
+    const text = "Set max_retries and snake_case before the handler runs.";
+
+    expect(await serializeBlockquotePlain(`> ${text}`)).toBe(text);
+  });
+
+  it("escapes paired underscores in literal text so they stay literal", async () => {
+    const source = String.raw`> literal \_word\_ stays literal`;
+    const copied = await serializeBlockquote(source);
+
+    expect(copied).toBe(String.raw`literal \_word\_ stays literal`);
+    const parsed = await parseMarkdown(copied, MD4C_FLAGS);
+    expect(parsed.children).toEqual((await blockquoteOf(source)).children);
+    // text/plain carries the text as displayed: the backslashes are gone.
+    expect(await serializeBlockquotePlain(source)).toBe("literal _word_ stays literal");
   });
 
   it.each([
