@@ -438,6 +438,7 @@ export const ptBR: TranslationResources = {
       workedFor: "Trabalhou por {{duration}}",
     },
     compaction: {
+      failed: "Falha ao compactar o contexto",
       loading: "Compactando...",
       auto: "Contexto compactado automaticamente",
       manual: "Contexto compactado manualmente",

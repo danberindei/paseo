@@ -434,6 +434,7 @@ export const zhCN: TranslationResources = {
       workedFor: "工作了 {{duration}}",
     },
     compaction: {
+      failed: "上下文压缩失败",
       loading: "正在压缩...",
       auto: "上下文已自动压缩",
       manual: "上下文已手动压缩",

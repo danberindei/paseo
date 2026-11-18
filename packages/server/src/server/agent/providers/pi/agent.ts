@@ -176,6 +176,7 @@ function mapPiSlashCommands(
 }
 
 const PI_CAPABILITIES: AgentCapabilityFlags = {
+  supportsManualCompactionResult: true,
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,
@@ -1211,9 +1212,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly localUserRows: PiLocalUserRow[] = [];
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private compactionPromise: Promise<void> | null = null;
-  private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
-  private outOfBandCompactionStarted = false;
-  private outOfBandCompactionCompleted = false;
+  private outOfBandCompactionRunning = false;
   private commandCache: AgentSlashCommand[] | null = null;
   private state: PiSessionState;
   private readonly currentModeId: string | null;
@@ -1708,7 +1707,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
-  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+  ): ReturnType<NonNullable<AgentSession["tryHandleOutOfBand"]>> {
     if (typeof prompt !== "string") {
       return null;
     }
@@ -1719,8 +1718,8 @@ export class PiRpcAgentSession implements AgentSession {
     const commandName = parsed.commandName.toLowerCase();
     if (commandName === "compact") {
       return {
-        run: async ({ emit }) => {
-          await this.executeCompactCommand(parsed.args, emit);
+        run: async ({ emit, clientMessageId }) => {
+          await this.executeCompactCommand(parsed.args, emit, clientMessageId);
         },
       };
     }
@@ -1946,47 +1945,43 @@ export class PiRpcAgentSession implements AgentSession {
   private async executeCompactCommand(
     customInstructions: string | undefined,
     emit: (event: AgentStreamEvent) => void,
+    clientMessageId?: string,
   ): Promise<void> {
-    if (this.outOfBandCompactionEmit) {
+    if (this.outOfBandCompactionRunning) {
       throw new Error("A Pi compact command is already running");
     }
-    this.outOfBandCompactionEmit = emit;
-    this.outOfBandCompactionStarted = false;
-    this.outOfBandCompactionCompleted = false;
+    this.outOfBandCompactionRunning = true;
+    emit({
+      type: "timeline",
+      provider: this.provider,
+      item: { type: "compaction", status: "loading", trigger: "manual" },
+    });
+    let error: string | null = null;
     try {
       this.compactionPromise = this.runtimeSession.compact(customInstructions);
       await this.compactionPromise;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (
-        this.outOfBandCompactionEmit === emit &&
-        this.outOfBandCompactionStarted &&
-        !this.outOfBandCompactionCompleted
-      ) {
-        this.emitCompactionTimeline({
-          turnId: undefined,
-          item: {
-            type: "compaction",
-            status: "completed",
-            trigger: "manual",
-          },
-        });
-      }
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      this.compactionPromise = null;
+      this.outOfBandCompactionRunning = false;
+    }
+    emit({
+      type: "timeline",
+      provider: this.provider,
+      item: {
+        type: "compaction",
+        status: "completed",
+        trigger: "manual",
+        manualResult: { clientMessageId, error },
+      },
+    });
+    if (error !== null) {
       emit({
         type: "timeline",
         provider: this.provider,
-        item: {
-          type: "assistant_message",
-          text: `[Error] Failed to compact context: ${message}`,
-        },
+        item: { type: "assistant_message", text: `[Error] Failed to compact context: ${error}` },
       });
-    } finally {
-      this.compactionPromise = null;
-      if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionStarted) {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
-      }
     }
   }
 
@@ -2392,24 +2387,8 @@ export class PiRpcAgentSession implements AgentSession {
         return;
       }
       case "compaction_start":
-        this.emitCompactionTimeline({
-          turnId,
-          item: {
-            type: "compaction",
-            status: "loading",
-            trigger: event.reason === "manual" ? "manual" : "auto",
-          },
-        });
-        return;
       case "compaction_end":
-        this.emitCompactionTimeline({
-          turnId,
-          item: {
-            type: "compaction",
-            status: "completed",
-            trigger: event.reason === "manual" ? "manual" : "auto",
-          },
-        });
+        this.handleCompactionEvent(event, turnId);
         return;
       case "auto_retry_start":
         this.emit({
@@ -2425,6 +2404,24 @@ export class PiRpcAgentSession implements AgentSession {
       default:
         return;
     }
+  }
+
+  private handleCompactionEvent(
+    event: Extract<PiAgentSessionEvent, { type: "compaction_start" | "compaction_end" }>,
+    turnId: string | undefined,
+  ): void {
+    // The manual command reports the RPC result, which can arrive after compaction_end.
+    if (this.outOfBandCompactionRunning) return;
+    this.emit({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "compaction",
+        status: event.type === "compaction_start" ? "loading" : "completed",
+        trigger: event.reason === "manual" ? "manual" : "auto",
+      },
+    });
   }
 
   private handleTurnBoundaryEvent({
@@ -2495,37 +2492,6 @@ export class PiRpcAgentSession implements AgentSession {
       }
     }
     return events;
-  }
-
-  private emitCompactionTimeline(input: {
-    turnId: string | undefined;
-    item: Extract<AgentStreamEvent, { type: "timeline" }>["item"];
-  }): void {
-    const emitOutOfBand = this.outOfBandCompactionEmit;
-    if (emitOutOfBand && input.item.type === "compaction") {
-      if (input.item.status === "loading") {
-        this.outOfBandCompactionStarted = true;
-      }
-      if (input.item.status === "completed") {
-        this.outOfBandCompactionCompleted = true;
-      }
-    }
-    const event: AgentStreamEvent = {
-      type: "timeline",
-      provider: this.provider,
-      ...(emitOutOfBand ? {} : { turnId: input.turnId }),
-      item: input.item,
-    };
-    if (emitOutOfBand) {
-      emitOutOfBand(event);
-      if (input.item.type === "compaction" && input.item.status === "completed") {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
-      }
-      return;
-    }
-    this.emit(event);
   }
 
   private handleMessageUpdate(

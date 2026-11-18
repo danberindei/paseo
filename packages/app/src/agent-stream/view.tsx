@@ -1030,6 +1030,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 status={item.status}
                 trigger={item.trigger}
                 preTokens={item.preTokens}
+                error={item.manualResult?.error}
               />
             );
 

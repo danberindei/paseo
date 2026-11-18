@@ -393,6 +393,7 @@ export interface CompactionTimelineItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  manualResult?: { clientMessageId?: string; error: string | null };
 }
 
 export interface PluginTimelineItem {
@@ -798,7 +799,7 @@ export interface AgentSession {
    * (e.g. /goal pause) reach the provider without canceling the running turn.
    */
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
-    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+    run(ctx: { emit: (event: AgentStreamEvent) => void; clientMessageId?: string }): Promise<void>;
   } | null;
 }
 

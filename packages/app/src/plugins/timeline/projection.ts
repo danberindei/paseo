@@ -63,6 +63,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
         status: item.status,
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
+        ...(item.manualResult ? { manualResult: item.manualResult } : {}),
       };
     case "plugin":
     case "turn_summary":

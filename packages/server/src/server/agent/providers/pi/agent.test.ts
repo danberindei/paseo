@@ -3380,7 +3380,7 @@ describe("PiRpcAgentClient", () => {
     const events: AgentStreamEvent[] = [];
 
     expect(handler).not.toBeNull();
-    await handler?.run({ emit: (event) => events.push(event) });
+    await handler?.run({ clientMessageId: "compact-1", emit: (event) => events.push(event) });
 
     expect(fakeSession.compactRequests).toEqual([{ customInstructions: "focus on tests" }]);
     expect(fakeSession.prompts).toEqual([]);
@@ -3393,9 +3393,34 @@ describe("PiRpcAgentClient", () => {
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "compaction", status: "completed", trigger: "manual" },
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: "manual",
+          manualResult: { clientMessageId: "compact-1", error: null },
+        },
       },
     ]);
+  });
+
+  test("suppresses Pi compaction events without a reason during manual compaction", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const finished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = finished.promise;
+    const commandEvents: AgentStreamEvent[] = [];
+    const handler = session.tryHandleOutOfBand("/compact");
+    const running = handler!.run({ emit: (event) => commandEvents.push(event) });
+
+    fakeSession.emit({ type: "compaction_start" });
+    fakeSession.emit({ type: "compaction_end" });
+    expect(events.timelineEvents().filter((event) => event.item.type === "compaction")).toEqual([]);
+    expect(commandEvents).toHaveLength(1);
+
+    finished.resolve();
+    await running;
+    expect(commandEvents).toHaveLength(2);
+    await session.close();
   });
 
   test.each([
@@ -3473,38 +3498,51 @@ describe("PiRpcAgentClient", () => {
     expect(fakeSession.prompts).toEqual([]);
   });
 
-  test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
-    const { pi, session } = await createSession();
-    const fakeSession = pi.latestSession();
-    fakeSession.emitCompactEnd = false;
-    fakeSession.compactError = new Error("summarizer failed");
-    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact");
-    const events: AgentStreamEvent[] = [];
+  test.each([
+    { emitCompactStart: false, emitCompactEnd: false },
+    { emitCompactStart: true, emitCompactEnd: false },
+    { emitCompactStart: true, emitCompactEnd: true },
+  ])(
+    "reports Pi compact RPC failure with start=$emitCompactStart and end=$emitCompactEnd",
+    async ({ emitCompactStart, emitCompactEnd }) => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+      fakeSession.emitCompactStart = emitCompactStart;
+      fakeSession.emitCompactEnd = emitCompactEnd;
+      fakeSession.compactError = new Error("summarizer failed");
+      const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact");
+      const events: AgentStreamEvent[] = [];
 
-    expect(handler).not.toBeNull();
-    await handler?.run({ emit: (event) => events.push(event) });
+      expect(handler).not.toBeNull();
+      await handler?.run({ clientMessageId: "compact-2", emit: (event) => events.push(event) });
 
-    expect(events).toEqual([
-      {
-        type: "timeline",
-        provider: "pi",
-        item: { type: "compaction", status: "loading", trigger: "manual" },
-      },
-      {
-        type: "timeline",
-        provider: "pi",
-        item: { type: "compaction", status: "completed", trigger: "manual" },
-      },
-      {
-        type: "timeline",
-        provider: "pi",
-        item: {
-          type: "assistant_message",
-          text: "[Error] Failed to compact context: summarizer failed",
+      expect(events).toEqual([
+        {
+          type: "timeline",
+          provider: "pi",
+          item: { type: "compaction", status: "loading", trigger: "manual" },
         },
-      },
-    ]);
-  });
+        {
+          type: "timeline",
+          provider: "pi",
+          item: {
+            type: "compaction",
+            status: "completed",
+            trigger: "manual",
+            manualResult: { clientMessageId: "compact-2", error: "summarizer failed" },
+          },
+        },
+        {
+          type: "timeline",
+          provider: "pi",
+          item: {
+            type: "assistant_message",
+            text: "[Error] Failed to compact context: summarizer failed",
+          },
+        },
+      ]);
+    },
+  );
 
   test("executes Pi autocompact through RPC instead of prompt text", async () => {
     const { pi, session } = await createSession();

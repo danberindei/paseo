@@ -1606,6 +1606,32 @@ describe("stream reducer canonical tool calls", () => {
     ]);
   });
 
+  it("retains a manual compaction failure when closing its loading marker", () => {
+    const state = hydrateStreamState([
+      { event: compactionTimeline("loading", "manual"), timestamp: new Date(0) },
+      {
+        event: {
+          type: "timeline",
+          provider: "pi",
+          item: {
+            type: "compaction",
+            status: "completed",
+            trigger: "manual",
+            manualResult: { clientMessageId: "compact-1", error: "rejected" },
+          },
+        },
+        timestamp: new Date(1),
+      },
+    ]);
+    expect(state).toEqual([
+      expect.objectContaining({
+        kind: "compaction",
+        status: "completed",
+        manualResult: { clientMessageId: "compact-1", error: "rejected" },
+      }),
+    ]);
+  });
+
   it("terminalizes the loading compaction before a completed turn", () => {
     const state = hydrateStreamState([
       {

@@ -14499,6 +14499,41 @@ test("tryRunOutOfBand gives providers the command another agent sent, not its en
   }
 });
 
+test("tryRunOutOfBand forwards the client message id to the provider command", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-agent-out-of-band-id-"));
+  const seen: Array<string | undefined> = [];
+
+  class SlashCommandSession extends TestAgentSession {
+    override tryHandleOutOfBand() {
+      return {
+        run: async (ctx) => {
+          seen.push(ctx.clientMessageId);
+        },
+      };
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new SlashCommandSession(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    expect(
+      await manager.tryRunOutOfBand(agent.id, "/handled", { clientMessageId: "compact-1" }),
+    ).toBe(true);
+    await manager.flush();
+    expect(seen).toEqual(["compact-1"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("replaceAgentRun succeeds when foreground turn terminal event is never delivered", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-fg-"));
   const storagePath = join(workdir, "agents");

@@ -434,6 +434,7 @@ export const ar: TranslationResources = {
       workedFor: "عمل لمدة {{duration}}",
     },
     compaction: {
+      failed: "فشل ضغط السياق",
       loading: "الضغط...",
       auto: "يتم ضغط السياق تلقائيًا",
       manual: "تم ضغط السياق يدويًا",

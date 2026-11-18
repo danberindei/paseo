@@ -158,6 +158,9 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().nonnegative().optional(),
+    manualResult: z
+      .object({ clientMessageId: z.string().optional(), error: z.string().nullable() })
+      .optional(),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -510,6 +513,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         status: item.status,
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
+        ...(item.manualResult ? { manualResult: item.manualResult } : {}),
       };
     case "tool_call":
       if (item.payload.source !== "agent") return null;
@@ -603,6 +607,7 @@ function deserializeBuiltinTimelineItem(
         status: item.status,
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
+        ...(item.manualResult ? { manualResult: item.manualResult } : {}),
       };
     case "tool_call": {
       const tool = item.item;

@@ -435,6 +435,7 @@ export const ko: TranslationResources = {
       workedFor: "작업 시간 {{duration}}",
     },
     compaction: {
+      failed: "컨텍스트 압축에 실패했습니다",
       loading: "압축하는 중...",
       auto: "컨텍스트가 자동으로 압축되었습니다",
       manual: "컨텍스트가 수동으로 압축되었습니다",

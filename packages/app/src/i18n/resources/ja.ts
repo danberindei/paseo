@@ -439,6 +439,7 @@ export const ja: TranslationResources = {
       workedFor: "作業時間 {{duration}}",
     },
     compaction: {
+      failed: "コンテキストの圧縮に失敗しました",
       loading: "コンテキストを圧縮中...",
       auto: "コンテキストが自動的に圧縮されました",
       manual: "コンテキストが手動で圧縮されました",

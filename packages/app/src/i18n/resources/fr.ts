@@ -439,6 +439,7 @@ export const fr: TranslationResources = {
       workedFor: "A travaillé pendant {{duration}}",
     },
     compaction: {
+      failed: "La compaction du contexte a échoué",
       loading: "Compaction…",
       auto: "Contexte compacté automatiquement",
       manual: "Contexte compacté manuellement",

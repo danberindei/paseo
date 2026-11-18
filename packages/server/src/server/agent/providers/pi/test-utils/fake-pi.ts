@@ -172,6 +172,7 @@ export class FakePiSession implements PiRuntimeSession {
   subagentSubscriptionError: Error | null = null;
   setSessionNameError: Error | null = null;
   compactError: Error | null = null;
+  emitCompactStart = true;
   compactCompletion: Promise<void> | null = null;
   emitCompactEnd = true;
   getStateError: Error | null = null;
@@ -274,7 +275,9 @@ export class FakePiSession implements PiRuntimeSession {
 
   async compact(customInstructions?: string): Promise<void> {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
-    this.emit({ type: "compaction_start", reason: "manual" });
+    if (this.emitCompactStart) {
+      this.emit({ type: "compaction_start", reason: "manual" });
+    }
     await this.compactCompletion;
     if (this.emitCompactEnd) {
       this.emit({ type: "compaction_end", reason: "manual" });

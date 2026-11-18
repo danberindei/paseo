@@ -504,6 +504,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
       status: "completed",
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
+      manualResult: retained.manualResult,
     };
     return next;
   }
@@ -810,6 +811,7 @@ export interface CompactionItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  manualResult?: { clientMessageId?: string; error: string | null };
 }
 
 export interface PluginTimelineStreamItem {
@@ -1816,6 +1818,7 @@ function reduceTimelineCompaction(
         status: "completed",
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
+        manualResult: item.manualResult,
       };
       return spliceReplaceMaybe(state, loadingIdx, 1, [updated], mutable);
     }
@@ -1831,6 +1834,7 @@ function reduceTimelineCompaction(
     status: item.status,
     trigger: item.trigger,
     preTokens: item.preTokens,
+    manualResult: item.manualResult,
   };
   return pushMaybe(state, compaction, mutable);
 }

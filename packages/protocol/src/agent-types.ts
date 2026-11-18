@@ -377,6 +377,7 @@ export interface CompactionTimelineItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  manualResult?: { clientMessageId?: string; error: string | null };
 }
 
 export interface PluginTimelineItem {

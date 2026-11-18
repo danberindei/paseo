@@ -3255,7 +3255,7 @@ export class AgentManager {
     };
     void this.runForegroundMutation(agentId, async () => {
       try {
-        await handler.run({ emit: dispatch });
+        await handler.run({ emit: dispatch, clientMessageId: options?.clientMessageId });
       } catch (error) {
         const text = error instanceof Error ? error.message : "Out-of-band command failed";
         dispatch({

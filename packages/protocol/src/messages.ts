@@ -809,6 +809,9 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
+    manualResult: z
+      .object({ clientMessageId: z.string().optional(), error: z.string().nullable() })
+      .optional(),
   }),
   z.object({
     type: z.literal("plugin"),

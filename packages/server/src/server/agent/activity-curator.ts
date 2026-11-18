@@ -185,7 +185,7 @@ function curateProjectedActivityEntries(
         entries.push(activityEntry(`[Error] ${item.message}`));
         break;
       case "compaction":
-        entries.push(activityEntry("[Compacted]"));
+        if (item.manualResult?.error == null) entries.push(activityEntry("[Compacted]"));
         break;
     }
   }
